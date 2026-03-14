@@ -1,7 +1,8 @@
-"""Report generation — text and JSON output."""
+"""Report generation — text, JSON, and HTML output."""
 
 from __future__ import annotations
 
+import html as _html
 import json
 from datetime import datetime
 from typing import Any
@@ -26,6 +27,39 @@ _SEVERITY_LABEL: dict[Severity, str] = {
     Severity.LOW: "LOW",
     Severity.INFO: "INFO",
 }
+
+
+# ---------------------------------------------------------------------------
+# Risk scoring
+# ---------------------------------------------------------------------------
+
+_SEVERITY_WEIGHTS: dict[str, int] = {
+    "critical": 40,
+    "high": 15,
+    "medium": 5,
+    "low": 1,
+    "info": 0,
+}
+
+_GRADE_THRESHOLDS: list[tuple[int, str]] = [
+    (0,   "A+"),
+    (9,   "A"),
+    (24,  "B"),
+    (49,  "C"),
+    (99,  "D"),
+    (999, "F"),
+]
+
+
+def _risk_score(counts: dict[str, int]) -> tuple[int, str]:
+    """Return (numeric_score, letter_grade) derived from severity counts."""
+    score = sum(counts.get(sev, 0) * weight for sev, weight in _SEVERITY_WEIGHTS.items())
+    grade = "F"
+    for threshold, g in _GRADE_THRESHOLDS:
+        if score <= threshold:
+            grade = g
+            break
+    return score, grade
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +154,7 @@ def _render_remediation_guide(lines: list[str], report: ScanReport) -> None:
             lines.append("")
 
 
-def render_text(report: ScanReport) -> str:
+def render_text(report: ScanReport, *, brief: bool = False) -> str:
     """Produce a human-readable text report."""
     lines: list[str] = []
 
@@ -142,6 +176,7 @@ def render_text(report: ScanReport) -> str:
     lines.append(_section("EXECUTIVE SUMMARY"))
     counts = report.summary_counts()
     total = sum(counts.values())
+    score, grade = _risk_score(counts)
     lines.append(f"  Total findings: {total}")
     for sev in _SEV_ORDER:
         count = counts.get(sev.value, 0)
@@ -151,6 +186,9 @@ def render_text(report: ScanReport) -> str:
     lines.append(f"  Misconfigurations: {len(report.misconfigurations)}")
     if report.errors:
         lines.append(f"  Scan errors      : {len(report.errors)}")
+    lines.append(f"\n  Risk score : {score}  |  Security grade : {grade}")
+    lines.append("  (Grade scale: A+ = clean, A/B = minor issues, C = moderate risk,")
+    lines.append("   D = significant risk, F = critical exposure requiring immediate action)")
     lines.append("")
 
     # --- Remediation Priority Matrix ---
@@ -193,10 +231,12 @@ def render_text(report: ScanReport) -> str:
             lines.append("")
 
     # --- Deep Issue Analysis ---
-    _render_deep_analysis(lines, report)
+    if not brief:
+        _render_deep_analysis(lines, report)
 
     # --- Remediation Guide ---
-    _render_remediation_guide(lines, report)
+    if not brief:
+        _render_remediation_guide(lines, report)
 
     # --- CVE Correlation ---
     if report.cve_records:
@@ -305,7 +345,348 @@ def render_json(report: ScanReport) -> str:
     return json.dumps(data, indent=2)
 
 
-def render(report: ScanReport, fmt: ReportFormat) -> str:
+# ---------------------------------------------------------------------------
+# HTML report
+# ---------------------------------------------------------------------------
+
+_SEV_CSS: dict[Severity, tuple[str, str, str]] = {
+    # (badge-bg, badge-text, badge-border)
+    Severity.CRITICAL: ("#fef2f2", "#991b1b", "#fca5a5"),
+    Severity.HIGH:     ("#fff7ed", "#9a3412", "#fdba74"),
+    Severity.MEDIUM:   ("#fffbeb", "#92400e", "#fcd34d"),
+    Severity.LOW:      ("#eff6ff", "#1e40af", "#93c5fd"),
+    Severity.INFO:     ("#f8fafc", "#475569", "#cbd5e1"),
+}
+
+_GRADE_CSS: dict[str, str] = {
+    "A+": "#15803d", "A": "#16a34a",
+    "B": "#65a30d", "C": "#ca8a04",
+    "D": "#ea580c", "F": "#dc2626",
+}
+
+
+def _e(text: str) -> str:
+    """HTML-escape a string."""
+    return _html.escape(str(text), quote=True)
+
+
+def _badge(severity: Severity) -> str:
+    bg, fg, border = _SEV_CSS[severity]
+    label = _SEVERITY_LABEL[severity]
+    return (
+        f'<span style="display:inline-block;padding:2px 8px;border-radius:4px;'
+        f'font-size:0.75rem;font-weight:700;letter-spacing:.05em;'
+        f'background:{bg};color:{fg};border:1px solid {border}">{label}</span>'
+    )
+
+
+def _nl2br(text: str) -> str:
+    """Convert newlines to <br> and preserve leading spaces as &nbsp;."""
+    lines = []
+    for line in _e(text).split("\n"):
+        stripped = line.lstrip()
+        spaces = len(line) - len(stripped)
+        lines.append("&nbsp;" * spaces + stripped)
+    return "<br>\n".join(lines)
+
+
+def render_html(report: ScanReport) -> str:
+    """Produce a self-contained HTML security report."""
+    counts = report.summary_counts()
+    score, grade = _risk_score(counts)
+    grade_color = _GRADE_CSS.get(grade, "#dc2626")
+    duration = ""
+    if report.finished_at:
+        secs = (report.finished_at - report.started_at).total_seconds()
+        duration = f" ({secs:.1f}s)"
+
+    mode = "dry-run"
+    if report.config:
+        if report.config.dry_run:
+            mode = "dry-run"
+        elif report.config.safe_mode:
+            mode = "safe / read-only"
+        else:
+            mode = "standard"
+
+    # ---- severity summary chips ----
+    summary_chips = ""
+    for sev in _SEV_ORDER:
+        n = counts.get(sev.value, 0)
+        if n:
+            summary_chips += f'<span style="margin-right:8px">{_badge(sev)} &nbsp;{n}</span>'
+
+    # ---- priority matrix rows ----
+    actionable = [
+        f for f in report.findings
+        if f.severity in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM)
+    ]
+    matrix_rows = ""
+    for idx, f in enumerate(sorted(actionable, key=lambda x: _SEV_ORDER.index(x.severity)), 1):
+        matrix_rows += (
+            f"<tr>"
+            f"<td style='padding:6px 10px;color:#64748b'>{idx}</td>"
+            f"<td style='padding:6px 10px'>{_badge(f.severity)}</td>"
+            f"<td style='padding:6px 10px;color:#64748b;font-size:.85rem'>{_e(f.category.value)}</td>"
+            f"<td style='padding:6px 10px;font-weight:500'>{_e(f.title)}</td>"
+            f"</tr>\n"
+        )
+
+    # ---- finding cards ----
+    finding_cards = ""
+    for sev in _SEV_ORDER:
+        group = [f for f in report.findings if f.severity == sev]
+        if not group:
+            continue
+        bg, fg, border = _SEV_CSS[sev]
+        finding_cards += (
+            f'<h3 style="margin:24px 0 8px;color:{fg}">'
+            f'{_SEVERITY_LABEL[sev]} ({len(group)})</h3>\n'
+        )
+        for f in group:
+            kb = analysis_kb.lookup(f.title)
+            tools = tools_for_category(f.category)
+
+            rows = f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Category</td><td>{_e(f.category.value)}</td></tr>\n"
+            rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Evidence</td><td><code style='font-size:.85rem;background:#f1f5f9;padding:1px 4px;border-radius:3px'>{_e(f.evidence)}</code></td></tr>\n"
+            if f.impact:
+                rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Impact</td><td>{_e(f.impact)}</td></tr>\n"
+            if f.remediation:
+                rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Quick fix</td><td>{_e(f.remediation)}</td></tr>\n"
+            if f.cpe:
+                rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>CPE</td><td><code style='font-size:.85rem'>{_e(f.cpe)}</code></td></tr>\n"
+            if tools:
+                rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Tools</td><td>{_e(', '.join(tools))}</td></tr>\n"
+
+            analysis_section = ""
+            if kb:
+                analysis_section = (
+                    f'<details style="margin-top:12px">'
+                    f'<summary style="cursor:pointer;font-weight:600;color:#1e293b;padding:4px 0">'
+                    f'&#128269; Issue Analysis</summary>'
+                    f'<div style="margin-top:8px;padding:12px;background:#f8fafc;border-radius:6px;'
+                    f'font-size:.9rem;line-height:1.7;white-space:pre-wrap;font-family:inherit">'
+                    f'{_e(kb["analysis"])}</div></details>'
+                    f'<details style="margin-top:8px">'
+                    f'<summary style="cursor:pointer;font-weight:600;color:#1e293b;padding:4px 0">'
+                    f'&#128295; Remediation Steps</summary>'
+                    f'<div style="margin-top:8px;padding:12px;background:#f0fdf4;border-radius:6px;'
+                    f'font-size:.9rem;line-height:1.7;white-space:pre-wrap;font-family:inherit">'
+                    f'{_e(kb["remediation"])}</div></details>'
+                )
+
+            finding_cards += (
+                f'<div style="margin-bottom:16px;border:1px solid {border};border-radius:8px;'
+                f'background:{bg};overflow:hidden">'
+                f'<div style="padding:10px 16px;display:flex;align-items:center;gap:10px;'
+                f'border-bottom:1px solid {border}">'
+                f'{_badge(f.severity)}'
+                f'<span style="font-weight:600;color:#1e293b">{_e(f.title)}</span>'
+                f'</div>'
+                f'<div style="padding:12px 16px">'
+                f'<table style="border-collapse:collapse;width:100%">{rows}</table>'
+                f'{analysis_section}'
+                f'</div>'
+                f'</div>\n'
+            )
+
+    # ---- CVE rows ----
+    cve_rows = ""
+    for cve in sorted(report.cve_records, key=lambda c: c.cvss_score, reverse=True):
+        bg, fg, border = _SEV_CSS[cve.severity]
+        refs_html = ""
+        if cve.references:
+            refs_html = " ".join(
+                f'<a href="{_e(r)}" style="color:#2563eb;font-size:.8rem" target="_blank" rel="noopener">[ref]</a>'
+                for r in cve.references[:3]
+            )
+        cve_rows += (
+            f"<tr style='border-bottom:1px solid #e2e8f0'>"
+            f"<td style='padding:8px 10px;font-weight:600;white-space:nowrap'>{_e(cve.cve_id)}</td>"
+            f"<td style='padding:8px 10px'>{_badge(cve.severity)} {cve.cvss_score:.1f}</td>"
+            f"<td style='padding:8px 10px;font-size:.9rem'>{_e(cve.description[:200])}</td>"
+            f"<td style='padding:8px 10px'>{refs_html}</td>"
+            f"</tr>\n"
+        )
+
+    # ---- misconfiguration rows ----
+    mc_rows = ""
+    for mc in sorted(report.misconfigurations, key=lambda m: _SEV_ORDER.index(m.severity)):
+        mc_rows += (
+            f"<tr style='border-bottom:1px solid #e2e8f0'>"
+            f"<td style='padding:8px 10px'>{_badge(mc.severity)}</td>"
+            f"<td style='padding:8px 10px;font-weight:500'>{_e(mc.name)}</td>"
+            f"<td style='padding:8px 10px;font-size:.9rem'>{_e(mc.description)}</td>"
+            f"<td style='padding:8px 10px;font-size:.9rem'>{_e(mc.remediation)}</td>"
+            f"</tr>\n"
+        )
+
+    # ---- error list ----
+    error_items = "".join(f"<li style='color:#dc2626'>{_e(e)}</li>" for e in report.errors)
+    errors_section = (
+        f'<section style="margin-bottom:40px">'
+        f'<h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">Scan Errors</h2>'
+        f'<ul style="margin:0;padding-left:20px">{error_items}</ul>'
+        f'</section>'
+        if report.errors else ""
+    )
+
+    finished_str = ""
+    if report.finished_at:
+        finished_str = f"<br>Finished: {report.finished_at:%Y-%m-%d %H:%M:%S UTC}{duration}"
+
+    depth_str = report.config.depth.value if report.config else "unknown"
+
+    html_doc = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inquisition Report — {_e(report.target)}</title>
+<style>
+  *, *::before, *::after {{ box-sizing: border-box; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         margin: 0; background: #f1f5f9; color: #1e293b; line-height: 1.6; }}
+  a {{ color: #2563eb; }}
+  details > summary {{ user-select: none; }}
+  details > summary::-webkit-details-marker {{ color: #94a3b8; }}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header style="background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);color:#f8fafc;padding:32px 40px">
+  <div style="max-width:1100px;margin:0 auto">
+    <div style="font-size:1.4rem;font-weight:800;letter-spacing:.05em;color:#38bdf8">
+      &#128273; INQUISITION
+    </div>
+    <div style="font-size:.9rem;color:#94a3b8;margin-top:4px">Security Reconnaissance Report</div>
+    <div style="margin-top:20px;display:flex;flex-wrap:wrap;gap:32px">
+      <div>
+        <div style="font-size:.75rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Target</div>
+        <div style="font-size:1.2rem;font-weight:600;color:#e2e8f0">{_e(report.target)}</div>
+      </div>
+      <div>
+        <div style="font-size:.75rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Started</div>
+        <div style="font-size:.9rem;color:#e2e8f0">{report.started_at:%Y-%m-%d %H:%M:%S UTC}{duration}</div>
+      </div>
+      <div>
+        <div style="font-size:.75rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Depth / Mode</div>
+        <div style="font-size:.9rem;color:#e2e8f0">{_e(depth_str)} / {_e(mode)}</div>
+      </div>
+      <div>
+        <div style="font-size:.75rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Security Grade</div>
+        <div style="font-size:2rem;font-weight:800;color:{grade_color}">{_e(grade)}</div>
+      </div>
+      <div>
+        <div style="font-size:.75rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Risk Score</div>
+        <div style="font-size:2rem;font-weight:800;color:{grade_color}">{score}</div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main style="max-width:1100px;margin:0 auto;padding:32px 24px">
+
+<!-- Executive Summary -->
+<section style="margin-bottom:40px">
+  <h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">Executive Summary</h2>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">{summary_chips}</div>
+  <div style="color:#64748b;font-size:.9rem">
+    CVEs correlated: <strong>{len(report.cve_records)}</strong> &nbsp;|&nbsp;
+    Misconfigurations: <strong>{len(report.misconfigurations)}</strong> &nbsp;|&nbsp;
+    Total findings: <strong>{sum(counts.values())}</strong>
+  </div>
+  <div style="margin-top:10px;font-size:.85rem;color:#64748b">
+    Grade scale: <strong>A+</strong> = clean &nbsp;·&nbsp;
+    <strong>A/B</strong> = minor issues &nbsp;·&nbsp;
+    <strong>C</strong> = moderate risk &nbsp;·&nbsp;
+    <strong>D</strong> = significant risk &nbsp;·&nbsp;
+    <strong>F</strong> = critical exposure
+  </div>
+</section>
+
+<!-- Priority Matrix -->
+<section style="margin-bottom:40px">
+  <h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">Remediation Priority Matrix</h2>
+  {'<p style="color:#64748b">No actionable findings.</p>' if not matrix_rows else f'''
+  <div style="overflow-x:auto">
+  <table style="width:100%;border-collapse:collapse;font-size:.9rem">
+    <thead>
+      <tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0">
+        <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">#</th>
+        <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Severity</th>
+        <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Category</th>
+        <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Title</th>
+      </tr>
+    </thead>
+    <tbody>{matrix_rows}</tbody>
+  </table>
+  </div>'''}
+</section>
+
+<!-- Detailed Findings -->
+<section style="margin-bottom:40px">
+  <h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">Detailed Findings</h2>
+  <p style="font-size:.85rem;color:#64748b;margin-top:-8px;margin-bottom:16px">
+    Click <em>Issue Analysis</em> or <em>Remediation Steps</em> on any card to expand the deep-dive content.
+  </p>
+  {finding_cards if finding_cards else '<p style="color:#64748b">No findings.</p>'}
+</section>
+
+<!-- CVE Correlation -->
+{f'''<section style="margin-bottom:40px">
+  <h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">CVE Correlation</h2>
+  <div style="overflow-x:auto">
+  <table style="width:100%;border-collapse:collapse;font-size:.9rem">
+    <thead>
+      <tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0">
+        <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">CVE ID</th>
+        <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Severity / CVSS</th>
+        <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Description</th>
+        <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Refs</th>
+      </tr>
+    </thead>
+    <tbody>{cve_rows}</tbody>
+  </table>
+  </div>
+</section>''' if report.cve_records else ''}
+
+<!-- Misconfigurations -->
+{f'''<section style="margin-bottom:40px">
+  <h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">Misconfiguration Summary</h2>
+  <div style="overflow-x:auto">
+  <table style="width:100%;border-collapse:collapse;font-size:.9rem">
+    <thead>
+      <tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0">
+        <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Severity</th>
+        <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Name</th>
+        <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Description</th>
+        <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Remediation</th>
+      </tr>
+    </thead>
+    <tbody>{mc_rows}</tbody>
+  </table>
+  </div>
+</section>''' if report.misconfigurations else ''}
+
+{errors_section}
+
+</main>
+
+<footer style="background:#0f172a;color:#475569;text-align:center;padding:16px;font-size:.8rem;margin-top:40px">
+  Generated by Inquisition &nbsp;·&nbsp; {_e(report.target)} &nbsp;·&nbsp; {report.started_at:%Y-%m-%d %H:%M UTC}
+</footer>
+
+</body>
+</html>"""
+
+    return html_doc
+
+
+def render(report: ScanReport, fmt: ReportFormat, *, brief: bool = False) -> str:
     if fmt == ReportFormat.JSON:
         return render_json(report)
-    return render_text(report)
+    if fmt == ReportFormat.HTML:
+        return render_html(report)
+    return render_text(report, brief=brief)

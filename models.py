@@ -29,6 +29,7 @@ class ScanDepth(enum.Enum):
 class ReportFormat(enum.Enum):
     TEXT = "text"
     JSON = "json"
+    HTML = "html"
 
 
 class FindingCategory(enum.Enum):
