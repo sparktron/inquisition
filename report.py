@@ -15,6 +15,7 @@ from models import (
     TOOL_REFERENCE,
 )
 from vuln_correlation import tools_for_category
+import analysis_kb
 
 _SEV_ORDER = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO]
 
@@ -37,6 +38,86 @@ def _hr(char: str = "=", width: int = 72) -> str:
 
 def _section(title: str) -> str:
     return f"\n{_hr()}\n  {title}\n{_hr()}\n"
+
+
+def _wrap_paragraphs(text: str, indent: str = "    ") -> list[str]:
+    """Split a multi-paragraph KB entry into indented output lines."""
+    lines: list[str] = []
+    for paragraph in text.split("\n"):
+        lines.append(f"{indent}{paragraph}")
+    return lines
+
+
+def _render_deep_analysis(lines: list[str], report: ScanReport) -> None:
+    """Append the DEEP ISSUE ANALYSIS section to lines."""
+    actionable = [
+        f for f in report.findings
+        if f.severity in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW)
+    ]
+    if not actionable:
+        return
+
+    lines.append(_section("DEEP ISSUE ANALYSIS"))
+    lines.append(
+        "  This section explains what each finding is, the underlying mechanism that\n"
+        "  makes it a security problem, and the real-world risk it presents."
+    )
+
+    for sev in _SEV_ORDER:
+        group = [f for f in actionable if f.severity == sev]
+        if not group:
+            continue
+        for f in group:
+            kb = analysis_kb.lookup(f.title)
+            analysis_text = kb["analysis"] if kb else f.impact
+            if not analysis_text:
+                continue
+
+            label = f"[{_SEVERITY_LABEL[f.severity]}] {f.title}"
+            lines.append(f"\n  {label}")
+            lines.append("  " + "\u2504" * (len(label) + 2))
+            lines.extend(_wrap_paragraphs(analysis_text))
+            lines.append(f"\n    Evidence: {f.evidence}")
+            lines.append("")
+
+
+def _render_remediation_guide(lines: list[str], report: ScanReport) -> None:
+    """Append the REMEDIATION GUIDE section to lines."""
+    actionable = [
+        f for f in report.findings
+        if f.severity in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM)
+    ]
+    if not actionable:
+        return
+
+    lines.append(_section("REMEDIATION GUIDE"))
+    lines.append(
+        "  Step-by-step instructions for resolving each finding, ordered by severity.\n"
+        "  Address CRITICAL and HIGH items immediately; schedule MEDIUM items promptly."
+    )
+
+    for sev in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM):
+        group = [f for f in actionable if f.severity == sev]
+        if not group:
+            continue
+        lines.append(f"\n  {'=' * 68}")
+        lines.append(f"  {_SEVERITY_LABEL[sev]} PRIORITY")
+        lines.append(f"  {'=' * 68}\n")
+        for f in group:
+            kb = analysis_kb.lookup(f.title)
+            remediation_text = kb["remediation"] if kb else f.remediation
+            if not remediation_text:
+                remediation_text = f.remediation or "No specific remediation guidance available."
+
+            label = f"[{_SEVERITY_LABEL[f.severity]}] {f.title}"
+            lines.append(f"  {label}")
+            lines.append("  " + "\u2504" * (len(label) + 2))
+            lines.extend(_wrap_paragraphs(remediation_text))
+            if f.verification:
+                lines.append(f"\n    Verification: {f.verification}")
+            if f.references:
+                lines.append(f"    References  : {', '.join(f.references)}")
+            lines.append("")
 
 
 def render_text(report: ScanReport) -> str:
@@ -111,6 +192,12 @@ def render_text(report: ScanReport) -> str:
                 lines.append(f"    Tools    : {', '.join(tools)}")
             lines.append("")
 
+    # --- Deep Issue Analysis ---
+    _render_deep_analysis(lines, report)
+
+    # --- Remediation Guide ---
+    _render_remediation_guide(lines, report)
+
     # --- CVE Correlation ---
     if report.cve_records:
         lines.append(_section("CVE CORRELATION"))
@@ -177,6 +264,10 @@ def _finding_to_dict(f: Finding) -> dict[str, Any]:
     if f.references:
         d["references"] = f.references
     d["tools"] = tools_for_category(f.category)
+    kb = analysis_kb.lookup(f.title)
+    if kb:
+        d["deep_analysis"] = kb["analysis"]
+        d["deep_remediation"] = kb["remediation"]
     return d
 
 
