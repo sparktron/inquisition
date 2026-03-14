@@ -1,11 +1,18 @@
-"""Command-line interface for inquisition."""
+#!/usr/bin/env python3
+"""Inquisition — website fingerprinting and security reconnaissance tool."""
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
-from inquisition.models import ReportFormat, ScanConfig, ScanDepth
+# Ensure the repo root is on sys.path so modules can be imported directly
+_ROOT = os.path.dirname(os.path.abspath(__file__))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from models import ReportFormat, ScanConfig, ScanDepth
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,11 +28,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--auto",
+        action="store_true",
+        default=False,
+        help=(
+            "Auto mode: run a full deep assessment with no user interaction. "
+            "Implies --depth deep and skips the authorization prompt."
+        ),
+    )
+
+    parser.add_argument(
         "-d", "--depth",
         choices=[d.value for d in ScanDepth],
-        default=ScanDepth.STANDARD.value,
-        help="Scan depth: quick (top ports, basic checks), standard (default), "
-             "deep (full port range, thorough probing)",
+        default=None,
+        help=(
+            "Scan depth: quick (top ports, basic checks), standard (default), "
+            "deep (full port range, thorough probing). Defaults to 'deep' in --auto mode."
+        ),
     )
 
     parser.add_argument(
@@ -87,14 +106,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def parse_args(argv: list[str] | None = None) -> tuple[ScanConfig, bool]:
-    """Parse CLI arguments and return a ScanConfig and skip-auth flag."""
-
+    """Parse CLI arguments and return (ScanConfig, skip_auth)."""
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    if args.auto:
+        # Auto mode: deep scan, no interaction
+        depth = ScanDepth(args.depth) if args.depth else ScanDepth.DEEP
+        skip_auth = True
+        print("[*] AUTO MODE — full deep assessment, authorization prompt suppressed.")
+    else:
+        depth = ScanDepth(args.depth) if args.depth else ScanDepth.STANDARD
+        skip_auth = args.yes
+
     config = ScanConfig(
         target=args.target,
-        depth=ScanDepth(args.depth),
+        depth=depth,
         report_format=ReportFormat(args.format),
         max_threads=args.threads,
         safe_mode=args.safe_mode,
@@ -103,13 +130,12 @@ def parse_args(argv: list[str] | None = None) -> tuple[ScanConfig, bool]:
         timeout=args.timeout,
     )
 
-    return config, args.yes
+    return config, skip_auth
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Entry point for the CLI."""
-
-    from inquisition.scanner import run_scan  # avoid circular imports
+    """Entry point."""
+    from scanner import run_scan
 
     config, skip_auth = parse_args(argv)
     try:

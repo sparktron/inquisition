@@ -8,8 +8,8 @@ import socket
 from datetime import datetime, timezone
 from typing import Any
 
-from inquisition.models import Finding, FindingCategory, Severity
-from inquisition.modules.base import BaseModule
+from models import Finding, FindingCategory, Severity
+from modules.base import BaseModule
 
 
 def _get_cert_info(host: str, port: int, timeout: float) -> dict[str, Any] | None:

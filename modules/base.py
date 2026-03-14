@@ -7,7 +7,7 @@ import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from inquisition.models import Finding, ScanConfig
+    from models import Finding, ScanConfig
 
 
 class BaseModule(abc.ABC):

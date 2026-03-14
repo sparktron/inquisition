@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import requests
 
-from inquisition.models import Finding, FindingCategory, ScanDepth, Severity
-from inquisition.modules.base import BaseModule
+from models import Finding, FindingCategory, ScanDepth, Severity
+from modules.base import BaseModule
 
 # Common application-level checks (all read-only, no payloads)
 _CHECKS: list[dict[str, str]] = [

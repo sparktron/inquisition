@@ -5,8 +5,8 @@ from __future__ import annotations
 import socket
 from typing import TYPE_CHECKING
 
-from inquisition.models import Finding, FindingCategory, Severity
-from inquisition.modules.base import BaseModule
+from models import Finding, FindingCategory, Severity
+from modules.base import BaseModule
 
 if TYPE_CHECKING:
     pass
@@ -32,7 +32,7 @@ class DnsReconModule(BaseModule):
     name = "dns_recon"
 
     def run(self) -> list[Finding]:
-        from inquisition.models import ScanDepth
+        from models import ScanDepth
 
         findings: list[Finding] = []
         target = self.config.target

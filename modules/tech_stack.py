@@ -6,8 +6,8 @@ import re
 
 import requests
 
-from inquisition.models import Finding, FindingCategory, ScanDepth, Severity
-from inquisition.modules.base import BaseModule
+from models import Finding, FindingCategory, ScanDepth, Severity
+from modules.base import BaseModule
 
 # Signatures: (pattern_in_body_or_header, tech_name, optional CPE)
 _BODY_SIGNATURES: list[tuple[str, str, str]] = [
