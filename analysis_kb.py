@@ -1,0 +1,1189 @@
+"""Detailed analysis and remediation knowledge base for Inquisition findings.
+
+Each entry maps a keyword (matched against lowercased finding titles) to a dict with:
+  - 'analysis': multi-paragraph explanation of what the issue is and why it matters
+  - 'remediation': step-by-step instructions for resolving the issue
+
+Entries are matched in order; the first matching entry wins.
+"""
+
+from __future__ import annotations
+
+
+# ---------------------------------------------------------------------------
+# Knowledge base — ordered list of (keyword, {analysis, remediation}) tuples.
+# More specific keywords must appear before general ones.
+# ---------------------------------------------------------------------------
+
+_KB: list[tuple[str, dict[str, str]]] = [
+
+    # -----------------------------------------------------------------------
+    # TLS / SSL
+    # -----------------------------------------------------------------------
+
+    ("certificate expired", {
+        "analysis": (
+            "An X.509 TLS certificate carries a hard-coded validity window (notBefore / "
+            "notAfter).  Once the expiry date passes the certificate is cryptographically "
+            "invalid.  Every major browser and TLS client enforces this and will refuse "
+            "the connection by default, displaying a prominent security warning to users.\n\n"
+            "Why it is a security problem:\n"
+            "  • Browsers block access entirely, treating the site as unsafe.  Legitimate "
+            "users cannot reach the service without clicking through a frightening warning.\n"
+            "  • An expired certificate may be a sign of a broken certificate-management "
+            "process, which could leave the site running on an unrotated credential for "
+            "months — creating a window for a man-in-the-middle (MITM) attacker to "
+            "substitute a fraudulent certificate without anyone noticing.\n"
+            "  • Certificate Transparency (CT) logs are public; an expired cert with no "
+            "renewal signals to attackers that the organisation has poor security hygiene, "
+            "inviting further probing.\n\n"
+            "Real-world impact:\n"
+            "  Visitors see browser errors and abandon the site.  Automated clients "
+            "(APIs, mobile apps, IoT devices) fail silently or loudly.  Search engine "
+            "crawlers may de-index the site.  In regulated industries an expired cert "
+            "can trigger a compliance violation (PCI-DSS, HIPAA, SOC 2)."
+        ),
+        "remediation": (
+            "Immediate actions:\n"
+            "  1. Renew the certificate immediately through your CA (Let's Encrypt, "
+            "DigiCert, Sectigo, etc.).\n"
+            "  2. Install the new certificate and private key on the web server / load "
+            "balancer.\n"
+            "  3. Reload the web server (nginx -s reload, systemctl reload apache2, "
+            "etc.) — no hard restart is needed in most cases.\n"
+            "  4. Verify with: openssl s_client -connect <host>:443 2>/dev/null | "
+            "openssl x509 -noout -dates\n\n"
+            "Automation (strongly recommended):\n"
+            "  • Use Let's Encrypt + Certbot with a cron job or systemd timer for "
+            "automatic renewal (certbot renew).\n"
+            "  • For AWS, use AWS Certificate Manager (ACM) which auto-renews.\n"
+            "  • For Kubernetes, use cert-manager with an ACME issuer.\n\n"
+            "Prevention:\n"
+            "  • Set monitoring alerts at 30 days and 7 days before expiry.\n"
+            "  • Add the certificate fingerprint / expiry to your asset inventory.\n"
+            "  • Consider Certificate Authority Authorisation (CAA) DNS records to "
+            "prevent unauthorised issuance."
+        ),
+    }),
+
+    ("certificate expir", {
+        "analysis": (
+            "The TLS certificate will expire within 30 days.  While it is still valid "
+            "today, the narrow window means that any delay in renewal could cause service "
+            "disruption.\n\n"
+            "Why it is a security problem:\n"
+            "  • If renewal is not completed before expiry, all visitors and automated "
+            "clients will receive a certificate error and be blocked from the site.\n"
+            "  • Rushed last-minute renewals under pressure introduce operational risk "
+            "(deploying during off-hours, skipping change-management procedures).\n"
+            "  • Short-validity windows indicate the organisation may not have automated "
+            "certificate lifecycle management in place — a wider process gap."
+        ),
+        "remediation": (
+            "Immediate actions:\n"
+            "  1. Renew the certificate now, before expiry, to maintain continuity.\n"
+            "  2. If using Let's Encrypt / Certbot, run: certbot renew --force-renewal\n"
+            "  3. After renewal, reload the server: systemctl reload nginx\n\n"
+            "Verification:\n"
+            "  openssl s_client -connect <host>:443 2>/dev/null | openssl x509 -noout -dates\n\n"
+            "Long-term hardening:\n"
+            "  • Automate renewal using Certbot timers, ACME clients, or a managed CA.\n"
+            "  • Add monitoring alerts at 30 and 7 days before expiry."
+        ),
+    }),
+
+    ("self-signed certificate", {
+        "analysis": (
+            "A self-signed certificate is one where the entity that issued the certificate "
+            "is the same as the entity named in the certificate.  No third-party Certificate "
+            "Authority (CA) has verified the identity of the server operator.\n\n"
+            "Why it is a security problem:\n"
+            "  • Browsers and operating systems ship with a trust store of well-known CAs. "
+            "Self-signed certificates are not in this store, so every browser will display "
+            "a 'Your connection is not private' warning.\n"
+            "  • Users who click past the warning have trained themselves to ignore TLS "
+            "errors — a dangerous habit that makes real MITM attacks easier to execute.\n"
+            "  • Automated clients (REST APIs, mobile apps) typically reject self-signed "
+            "certs unless explicitly configured to ignore certificate validation, which "
+            "often means those clients disable ALL certificate checks — defeating TLS "
+            "entirely.\n"
+            "  • For internal infrastructure, self-signed certs are acceptable only when "
+            "the CA certificate is explicitly distributed and trusted via MDM/GPO."
+        ),
+        "remediation": (
+            "Production / internet-facing systems:\n"
+            "  1. Obtain a certificate from a trusted CA.\n"
+            "  2. Let's Encrypt provides free, automated, trusted certificates:\n"
+            "       sudo certbot --nginx -d example.com -d www.example.com\n"
+            "  3. Commercial CAs (DigiCert, Sectigo) are required for Extended Validation "
+            "(EV) certs or for non-HTTP protocols.\n\n"
+            "Internal / private systems:\n"
+            "  1. Build an internal PKI with a root CA (using step-ca, HashiCorp Vault PKI, "
+            "or Windows AD CS).\n"
+            "  2. Distribute the internal root CA certificate to all clients via MDM, "
+            "Group Policy, or configuration management.\n\n"
+            "Verification:\n"
+            "  openssl s_client -connect <host>:443 -CAfile /etc/ssl/certs/ca-certificates.crt\n"
+            "  Expected: Verify return code: 0 (ok)"
+        ),
+    }),
+
+    ("hostname not in certificate", {
+        "analysis": (
+            "TLS certificates specify exactly which hostnames they are valid for in the "
+            "Subject Alternative Name (SAN) extension.  When the hostname used to reach the "
+            "server does not appear in the SAN list, the TLS handshake fails with a "
+            "certificate name-mismatch error.\n\n"
+            "Why it is a security problem:\n"
+            "  • Browsers and strict TLS clients reject the connection outright.\n"
+            "  • A certificate valid for a different hostname provides no assurance of "
+            "server identity for the current target — an attacker could present the same "
+            "mismatched cert during a MITM attack.\n"
+            "  • This commonly occurs when a certificate is re-used across multiple virtual "
+            "hosts without being properly extended to cover all hostnames."
+        ),
+        "remediation": (
+            "  1. Identify all hostnames that need to be covered (e.g., example.com, "
+            "www.example.com, api.example.com).\n"
+            "  2. Reissue the certificate with all required names in the SAN field.\n"
+            "     Let's Encrypt: certbot certonly --standalone -d example.com -d www.example.com\n"
+            "  3. Install the new cert and reload the server.\n"
+            "  4. Verify with: openssl s_client -connect <host>:443 2>/dev/null | "
+            "openssl x509 -noout -text | grep -A1 'Subject Alternative Name'\n\n"
+            "Wildcard certs (*.example.com) cover all single-level subdomains and may "
+            "reduce the management overhead, but require DNS-01 ACME challenges rather "
+            "than HTTP-01."
+        ),
+    }),
+
+    ("deprecated tls", {
+        "analysis": (
+            "TLS (Transport Layer Security) is the protocol that encrypts traffic between "
+            "browsers and servers.  SSLv2, SSLv3, TLSv1.0, and TLSv1.1 are all formally "
+            "deprecated by RFC 8996 (March 2021) because they contain unfixable "
+            "cryptographic design flaws.\n\n"
+            "Why it is a security problem:\n"
+            "  • POODLE (CVE-2014-3566): An attacker with a network vantage point can force "
+            "a TLS 1.0/SSLv3 downgrade and exploit CBC padding oracles to decrypt session "
+            "cookies, hijacking authenticated sessions.\n"
+            "  • BEAST (CVE-2011-3389): A TLS 1.0 IV-chaining vulnerability allows chosen "
+            "plaintext attacks against cookies and session tokens.\n"
+            "  • DROWN (CVE-2016-0800): SSLv2 support on any server that shares a private "
+            "key allows decryption of TLS 1.x traffic intercepted years earlier.\n"
+            "  • SWEET32 (CVE-2016-2183): 64-bit block ciphers (3DES) used in TLS 1.0/1.1 "
+            "are vulnerable to birthday attacks over long-lived connections.\n\n"
+            "Compliance implications:\n"
+            "  PCI-DSS 3.2+ explicitly requires TLS 1.2 as the minimum.  Many healthcare "
+            "and government frameworks impose the same requirement."
+        ),
+        "remediation": (
+            "Step 1 — Identify your TLS termination point:\n"
+            "  This is usually nginx, Apache, HAProxy, AWS ALB, Cloudflare, or IIS.\n\n"
+            "Step 2 — Update the TLS protocol configuration:\n"
+            "  nginx:  ssl_protocols TLSv1.2 TLSv1.3;\n"
+            "  Apache: SSLProtocol -all +TLSv1.2 +TLSv1.3\n"
+            "  HAProxy: ssl-min-ver TLSv1.2\n"
+            "  IIS:    Disable via Schannel registry keys or IIS Crypto tool\n\n"
+            "Step 3 — Also update cipher suites to modern equivalents:\n"
+            "  nginx:  ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
+            ":ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA"
+            "-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305';\n\n"
+            "Step 4 — Reload the server:\n"
+            "  nginx -s reload  |  systemctl reload apache2  |  haproxy -f /etc/haproxy -D\n\n"
+            "Step 5 — Verify:\n"
+            "  openssl s_client -tls1_1 -connect <host>:443  → expect handshake failure\n"
+            "  openssl s_client -tls1_2 -connect <host>:443  → expect success\n"
+            "  Use testssl.sh or https://www.ssllabs.com/ssltest/ for a full report.\n\n"
+            "Reference: Mozilla SSL Configuration Generator at ssl-config.mozilla.org "
+            "provides up-to-date recommended configurations."
+        ),
+    }),
+
+    ("weak cipher", {
+        "analysis": (
+            "Cipher suites define the specific cryptographic algorithms used during a TLS "
+            "session: key exchange, authentication, bulk encryption, and message authentication. "
+            "RC4, DES, 3DES, EXPORT-grade ciphers, NULL ciphers, and anonymous (anon) key "
+            "exchange are all considered cryptographically broken.\n\n"
+            "Why it is a security problem:\n"
+            "  • RC4: Statistical biases in the keystream allow plaintext recovery of "
+            "TLS-encrypted session tokens (NOMORE attack, RFC 7465 prohibits RC4 in TLS).\n"
+            "  • DES / 3DES: 56-bit effective key length for DES is trivially brute-forced. "
+            "3DES's 64-bit block size is vulnerable to the SWEET32 birthday attack after "
+            "~32 GB of traffic on the same session key.\n"
+            "  • EXPORT ciphers: Deliberately weakened to 40/56-bit keys for 1990s US export "
+            "law; trivially broken.  Used in FREAK (CVE-2015-0204) and Logjam attacks.\n"
+            "  • NULL ciphers: No encryption at all — traffic is transmitted in cleartext "
+            "while appearing to use TLS.\n"
+            "  • Anonymous (anon) key exchange: No server authentication; a MITM attacker "
+            "can impersonate any server trivially."
+        ),
+        "remediation": (
+            "  1. Replace your cipher suite list with a modern, secure set.\n\n"
+            "  Recommended for nginx (TLS 1.2 + 1.3):\n"
+            "    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
+            ":ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
+            ":ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305';\n"
+            "    ssl_prefer_server_ciphers on;\n\n"
+            "  Recommended for Apache:\n"
+            "    SSLCipherSuite ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
+            ":ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384\n"
+            "    SSLHonorCipherOrder on\n\n"
+            "  2. Reload the server after changes.\n"
+            "  3. Verify with: openssl s_client -cipher RC4-SHA -connect <host>:443 "
+            "→ expect handshake failure\n"
+            "  4. Use testssl.sh --cipher-per-proto for a comprehensive cipher audit."
+        ),
+    }),
+
+    ("tls handshake failed", {
+        "analysis": (
+            "The scanner could not complete a TLS handshake with port 443.  This means "
+            "HTTPS is either not available, misconfigured, or the port is not reachable.\n\n"
+            "Why it is a security problem:\n"
+            "  • If the service is running on HTTP only, all traffic — including "
+            "authentication credentials and session tokens — is transmitted in cleartext "
+            "and is trivially interceptable by anyone on the network path.\n"
+            "  • A misconfigured TLS stack may silently fall back to unencrypted HTTP, "
+            "exposing users without any warning."
+        ),
+        "remediation": (
+            "  1. Confirm whether the service intends to serve HTTPS.\n"
+            "  2. If HTTPS is intended, check firewall rules to ensure port 443 is open.\n"
+            "  3. Verify the TLS configuration in your web server.\n"
+            "  4. Check for certificate errors preventing the handshake:\n"
+            "       openssl s_client -connect <host>:443\n"
+            "  5. If only HTTP is used, immediately plan migration to HTTPS with a valid "
+            "TLS certificate.  Use Let's Encrypt for a free, trusted certificate."
+        ),
+    }),
+
+    # -----------------------------------------------------------------------
+    # HTTP Security Headers
+    # -----------------------------------------------------------------------
+
+    ("strict-transport-security", {
+        "analysis": (
+            "HTTP Strict Transport Security (HSTS) is a web security policy mechanism that "
+            "instructs browsers to only ever connect to the server over HTTPS, refusing any "
+            "HTTP connections for the specified max-age duration.\n\n"
+            "Why it is a security problem:\n"
+            "  • Without HSTS, a user who types 'example.com' in their browser first makes "
+            "an unencrypted HTTP request, which can be intercepted.  An attacker on the "
+            "network (coffee-shop Wi-Fi, rogue access point, ISP-level MITM) can intercept "
+            "this initial request and respond with a fake page that never upgrades to HTTPS "
+            "— a classic SSL stripping attack (sslstrip).\n"
+            "  • Even if the server sends a 301 redirect from HTTP to HTTPS, the redirect "
+            "response itself is sent in plaintext and can be modified by an attacker.\n"
+            "  • HSTS eliminates the HTTP-to-HTTPS transition entirely once the header has "
+            "been seen: the browser refuses to even attempt an HTTP connection."
+        ),
+        "remediation": (
+            "  1. Add the header to your HTTPS virtual host configuration.\n\n"
+            "  nginx:\n"
+            "    add_header Strict-Transport-Security 'max-age=63072000; "
+            "includeSubDomains; preload' always;\n\n"
+            "  Apache:\n"
+            "    Header always set Strict-Transport-Security "
+            "'max-age=63072000; includeSubDomains; preload'\n\n"
+            "  Node.js / Express (helmet):\n"
+            "    app.use(helmet.hsts({ maxAge: 63072000, includeSubDomains: true }))\n\n"
+            "  2. Start with a shorter max-age (e.g., 300 seconds) to test, then "
+            "increase to 63072000 (2 years) once you are confident all subdomains "
+            "support HTTPS.\n"
+            "  3. Optionally submit your domain to the HSTS preload list at "
+            "hstspreload.org — this bakes HSTS into browsers themselves, protecting "
+            "first-time visitors.\n"
+            "  4. Verify:\n"
+            "     curl -I https://<host>/ | grep -i strict"
+        ),
+    }),
+
+    ("content-security-policy", {
+        "analysis": (
+            "Content Security Policy (CSP) is an HTTP response header that tells browsers "
+            "which sources of content (scripts, styles, images, frames, etc.) are considered "
+            "legitimate.  Browsers block any resource loaded from an unlisted source.\n\n"
+            "Why it is a security problem:\n"
+            "  • Without CSP, a Cross-Site Scripting (XSS) vulnerability anywhere on the "
+            "page gives an attacker full control: they can execute arbitrary JavaScript, "
+            "steal cookies and localStorage, capture keystrokes, redirect users, and make "
+            "authenticated API calls on behalf of the user.\n"
+            "  • CSP is the primary browser-side defence against XSS.  Even if the "
+            "application has an XSS flaw, a well-configured CSP prevents the injected "
+            "script from loading or running.\n"
+            "  • CSP also mitigates clickjacking (frame-ancestors directive), mixed "
+            "content, and data exfiltration (connect-src directive).\n\n"
+            "Severity context:\n"
+            "  XSS is consistently ranked in the OWASP Top 10 and was responsible for "
+            "high-profile breaches including the British Airways breach (2018, ~500k "
+            "customers' payment data stolen via injected JS)."
+        ),
+        "remediation": (
+            "  1. Start with a report-only policy to understand what would be blocked "
+            "without breaking the site:\n\n"
+            "     Content-Security-Policy-Report-Only: default-src 'self'; "
+            "report-uri /csp-report\n\n"
+            "  2. Analyse the CSP violation reports to identify all legitimate sources.\n"
+            "  3. Build a restrictive policy, then switch to Content-Security-Policy.\n\n"
+            "  Recommended starting policy:\n"
+            "    Content-Security-Policy: "
+            "default-src 'self'; "
+            "script-src 'self' 'nonce-{RANDOM}'; "
+            "style-src 'self' 'nonce-{RANDOM}'; "
+            "img-src 'self' data: https:; "
+            "font-src 'self'; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'; "
+            "frame-ancestors 'none'; "
+            "upgrade-insecure-requests;\n\n"
+            "  Key directives explained:\n"
+            "    script-src 'nonce-...' — require a per-page random nonce on inline scripts\n"
+            "    object-src 'none'      — disable Flash / Java plugins\n"
+            "    base-uri 'self'        — prevent base-tag injection attacks\n"
+            "    frame-ancestors 'none' — replace X-Frame-Options\n\n"
+            "  Tooling:\n"
+            "    • CSP Evaluator: csp-evaluator.withgoogle.com\n"
+            "    • Mozilla Observatory: observatory.mozilla.org\n"
+            "    • Helmet (Node.js): helmet.contentSecurityPolicy()"
+        ),
+    }),
+
+    ("x-content-type-options", {
+        "analysis": (
+            "The X-Content-Type-Options: nosniff header instructs browsers not to guess "
+            "('sniff') the MIME type of a response, instead trusting only the declared "
+            "Content-Type.\n\n"
+            "Why it is a security problem:\n"
+            "  • Historically, browsers would try to infer the content type from the "
+            "response body if the server's Content-Type was wrong or absent.  An attacker "
+            "who can upload files (e.g., a profile picture) could upload a file containing "
+            "JavaScript but disguised as an image.  Without nosniff, older browsers would "
+            "detect the JS and execute it, achieving XSS.\n"
+            "  • Modern Chromium-based browsers enforce MIME type matching for scripts and "
+            "workers, but this header remains a defence-in-depth control required by "
+            "OWASP, PCI-DSS, and government security standards."
+        ),
+        "remediation": (
+            "  One-line fix — add to your web server virtual host:\n\n"
+            "  nginx:  add_header X-Content-Type-Options 'nosniff' always;\n"
+            "  Apache: Header always set X-Content-Type-Options 'nosniff'\n"
+            "  IIS:    Via HTTP Response Headers in IIS Manager, or:\n"
+            "          <customHeaders><add name='X-Content-Type-Options' value='nosniff'/>"
+            "</customHeaders>\n\n"
+            "  Verify: curl -I https://<host>/ | grep -i x-content-type"
+        ),
+    }),
+
+    ("x-frame-options", {
+        "analysis": (
+            "X-Frame-Options controls whether the browser is permitted to render the page "
+            "inside a <frame>, <iframe>, <embed>, or <object>.\n\n"
+            "Why it is a security problem:\n"
+            "  • Without this header, attackers can embed the target site in a transparent "
+            "iframe overlaid on a malicious page.  Users believe they are interacting with "
+            "the malicious page but are actually clicking on the invisible, underlying "
+            "target site — a technique called clickjacking.\n"
+            "  • Clickjacking can be used to trick users into: changing account settings, "
+            "initiating financial transactions, approving OAuth permissions, enabling camera "
+            "or microphone access, or 'liking' social media posts.\n"
+            "  • The Paypal clickjacking attack (2008) and the Twitter clickjacking worm "
+            "(2009) are well-known historical examples."
+        ),
+        "remediation": (
+            "  nginx:  add_header X-Frame-Options 'DENY' always;\n"
+            "  Apache: Header always set X-Frame-Options 'DENY'\n\n"
+            "  Options:\n"
+            "    DENY       — never allow framing (recommended for most apps)\n"
+            "    SAMEORIGIN — allow framing only by pages from the same origin\n\n"
+            "  Modern alternative:\n"
+            "    Use CSP frame-ancestors directive instead, which is more flexible:\n"
+            "    Content-Security-Policy: frame-ancestors 'none';\n\n"
+            "  Verify: curl -I https://<host>/ | grep -i x-frame"
+        ),
+    }),
+
+    ("referrer-policy", {
+        "analysis": (
+            "The Referrer-Policy header controls how much referrer information is included "
+            "in the HTTP Referer header when navigating away from the page.\n\n"
+            "Why it is a security problem:\n"
+            "  • Without a restrictive policy, the full URL of the page — including "
+            "path, query parameters, and fragments — is sent to third-party servers as "
+            "the Referer header.  This can leak sensitive information such as:\n"
+            "    - Password reset tokens in URLs (e.g., /reset?token=abc123)\n"
+            "    - Search queries\n"
+            "    - Session identifiers embedded in URLs\n"
+            "    - Internal application path structures\n"
+            "  • This data appears in third-party analytics, ad networks, CDN access "
+            "logs, and external API request logs — all outside your control."
+        ),
+        "remediation": (
+            "  nginx:  add_header Referrer-Policy 'strict-origin-when-cross-origin' always;\n"
+            "  Apache: Header always set Referrer-Policy 'strict-origin-when-cross-origin'\n\n"
+            "  Policy options (from most to least restrictive):\n"
+            "    no-referrer                    — never send Referer\n"
+            "    strict-origin-when-cross-origin — send full URL same-origin, "
+            "only origin cross-origin (recommended)\n"
+            "    same-origin                    — only send within same origin\n"
+            "    no-referrer-when-downgrade     — never send over HTTP (default browser)\n\n"
+            "  Avoid: 'unsafe-url' (always sends full URL including sensitive params)."
+        ),
+    }),
+
+    ("permissions-policy", {
+        "analysis": (
+            "Permissions-Policy (formerly Feature-Policy) controls which browser APIs and "
+            "hardware features the page and its embedded frames are permitted to access.\n\n"
+            "Why it is a security problem:\n"
+            "  • Without restrictions, any script running on the page (including injected "
+            "third-party scripts or XSS payloads) can request access to:\n"
+            "    - Camera and microphone (covert surveillance)\n"
+            "    - Geolocation (precise location tracking)\n"
+            "    - Payment APIs (financial fraud)\n"
+            "    - USB / Bluetooth devices\n"
+            "  • Third-party iframes (ads, widgets) may also silently request these "
+            "permissions unless explicitly restricted."
+        ),
+        "remediation": (
+            "  Add a restrictive Permissions-Policy header, disabling features your "
+            "application does not use:\n\n"
+            "  nginx:\n"
+            "    add_header Permissions-Policy "
+            "'camera=(), microphone=(), geolocation=(), payment=(), usb=()' always;\n\n"
+            "  Apache:\n"
+            "    Header always set Permissions-Policy "
+            "'camera=(), microphone=(), geolocation=(), payment=(), usb=()'\n\n"
+            "  Only list origins in the policy for features your app legitimately uses.\n"
+            "  Reference: developer.mozilla.org/en-US/docs/Web/HTTP/Permissions_Policy"
+        ),
+    }),
+
+    ("information disclosure", {
+        "analysis": (
+            "The server is returning response headers (such as Server, X-Powered-By, "
+            "X-AspNet-Version) that expose information about the underlying technology "
+            "stack and its version number.\n\n"
+            "Why it is a security problem:\n"
+            "  • Version disclosure directly enables targeted attacks.  An attacker who "
+            "knows the server runs 'Apache/2.4.49' can look up known CVEs for that exact "
+            "version and deploy exploits without any guessing.\n"
+            "  • In the Apache 2.4.49 example, this exact information would have allowed "
+            "attackers to immediately target CVE-2021-41773 (path traversal / RCE), one "
+            "of the most rapidly exploited CVEs in history.\n"
+            "  • Version information aids attackers in:\n"
+            "    - Selecting appropriate exploit payloads\n"
+            "    - Identifying end-of-life software\n"
+            "    - Targeting unpatched dependencies\n"
+            "    - Fingerprinting infrastructure for supply-chain attacks"
+        ),
+        "remediation": (
+            "  Remove or genericise technology-disclosing headers.\n\n"
+            "  nginx — suppress server header:\n"
+            "    server_tokens off;  (in http {} block)\n"
+            "    # For full suppression: compile with nginx_headers_more module\n"
+            "    more_clear_headers Server;\n\n"
+            "  Apache:\n"
+            "    ServerTokens Prod\n"
+            "    ServerSignature Off\n"
+            "    Header unset X-Powered-By\n"
+            "    Header always unset X-Powered-By\n\n"
+            "  PHP — suppress version header:\n"
+            "    In php.ini: expose_php = Off\n\n"
+            "  Node.js / Express:\n"
+            "    app.disable('x-powered-by')\n"
+            "    # or with helmet: app.use(helmet())\n\n"
+            "  Verify: curl -I https://<host>/ | grep -i 'server\\|x-powered'"
+        ),
+    }),
+
+    ("insecure cookie", {
+        "analysis": (
+            "Session cookies without the Secure flag can be transmitted over unencrypted "
+            "HTTP connections.  Cookies without the HttpOnly flag are accessible to "
+            "JavaScript running on the page.\n\n"
+            "Why it is a security problem:\n"
+            "  • Missing Secure flag: If a user visits the site over HTTP (e.g., after "
+            "following a non-HTTPS link, or before HSTS takes effect), the browser will "
+            "send the session cookie in cleartext.  An attacker on the same network can "
+            "intercept and steal the cookie, hijacking the authenticated session.\n"
+            "  • Missing HttpOnly flag: If the application has an XSS vulnerability (or "
+            "loads a compromised third-party script), JavaScript can read the cookie via "
+            "document.cookie and exfiltrate it to an attacker-controlled server, "
+            "achieving persistent session hijacking.\n\n"
+            "Impact: Session hijacking allows complete account takeover without knowing "
+            "the user's password."
+        ),
+        "remediation": (
+            "  Always set both flags on every authentication and session cookie.\n\n"
+            "  Set-Cookie: sessionid=abc123; Secure; HttpOnly; SameSite=Strict; Path=/\n\n"
+            "  Framework-specific:\n"
+            "  Django:   SESSION_COOKIE_SECURE = True, SESSION_COOKIE_HTTPONLY = True\n"
+            "  Rails:    config.session_store :cookie_store, secure: true, httponly: true\n"
+            "  Express:  app.use(session({ cookie: { secure: true, httpOnly: true } }))\n"
+            "  PHP:      session.cookie_secure = 1, session.cookie_httponly = 1 (php.ini)\n"
+            "  ASP.NET:  <httpCookies requireSSL='true' httpOnlyCookies='true' />\n\n"
+            "  Also add SameSite=Strict (or Lax) to prevent CSRF attacks.\n\n"
+            "  Verify: curl -I https://<host>/login | grep Set-Cookie"
+        ),
+    }),
+
+    ("http-to-https redirect", {
+        "analysis": (
+            "The server does not redirect HTTP requests to HTTPS.  Users who access the "
+            "site via http:// receive content over an unencrypted connection.\n\n"
+            "Why it is a security problem:\n"
+            "  • All data transmitted over HTTP — including form submissions, login "
+            "credentials, and session cookies — is sent in cleartext and can be read or "
+            "modified by anyone with access to the network path.\n"
+            "  • This enables credential theft, session hijacking, and content injection "
+            "(injecting ads, malware, or fake login forms into the page).\n"
+            "  • Many users type domain names without specifying a scheme; browsers default "
+            "to HTTP, making this a common real-world exposure."
+        ),
+        "remediation": (
+            "  nginx — add a redirect server block:\n"
+            "    server {\n"
+            "        listen 80;\n"
+            "        server_name example.com www.example.com;\n"
+            "        return 301 https://$host$request_uri;\n"
+            "    }\n\n"
+            "  Apache — in VirtualHost *:80:\n"
+            "    RewriteEngine On\n"
+            "    RewriteRule ^(.*)$ https://%{HTTP_HOST}$1 [R=301,L]\n\n"
+            "  HAProxy:\n"
+            "    redirect scheme https code 301 if !{ ssl_fc }\n\n"
+            "  Also add HSTS once HTTPS is stable to lock in the upgrade for returning "
+            "visitors.\n\n"
+            "  Verify: curl -I http://<host>/ | grep Location"
+        ),
+    }),
+
+    # -----------------------------------------------------------------------
+    # Application-level
+    # -----------------------------------------------------------------------
+
+    ("cors wildcard", {
+        "analysis": (
+            "Cross-Origin Resource Sharing (CORS) is the browser mechanism that controls "
+            "which origins can make cross-site HTTP requests and read the responses. "
+            "Setting Access-Control-Allow-Origin: * allows ANY website on the internet "
+            "to make requests to this API and read the responses.\n\n"
+            "Why it is a security problem:\n"
+            "  • If the API returns sensitive data (user information, tokens, internal "
+            "data), any malicious website visited by an authenticated user can silently "
+            "make requests to the API using the user's cookies/credentials and read the "
+            "full response body.\n"
+            "  • This enables cross-site data theft without any user interaction beyond "
+            "visiting the attacker's page.\n"
+            "  • The wildcard policy is especially dangerous when combined with credentials "
+            "(Access-Control-Allow-Credentials: true), though browsers prevent this "
+            "combination — it signals a misconfiguration in the developer's intent."
+        ),
+        "remediation": (
+            "  Replace the wildcard with an explicit allowlist of trusted origins:\n\n"
+            "  nginx:\n"
+            "    map $http_origin $cors_origin {\n"
+            "        'https://app.example.com' $http_origin;\n"
+            "        'https://admin.example.com' $http_origin;\n"
+            "        default '';\n"
+            "    }\n"
+            "    add_header Access-Control-Allow-Origin $cors_origin;\n\n"
+            "  Express.js (cors package):\n"
+            "    app.use(cors({\n"
+            "      origin: ['https://app.example.com', 'https://admin.example.com']\n"
+            "    }));\n\n"
+            "  Django (django-cors-headers):\n"
+            "    CORS_ALLOWED_ORIGINS = ['https://app.example.com']\n\n"
+            "  Never use CORS wildcard on authenticated APIs.  For truly public, "
+            "read-only, unauthenticated endpoints (e.g., public CDN fonts), wildcard "
+            "is acceptable."
+        ),
+    }),
+
+    ("cors allows arbitrary", {
+        "analysis": (
+            "The server reflected back the attacker-controlled Origin header value in the "
+            "Access-Control-Allow-Origin response.  This means the server validates "
+            "origins by reflection rather than against a fixed allowlist — any origin is "
+            "implicitly trusted.\n\n"
+            "Why it is a security problem:\n"
+            "  • Functionally equivalent to CORS wildcard, but even more dangerous: the "
+            "server also allows credentialed requests (cookies are sent), enabling "
+            "cross-origin data theft with full authentication context.\n"
+            "  • An attacker who controls https://evil.example.com can make requests to "
+            "this API using the victim's session cookies and read protected data."
+        ),
+        "remediation": (
+            "  Validate the Origin header against a hardcoded allowlist — do NOT reflect it:\n\n"
+            "  Python:\n"
+            "    ALLOWED_ORIGINS = {'https://app.example.com', 'https://admin.example.com'}\n"
+            "    def get_cors_origin(request_origin):\n"
+            "        return request_origin if request_origin in ALLOWED_ORIGINS else None\n\n"
+            "  Never use: response.headers['Access-Control-Allow-Origin'] = request.headers['Origin']\n\n"
+            "  Use a well-maintained CORS middleware library and provide an explicit "
+            "list of allowed origins."
+        ),
+    }),
+
+    ("php info", {
+        "analysis": (
+            "A phpinfo() page is publicly accessible.  This PHP built-in function outputs "
+            "a comprehensive dump of the PHP runtime configuration.\n\n"
+            "Why it is a security problem:\n"
+            "  • phpinfo() reveals: PHP version and compilation flags, all loaded "
+            "extensions and their versions, full php.ini settings (including paths to "
+            "sensitive files), environment variables (which may contain secrets), the "
+            "server software stack, directory paths, and network configuration.\n"
+            "  • This single page provides an attacker with a complete blueprint for "
+            "targeting known CVEs in the disclosed PHP version, exploiting misconfigured "
+            "extensions (e.g., disable_functions bypass), and locating config files.\n"
+            "  • In 2021, a phpinfo() disclosure was part of the attack chain in several "
+            "documented breaches."
+        ),
+        "remediation": (
+            "  1. Immediately remove all phpinfo() files from the production server:\n"
+            "       find /var/www -name 'phpinfo.php' -o -name 'info.php' | xargs rm\n"
+            "  2. Ensure your deployment pipeline never promotes phpinfo files to "
+            "production (add to .gitignore, add a CI check).\n"
+            "  3. In php.ini, disable the function as a defence-in-depth measure:\n"
+            "       disable_functions = phpinfo, exec, shell_exec, system, passthru\n"
+            "  4. Review other diagnostic files: /server-status, /server-info, /elmah.axd\n"
+            "  5. Verify: curl -s https://<host>/phpinfo.php | grep phpinfo → no output"
+        ),
+    }),
+
+    ("elmah", {
+        "analysis": (
+            "ELMAH (Error Logging Modules and Handlers) is an ASP.NET error-logging "
+            "library.  The /elmah.axd endpoint provides a web UI for browsing all "
+            "application errors logged by the server.\n\n"
+            "Why it is a security problem:\n"
+            "  • ELMAH error entries contain full exception stack traces, including "
+            "internal file paths, class names, connection strings, and sometimes "
+            "passwords or tokens that appeared in error messages.\n"
+            "  • Attackers can enumerate all recent exceptions to understand the "
+            "application's internal structure, identify vulnerable code paths, and "
+            "discover database credentials from connection string errors."
+        ),
+        "remediation": (
+            "  1. Restrict access to /elmah.axd in Web.config:\n"
+            "       <location path='elmah.axd'>\n"
+            "         <system.web>\n"
+            "           <authorization>\n"
+            "             <allow roles='Administrator' />\n"
+            "             <deny users='*' />\n"
+            "           </authorization>\n"
+            "         </system.web>\n"
+            "       </location>\n"
+            "  2. Or restrict by IP in IIS:\n"
+            "       <ipSecurity allowUnlisted='false'>\n"
+            "         <add ipAddress='10.0.0.0' subnetMask='255.255.255.0' allowed='true'/>\n"
+            "       </ipSecurity>\n"
+            "  3. Consider disabling the remote web UI entirely and logging to a file "
+            "or database only."
+        ),
+    }),
+
+    ("asp.net trace", {
+        "analysis": (
+            "The ASP.NET trace viewer (/trace.axd) is accessible.  This built-in "
+            "diagnostic tool records detailed request and response information for "
+            "debugging.\n\n"
+            "Why it is a security problem:\n"
+            "  • The trace log contains: all HTTP request/response headers, form POST "
+            "data (including passwords and tokens), session state, view state, server "
+            "variables, and application timing information.\n"
+            "  • This gives an attacker a live feed of sensitive user data submitted "
+            "to the application."
+        ),
+        "remediation": (
+            "  Disable trace in Web.config:\n"
+            "    <system.web>\n"
+            "      <trace enabled='false' localOnly='true' />\n"
+            "    </system.web>\n\n"
+            "  Never enable trace on production systems.  Use Application Insights or "
+            "a structured logging framework instead."
+        ),
+    }),
+
+    ("debug endpoint", {
+        "analysis": (
+            "A debug endpoint is publicly accessible.  Debug modes typically bypass "
+            "authentication, expose verbose error messages, and provide administrative "
+            "functionality intended only for developers.\n\n"
+            "Why it is a security problem:\n"
+            "  • Debug endpoints often expose: full stack traces with file paths and "
+            "line numbers, internal API documentation, environment variables, database "
+            "query logs, and in some frameworks (Django DEBUG=True, Spring Boot Actuator) "
+            "arbitrary code execution via built-in shell endpoints.\n"
+            "  • The Spring Boot Actuator /actuator/env, /actuator/heapdump, and "
+            "/actuator/shutdown endpoints have been exploited in numerous breaches."
+        ),
+        "remediation": (
+            "  1. Disable debug mode in all production configuration files:\n"
+            "     Django:  DEBUG = False (in settings.py)\n"
+            "     Flask:   app.run(debug=False)\n"
+            "     Laravel: APP_DEBUG=false (in .env)\n"
+            "  2. For Spring Boot Actuator, restrict endpoints:\n"
+            "     management.endpoints.web.exposure.include=health,info\n"
+            "     management.endpoint.health.show-details=never\n"
+            "  3. Block access to debug paths at the web server / WAF level.\n"
+            "  4. Verify that FLASK_ENV / APP_ENV environment variables are set to "
+            "'production' in your deployment environment."
+        ),
+    }),
+
+    ("swagger", {
+        "analysis": (
+            "A Swagger / OpenAPI UI is publicly accessible.  This exposes a full "
+            "interactive documentation of the API, including all endpoints, parameters, "
+            "authentication methods, and response schemas.\n\n"
+            "Why it is a security problem:\n"
+            "  • Swagger UI provides a ready-made reconnaissance blueprint for attackers, "
+            "revealing every API endpoint and parameter without any effort.\n"
+            "  • Unauthenticated Swagger access lets attackers: enumerate all endpoints "
+            "to look for unprotected functionality, test authentication bypasses directly "
+            "from the browser, understand data models to craft targeted injection attacks, "
+            "and discover internal / admin APIs that should not be public.\n"
+            "  • In several breach post-mortems, exposed Swagger UIs were cited as the "
+            "starting point for API exploitation."
+        ),
+        "remediation": (
+            "  1. Require authentication to access Swagger UI:\n"
+            "     Spring Boot: @SecurityRequirement on Swagger endpoint\n"
+            "     FastAPI:     Disable in production or add dependency\n"
+            "     Django REST: Set DEFAULT_AUTHENTICATION_CLASSES\n"
+            "  2. Restrict by IP allowlist (corporate network / VPN only).\n"
+            "  3. Completely disable Swagger UI in production if not needed:\n"
+            "     Spring Boot: springdoc.swagger-ui.enabled=false\n"
+            "     FastAPI:     FastAPI(docs_url=None, redoc_url=None)\n"
+            "  4. If public API docs are required by design, ensure no sensitive "
+            "internal endpoints or auth tokens appear in the spec."
+        ),
+    }),
+
+    ("graphql", {
+        "analysis": (
+            "A GraphQL endpoint is accessible.  If introspection is enabled, an attacker "
+            "can query the full schema — every type, field, query, mutation, and "
+            "subscription — without authentication.\n\n"
+            "Why it is a security problem:\n"
+            "  • GraphQL introspection is the equivalent of Swagger for GraphQL: it gives "
+            "a complete map of the API's capabilities.\n"
+            "  • Beyond enumeration, unrestricted GraphQL queries can enable:\n"
+            "    - Batch querying attacks (thousands of queries in one request)\n"
+            "    - Deeply nested queries causing server resource exhaustion\n"
+            "    - IDOR via predictable object IDs discoverable through the schema\n"
+            "  • Several high-severity GraphQL vulnerabilities (HackerOne reports) "
+            "involved introspection-based schema discovery leading to privilege escalation."
+        ),
+        "remediation": (
+            "  1. Disable introspection in production:\n"
+            "     Apollo Server:   playground: false, introspection: false\n"
+            "     graphene-django: GRAPHENE = {'SCHEMA': ..., 'RELAY_CONNECTION_MAX_LIMIT': 100}\n"
+            "  2. Require authentication for all GraphQL operations.\n"
+            "  3. Implement query depth limiting and query complexity analysis:\n"
+            "     graphql-depth-limit, graphql-validation-complexity\n"
+            "  4. Rate-limit GraphQL requests separately from REST endpoints.\n"
+            "  5. If introspection is needed by legitimate clients, protect it with a "
+            "separate API key or IP allowlist."
+        ),
+    }),
+
+    # -----------------------------------------------------------------------
+    # Sensitive file / path exposure
+    # -----------------------------------------------------------------------
+
+    (".env", {
+        "analysis": (
+            "A .env (dotenv) file is publicly accessible.  These files are used by "
+            "frameworks (Laravel, Django, Node.js) to store runtime configuration and "
+            "secrets outside of the source tree.\n\n"
+            "Why it is a security problem:\n"
+            "  • .env files typically contain: database credentials (host, user, password, "
+            "database name), API keys and secrets (payment processors, email services, "
+            "cloud providers), encryption keys and JWT secrets, third-party OAuth "
+            "credentials, and internal service URLs.\n"
+            "  • A single exposed .env file is often sufficient for complete compromise: "
+            "the attacker gains database access for data exfiltration, API key access for "
+            "financial fraud or mass email abuse, and application secret keys for "
+            "session forgery.\n"
+            "  • This vulnerability is trivially exploitable with a single HTTP GET request "
+            "and has been the root cause of numerous high-profile breaches.\n\n"
+            "CRITICAL severity: Treat this as an active breach until proven otherwise."
+        ),
+        "remediation": (
+            "  IMMEDIATE ACTIONS (treat as incident):\n"
+            "  1. Block access to .env immediately:\n"
+            "       nginx:  location ~ /\\.env { deny all; return 404; }\n"
+            "       Apache: <Files .env><Require all denied></Files>\n"
+            "  2. Rotate ALL secrets contained in the exposed .env:\n"
+            "       - Database password → change immediately, update connection strings\n"
+            "       - API keys → revoke in the respective service dashboards\n"
+            "       - JWT/session secrets → rotate (this invalidates all active sessions)\n"
+            "       - Cloud provider credentials (AWS_ACCESS_KEY, etc.) → revoke in IAM\n"
+            "  3. Review server access logs to determine if the file was accessed and by "
+            "whom:\n"
+            "       grep '\\.env' /var/log/nginx/access.log\n"
+            "  4. Check whether any credentials from the .env have been used maliciously "
+            "(cloud provider audit logs, database query logs, etc.).\n\n"
+            "  LONG-TERM HARDENING:\n"
+            "  5. Never store .env files in the web root.  Move secrets to environment "
+            "variables injected at deployment time (Docker secrets, Kubernetes secrets, "
+            "AWS Secrets Manager, HashiCorp Vault).\n"
+            "  6. Add .env to .gitignore and verify it is not committed to source control.\n"
+            "  7. Add a web server rule to block all dotfiles: location ~ /\\. { deny all; }"
+        ),
+    }),
+
+    (".git", {
+        "analysis": (
+            "The .git directory (or at minimum the .git/HEAD file) is publicly accessible. "
+            "Git repositories contain the complete version history of the source code.\n\n"
+            "Why it is a security problem:\n"
+            "  • The entire source code of the application can be reconstructed from the "
+            "exposed .git objects.  Tools like git-dumper or GitTools automate this.\n"
+            "  • Source code exposure enables:\n"
+            "    - Discovery of hardcoded secrets (API keys, passwords) in commit history "
+            "even if they were later removed\n"
+            "    - Understanding of internal business logic to craft targeted attacks\n"
+            "    - Identification of all SQL queries, API endpoints, and authentication logic\n"
+            "    - Finding previously fixed vulnerabilities that may be exploitable in "
+            "the current version\n"
+            "  • This vulnerability has been exploited in numerous breaches, including "
+            "the 2021 Codecov supply chain attack."
+        ),
+        "remediation": (
+            "  1. Block access immediately:\n"
+            "       nginx:  location ~ /\\.git { deny all; return 404; }\n"
+            "       Apache: <DirectoryMatch '^.*\\.git'>Require all denied</DirectoryMatch>\n"
+            "  2. Audit what was exposed:\n"
+            "       Use git-dumper to reconstruct the repo as an attacker would:\n"
+            "       git-dumper https://<host>/.git /tmp/repo-dump\n"
+            "       grep -r 'password\\|secret\\|api_key\\|token' /tmp/repo-dump\n"
+            "  3. Rotate any secrets found in the repository history.\n"
+            "  4. Run git-secrets or truffleHog on the repository to find all historical "
+            "secret leaks.\n"
+            "  5. Never deploy .git directories to web-accessible locations.  Use CI/CD "
+            "pipelines that deploy only built artefacts, not source repositories.\n"
+            "  6. Add a web server rule to block all dotfiles: location ~ /\\. { deny all; }"
+        ),
+    }),
+
+    ("environment file", {
+        "analysis": (
+            "An environment configuration file is publicly accessible.  See the .env "
+            "analysis above for full details on impact."
+        ),
+        "remediation": (
+            "  Block immediate access and rotate all exposed credentials.  "
+            "See the .env remediation section for detailed steps."
+        ),
+    }),
+
+    ("git repository", {
+        "analysis": (
+            "The Git repository directory is publicly accessible.  See the .git "
+            "analysis above for full details on impact."
+        ),
+        "remediation": (
+            "  Block access and audit for secret exposure.  "
+            "See the .git remediation section for detailed steps."
+        ),
+    }),
+
+    ("phpmyadmin", {
+        "analysis": (
+            "phpMyAdmin — a web-based MySQL/MariaDB administration interface — is publicly "
+            "accessible.  This tool provides full GUI access to all databases on the server.\n\n"
+            "Why it is a security problem:\n"
+            "  • phpMyAdmin has had numerous critical RCE and authentication bypass "
+            "vulnerabilities over the years.  Exposing it to the internet dramatically "
+            "increases the attack surface.\n"
+            "  • Even without a software vulnerability, the login page is a target for "
+            "credential brute-force attacks.  Default and weak database passwords are "
+            "commonly exploited.\n"
+            "  • Successful authentication gives full SQL access: data exfiltration, "
+            "data destruction, and often OS-level code execution via SELECT INTO OUTFILE "
+            "or MySQL UDFs."
+        ),
+        "remediation": (
+            "  1. Restrict access to trusted IP addresses only:\n"
+            "       nginx:\n"
+            "         location /phpmyadmin/ {\n"
+            "             allow 10.0.0.0/8;  # corporate network\n"
+            "             deny all;\n"
+            "         }\n"
+            "  2. Move phpMyAdmin to a non-guessable URL path.\n"
+            "  3. Require HTTP Basic Auth as an additional layer before phpMyAdmin's own "
+            "login.\n"
+            "  4. Place phpMyAdmin behind a VPN — it should never be accessible from "
+            "the public internet.\n"
+            "  5. Keep phpMyAdmin updated to the latest version.\n"
+            "  6. Consider using a dedicated database management tool that does not "
+            "require a web-accessible interface."
+        ),
+    }),
+
+    ("apache mod_status", {
+        "analysis": (
+            "Apache mod_status (/server-status) is publicly accessible.  This module "
+            "provides a real-time view of the Apache server's internal state.\n\n"
+            "Why it is a security problem:\n"
+            "  • The status page discloses: current requests being processed (including "
+            "full URLs with query parameters — potentially containing tokens or PII), "
+            "worker thread status, CPU and memory load, uptime, and compiled-in modules.\n"
+            "  • URL disclosure from in-flight requests can expose session tokens, "
+            "password reset links, and other sensitive data to anyone who polls the page."
+        ),
+        "remediation": (
+            "  Restrict access in your Apache configuration:\n"
+            "    <Location /server-status>\n"
+            "        Require ip 127.0.0.1 ::1\n"
+            "    </Location>\n\n"
+            "  Or disable the module entirely if not needed:\n"
+            "    a2dismod status && systemctl reload apache2\n\n"
+            "  Apply the same restriction to /server-info (mod_info)."
+        ),
+    }),
+
+    # -----------------------------------------------------------------------
+    # Port-based issues
+    # -----------------------------------------------------------------------
+
+    ("telnet", {
+        "analysis": (
+            "Telnet (TCP port 23) is an unencrypted remote shell protocol created in 1969. "
+            "It transmits all data — including usernames, passwords, and every command "
+            "typed — in plain ASCII text.\n\n"
+            "Why it is a security problem:\n"
+            "  • Any attacker with a network vantage point (same LAN, ISP, BGP hijack, "
+            "or rogue access point) can passively capture full Telnet sessions including "
+            "credentials using tools like Wireshark or tcpdump.\n"
+            "  • Telnet lacks any form of server authentication, making it trivially "
+            "vulnerable to MITM attacks where an attacker impersonates the server.\n"
+            "  • Telnet is listed as a prohibited protocol in PCI-DSS, HIPAA, and most "
+            "government security frameworks.  Its presence on an internet-facing host "
+            "represents a severe compliance failure."
+        ),
+        "remediation": (
+            "  1. Disable the Telnet daemon immediately:\n"
+            "       systemctl stop telnet\n"
+            "       systemctl disable telnet\n"
+            "       # Or for xinetd-managed telnet:\n"
+            "       systemctl stop xinetd\n"
+            "  2. Block port 23 at the firewall even after disabling the service:\n"
+            "       iptables -A INPUT -p tcp --dport 23 -j DROP\n"
+            "  3. Replace with SSH (port 22) for all remote administration.\n"
+            "  4. Configure SSH hardening:\n"
+            "       PermitRootLogin no\n"
+            "       PasswordAuthentication no  # use key-based auth only\n"
+            "       AllowUsers deploy admin    # restrict to named accounts\n"
+            "  5. Verify Telnet is closed: nc -zv <host> 23 → connection refused"
+        ),
+    }),
+
+    ("redis", {
+        "analysis": (
+            "Redis (TCP port 6379) is accessible from the internet.  Redis is an in-memory "
+            "data store designed to be used only on trusted internal networks — it has "
+            "no authentication by default in older versions.\n\n"
+            "Why it is a security problem:\n"
+            "  • Without authentication, any client can connect and execute any Redis "
+            "command — including reading all keys (KEYS *), flushing the database "
+            "(FLUSHALL), and using CONFIG SET to overwrite files on the server.\n"
+            "  • The CONFIG SET dir / CONFIG SET dbfilename attack is a well-documented "
+            "technique to achieve OS-level write access by writing a cron job or SSH "
+            "authorised key to disk, leading to Remote Code Execution (RCE).\n"
+            "  • In 2018–2020, internet-exposed Redis instances were the vector for "
+            "several cryptocurrency mining botnet campaigns (e.g., Watchbog, Muhstik) "
+            "that compromised hundreds of thousands of servers."
+        ),
+        "remediation": (
+            "  1. Block port 6379 at the firewall immediately:\n"
+            "       iptables -A INPUT -p tcp --dport 6379 -j DROP\n"
+            "  2. Bind Redis to localhost only in redis.conf:\n"
+            "       bind 127.0.0.1 ::1\n"
+            "  3. Enable Redis password authentication:\n"
+            "       requirepass <strong-random-password>\n"
+            "  4. If Redis must be accessible from multiple machines, use a private "
+            "network / VPC subnet and restrict access via security groups.\n"
+            "  5. Enable protected mode (default in Redis 3.2+):\n"
+            "       protected-mode yes\n"
+            "  6. Audit Redis keys for any attacker-placed cron jobs or SSH keys:\n"
+            "       redis-cli KEYS '*' | xargs redis-cli GET\n"
+            "  7. Review /etc/cron.d/ and ~/.ssh/authorized_keys for unauthorised entries."
+        ),
+    }),
+
+    ("elasticsearch", {
+        "analysis": (
+            "Elasticsearch (TCP port 9200) is accessible from the internet.  Elasticsearch "
+            "is a document search and analytics engine that in older versions has no "
+            "authentication or authorisation by default.\n\n"
+            "Why it is a security problem:\n"
+            "  • Without authentication, any client can: enumerate all indices (GET /_cat/indices), "
+            "read all documents, modify or delete data, and shut down the cluster.\n"
+            "  • Elasticsearch indices frequently contain sensitive data: user PII, "
+            "application logs with request details, payment records, healthcare data, "
+            "and more.\n"
+            "  • Exposed Elasticsearch instances are the single most common source of "
+            "large-scale data breaches discovered by security researchers.  Billions of "
+            "records have been exposed via unauthenticated Elasticsearch APIs, including "
+            "multiple Fortune 500 companies."
+        ),
+        "remediation": (
+            "  1. Block port 9200 at the firewall immediately.\n"
+            "  2. Bind Elasticsearch to localhost or a private network interface:\n"
+            "       In elasticsearch.yml:  network.host: 127.0.0.1\n"
+            "  3. Enable X-Pack Security (built into Elasticsearch 6.8+, 7.x+):\n"
+            "       xpack.security.enabled: true\n"
+            "       xpack.security.http.ssl.enabled: true\n"
+            "       Then set passwords: elasticsearch-setup-passwords interactive\n"
+            "  4. Audit data: check whether sensitive indices were accessed externally "
+            "by reviewing Elasticsearch audit logs.\n"
+            "  5. For cloud deployments, use VPC-internal endpoints and security groups "
+            "rather than public IPs."
+        ),
+    }),
+
+    ("rdp", {
+        "analysis": (
+            "Remote Desktop Protocol (RDP, TCP port 3389) is exposed to the internet.  "
+            "RDP provides full graphical remote control of Windows systems.\n\n"
+            "Why it is a security problem:\n"
+            "  • RDP is one of the most frequently targeted services by ransomware operators "
+            "and initial-access brokers.  Compromised RDP credentials are sold in criminal "
+            "marketplaces and used to deploy ransomware (REvil, LockBit, Conti).\n"
+            "  • BlueKeep (CVE-2019-0708) is a wormable pre-authentication RCE in older "
+            "Windows versions.  DejaBlue and related vulnerabilities affect Windows 10 "
+            "and Server 2019.\n"
+            "  • Even on patched systems, brute-force attacks against RDP logins are "
+            "automated and continuous — internet-facing RDP is attacked within hours of "
+            "exposure.\n"
+            "  • RDP session traffic, while encrypted, has historically been vulnerable "
+            "to MITM attacks when NLA (Network Level Authentication) is disabled."
+        ),
+        "remediation": (
+            "  1. Immediately restrict RDP to a VPN or specific IP allowlist at the "
+            "firewall — it must not be reachable from the open internet.\n"
+            "       Windows Firewall: netsh advfirewall firewall add rule name='Block RDP' "
+            "protocol=TCP dir=in localport=3389 action=block\n"
+            "  2. Enable Network Level Authentication (NLA):\n"
+            "       Computer Configuration → Administrative Templates → "
+            "Windows Components → Remote Desktop Services → Require NLA\n"
+            "  3. Use a VPN (WireGuard, OpenVPN) or Azure Bastion / AWS Systems Manager "
+            "Session Manager as the only access path.\n"
+            "  4. Enable MFA on RDP accounts (Microsoft Authenticator, Duo).\n"
+            "  5. Apply all Windows security patches, especially those addressing "
+            "BlueKeep (CVE-2019-0708) and DejaBlue.\n"
+            "  6. Review RDP event logs (Event ID 4625) for evidence of prior brute-force "
+            "attempts."
+        ),
+    }),
+
+    # -----------------------------------------------------------------------
+    # DNS / Email configuration
+    # -----------------------------------------------------------------------
+
+    ("missing spf", {
+        "analysis": (
+            "Sender Policy Framework (SPF) is a DNS-based email authentication mechanism. "
+            "An SPF record in the domain's DNS specifies which mail servers are authorised "
+            "to send email on behalf of the domain.\n\n"
+            "Why it is a security problem:\n"
+            "  • Without SPF, any mail server on the internet can send email with a "
+            "From: address at your domain and many mail servers will accept it.  This "
+            "enables:\n"
+            "    - Phishing attacks impersonating your company to your customers, "
+            "partners, or employees\n"
+            "    - Business Email Compromise (BEC) attacks impersonating executives\n"
+            "    - Spam campaigns that damage your domain's reputation\n"
+            "  • BEC fraud cost businesses over $2.7 billion in 2022 (FBI IC3 report), "
+            "and missing SPF records are a common enabler."
+        ),
+        "remediation": (
+            "  1. Identify all mail servers that legitimately send email for your domain "
+            "(your own MTA, Google Workspace, Microsoft 365, Mailchimp, SendGrid, etc.).\n"
+            "  2. Create a TXT record at the apex domain:\n"
+            "       If using Google Workspace:\n"
+            "         v=spf1 include:_spf.google.com ~all\n"
+            "       If using Microsoft 365:\n"
+            "         v=spf1 include:spf.protection.outlook.com ~all\n"
+            "       If using your own mail server:\n"
+            "         v=spf1 ip4:<your-mail-server-ip> ~all\n"
+            "  3. Start with ~all (soft fail) to monitor before switching to -all (hard "
+            "fail) to avoid false positives.\n"
+            "  4. Verify: dig TXT example.com | grep spf\n"
+            "  5. Also implement DKIM and DMARC for comprehensive email authentication."
+        ),
+    }),
+
+    ("missing dmarc", {
+        "analysis": (
+            "DMARC (Domain-based Message Authentication, Reporting and Conformance) is an "
+            "email authentication policy that builds on SPF and DKIM.  It tells receiving "
+            "mail servers what to do with messages that fail SPF or DKIM checks.\n\n"
+            "Why it is a security problem:\n"
+            "  • Without DMARC, even if SPF and DKIM are configured, receiving servers "
+            "have no instruction on what to do with spoofed emails that fail these checks "
+            "— they may still deliver them.\n"
+            "  • DMARC with a 'reject' or 'quarantine' policy prevents spoofed emails "
+            "from reaching recipients' inboxes.\n"
+            "  • DMARC also provides reporting: daily aggregate reports (RUA) give "
+            "visibility into who is sending email on your behalf, allowing detection of "
+            "unauthorised sending.\n"
+            "  • Google and Yahoo now require DMARC for bulk senders (2024 policy), and "
+            "many enterprises refuse email from DMARC-less domains."
+        ),
+        "remediation": (
+            "  1. Ensure SPF and DKIM are correctly configured first (DMARC builds on them).\n"
+            "  2. Add a DMARC TXT record at _dmarc.<yourdomain>:\n"
+            "       Start in monitor mode:\n"
+            "         v=DMARC1; p=none; rua=mailto:dmarc-reports@yourdomain.com\n"
+            "  3. Review the daily aggregate reports to understand your email flows.\n"
+            "  4. Progress to enforcement:\n"
+            "         v=DMARC1; p=quarantine; pct=50; rua=mailto:dmarc-reports@yourdomain.com\n"
+            "       Then:\n"
+            "         v=DMARC1; p=reject; rua=mailto:dmarc-reports@yourdomain.com\n"
+            "  5. Use DMARC reporting services (dmarcian, Postmark, Agari) to parse and "
+            "visualise reports.\n"
+            "  6. Verify: dig TXT _dmarc.example.com | grep DMARC"
+        ),
+    }),
+
+    ("dns resolution failed", {
+        "analysis": (
+            "The target hostname could not be resolved via DNS.  The scanner could not "
+            "proceed with further checks.\n\n"
+            "This may indicate: a non-existent or misspelled hostname, DNS server "
+            "unavailability, or a domain that has been taken down."
+        ),
+        "remediation": (
+            "  1. Verify the hostname is correct.\n"
+            "  2. Test DNS resolution manually: dig <hostname> or nslookup <hostname>\n"
+            "  3. If the domain exists, verify DNS server accessibility.\n"
+            "  4. Check whether the domain has expired: whois <hostname>"
+        ),
+    }),
+]
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def lookup(title: str) -> dict[str, str] | None:
+    """Return the knowledge-base entry for the given finding title, or None.
+
+    Matching is done by checking whether each KB keyword appears as a
+    substring of the lowercase finding title.  The first match wins,
+    so more-specific entries must appear earlier in the list.
+    """
+    title_lower = title.lower()
+    for keyword, entry in _KB:
+        if keyword in title_lower:
+            return entry
+    return None

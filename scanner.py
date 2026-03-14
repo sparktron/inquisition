@@ -21,6 +21,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _deduplicate(findings: list[Finding]) -> list[Finding]:
+    """Remove duplicate findings that share the same title, category, and severity.
+
+    When modules run concurrently against both HTTP and HTTPS, the same
+    structural issue (e.g. 'Missing header: CSP') can surface twice.  Keep
+    the first occurrence, which tends to carry the most evidence detail.
+    """
+    seen: set[tuple] = set()
+    deduped: list[Finding] = []
+    for f in findings:
+        key = (f.title.lower(), f.category, f.severity)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(f)
+    return deduped
+
+
 def _run_module(module: BaseModule) -> tuple[str, list[Finding], list[str]]:
     """Run a single module and return (module_name, findings, errors)."""
     errors: list[str] = []
@@ -33,7 +50,13 @@ def _run_module(module: BaseModule) -> tuple[str, list[Finding], list[str]]:
     return module.name, findings, errors
 
 
-def run_scan(config: ScanConfig, *, skip_auth: bool = False) -> None:
+def run_scan(
+    config: ScanConfig,
+    *,
+    skip_auth: bool = False,
+    brief: bool = False,
+    output_path: str | None = None,
+) -> None:
     """Execute a full scan with the given configuration."""
 
     # --- Validation ---
@@ -89,6 +112,13 @@ def run_scan(config: ScanConfig, *, skip_auth: bool = False) -> None:
             except Exception as exc:
                 report.errors.append(f"CVE lookup for {cpe}: {exc}")
 
+    # --- Deduplicate findings ---
+    before = len(report.findings)
+    report.findings = _deduplicate(report.findings)
+    dupes = before - len(report.findings)
+    if dupes:
+        print(f"\n[*] Removed {dupes} duplicate finding(s)")
+
     # --- Misconfiguration checks ---
     report.misconfigurations = derive_misconfigurations(report.findings)
     if report.misconfigurations:
@@ -98,9 +128,18 @@ def run_scan(config: ScanConfig, *, skip_auth: bool = False) -> None:
     report.finished_at = datetime.now(timezone.utc)
 
     # --- Render report ---
-    output = render(report, config.report_format)
-    print(f"\n{'=' * 72}")
-    print(output)
+    output = render(report, config.report_format, brief=brief)
+
+    if output_path:
+        try:
+            with open(output_path, "w", encoding="utf-8") as fh:
+                fh.write(output)
+            print(f"\n[*] Report saved to: {output_path}")
+        except OSError as exc:
+            print(f"\n[!] Could not write report to {output_path}: {exc}", file=sys.stderr)
+    else:
+        print(f"\n{'=' * 72}")
+        print(output)
 
     # Summary line
     counts = report.summary_counts()

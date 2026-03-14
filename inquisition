@@ -102,11 +102,43 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip the interactive authorization prompt",
     )
 
+    parser.add_argument(
+        "-o", "--output",
+        metavar="FILE",
+        default=None,
+        help=(
+            "Write the report to FILE instead of stdout.  "
+            "The file extension is used as a hint when --format is not set "
+            "(.html → html, .json → json, otherwise text)."
+        ),
+    )
+
+    parser.add_argument(
+        "--brief",
+        action="store_true",
+        default=False,
+        help=(
+            "Suppress the deep-dive ISSUE ANALYSIS and REMEDIATION GUIDE sections "
+            "for a more concise text report."
+        ),
+    )
+
     return parser
 
 
-def parse_args(argv: list[str] | None = None) -> tuple[ScanConfig, bool]:
-    """Parse CLI arguments and return (ScanConfig, skip_auth)."""
+def _infer_format(output_path: str | None, explicit_format: str) -> ReportFormat:
+    """Infer report format from output file extension when not explicitly set."""
+    if output_path and explicit_format == ReportFormat.TEXT.value:
+        lower = output_path.lower()
+        if lower.endswith(".html") or lower.endswith(".htm"):
+            return ReportFormat.HTML
+        if lower.endswith(".json"):
+            return ReportFormat.JSON
+    return ReportFormat(explicit_format)
+
+
+def parse_args(argv: list[str] | None = None) -> tuple[ScanConfig, bool, bool, str | None]:
+    """Parse CLI arguments and return (ScanConfig, skip_auth, brief, output_path)."""
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -119,10 +151,12 @@ def parse_args(argv: list[str] | None = None) -> tuple[ScanConfig, bool]:
         depth = ScanDepth(args.depth) if args.depth else ScanDepth.STANDARD
         skip_auth = args.yes
 
+    fmt = _infer_format(args.output, args.format)
+
     config = ScanConfig(
         target=args.target,
         depth=depth,
-        report_format=ReportFormat(args.format),
+        report_format=fmt,
         max_threads=args.threads,
         safe_mode=args.safe_mode,
         dry_run=args.dry_run,
@@ -130,16 +164,16 @@ def parse_args(argv: list[str] | None = None) -> tuple[ScanConfig, bool]:
         timeout=args.timeout,
     )
 
-    return config, skip_auth
+    return config, skip_auth, args.brief, args.output
 
 
 def main(argv: list[str] | None = None) -> None:
     """Entry point."""
     from scanner import run_scan
 
-    config, skip_auth = parse_args(argv)
+    config, skip_auth, brief, output_path = parse_args(argv)
     try:
-        run_scan(config, skip_auth=skip_auth)
+        run_scan(config, skip_auth=skip_auth, brief=brief, output_path=output_path)
     except KeyboardInterrupt:
         print("\n[!] Scan interrupted by user.", file=sys.stderr)
         sys.exit(130)
