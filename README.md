@@ -1,6 +1,6 @@
 # inquisition
 
-A read-only website fingerprinting and security reconnaissance tool. Identifies technologies, frameworks, open ports, TLS configuration, HTTP security headers, and known vulnerabilities on a target host.
+A read-only website fingerprinting and security reconnaissance tool. Identifies technologies, frameworks, open ports, TLS configuration, HTTP security headers, and known vulnerabilities on a target host — then correlates findings against known CVEs.
 
 ## Features
 
@@ -16,8 +16,8 @@ A read-only website fingerprinting and security reconnaissance tool. Identifies 
 
 ## Requirements
 
-- Python 3.8+
-- `pip install -r requirements.txt`
+- Python 3.10+
+- pip
 
 ## Installation
 
@@ -25,6 +25,7 @@ A read-only website fingerprinting and security reconnaissance tool. Identifies 
 git clone https://github.com/sparktron/inquisition.git
 cd inquisition
 pip install -r requirements.txt
+pip install -e .
 ```
 
 ## Usage
@@ -33,7 +34,7 @@ pip install -r requirements.txt
 ./inquisition <target> [options]
 ```
 
-The target is a hostname or IP address (e.g. `example.com` or `93.184.216.34`).
+The target is a **hostname or IP address** (e.g. `example.com` or `93.184.216.34`).
 
 ### Auto mode
 
@@ -45,33 +46,26 @@ Run a full deep assessment with no user interaction:
 
 Auto mode sets scan depth to `deep` and suppresses the authorization prompt. Use this for scripted or unattended runs where you have pre-authorized the target.
 
-### Standard scan
+### Basic scan
 
 ```bash
 ./inquisition example.com
 ```
 
-Prompts for authorization confirmation, then runs a standard-depth scan.
+Before sending any traffic, inquisition displays an authorization banner and asks you to confirm that you have permission to scan the target. Use `-y` to skip this prompt in automated workflows.
 
-### Options
+### Scan depth
 
+```bash
+# Quick — top ports only, basic checks
+./inquisition example.com -d quick
+
+# Standard (default) — balanced coverage
+./inquisition example.com -d standard
+
+# Deep — full port range, thorough probing
+./inquisition example.com -d deep
 ```
-positional arguments:
-  target                Hostname or IP address to scan
-
-options:
-  --auto                Full deep assessment, no user interaction
-  -d, --depth           Scan depth: quick | standard (default) | deep
-  -f, --format          Output format: text (default) | json
-  -t, --threads         Concurrent threads (default: 10)
-  --rate-limit          Seconds between requests (default: 0.1)
-  --timeout             Per-request timeout in seconds (default: 10)
-  --dry-run             Simulate scan without sending network traffic
-  -y, --yes             Skip the authorization prompt
-  --no-safe-mode        Disable read-only restrictions (not recommended)
-```
-
-### Scan depths
 
 | Depth | Ports scanned | Checks |
 |---|---|---|
@@ -79,40 +73,99 @@ options:
 | `standard` | 20 well-known ports | Standard checks including path probing |
 | `deep` | Full 1–1024 range | All checks, thorough probing |
 
-### Examples
+### Output format
 
 ```bash
-# Auto mode — full deep scan, no prompts
-./inquisition --auto example.com
+# Human-readable text (default)
+./inquisition example.com -f text
 
-# Quick scan, skip auth prompt
-./inquisition -d quick -y example.com
+# Machine-readable JSON
+./inquisition example.com -f json
 
-# Deep scan with JSON output
-./inquisition -d deep -f json example.com
-
-# Save report to file
-./inquisition --auto example.com > report.txt
-
-# Save JSON report
-./inquisition --auto -f json example.com > report.json
-
-# Dry run — no network traffic
-./inquisition --dry-run example.com
+# Save JSON report to a file
+./inquisition example.com -f json > report.json
 ```
 
-## Output
+### Safe mode
 
-Text output includes:
+Safe mode (enabled by default) restricts all probes to read-only operations — no exploit payloads, no authentication bypass attempts, no injection. Disable it only when you have explicit authorization and understand the implications.
 
-- Executive summary with severity breakdown
-- Remediation priority matrix
-- Detailed findings grouped by severity
-- CVE correlation results
-- Misconfiguration summary
-- Tool reference table (Nmap, testssl.sh, Nuclei, WPScan, etc.)
+```bash
+# Safe mode on (default)
+./inquisition example.com --safe-mode
 
-JSON output contains the same data in structured form suitable for ingestion by other tools.
+# Disable safe mode
+./inquisition example.com --no-safe-mode
+```
+
+### Dry run
+
+Preview the scan configuration without sending any network traffic:
+
+```bash
+./inquisition example.com --dry-run
+```
+
+### Concurrency and rate limiting
+
+```bash
+# Custom thread count (default: 10)
+./inquisition example.com -t 5
+
+# Minimum seconds between requests (default: 0.1)
+./inquisition example.com --rate-limit 0.5
+
+# Per-request timeout in seconds (default: 10)
+./inquisition example.com --timeout 30
+```
+
+### Full options reference
+
+| Flag | Default | Description |
+|---|---|---|
+| `target` | — | Hostname or IP to scan |
+| `--auto` | off | Full deep assessment, no user interaction |
+| `-d`, `--depth` | `standard` | Scan depth: `quick`, `standard`, `deep` |
+| `-f`, `--format` | `text` | Output format: `text`, `json` |
+| `-t`, `--threads` | `10` | Max concurrent threads |
+| `--safe-mode` / `--no-safe-mode` | on | Restrict to read-only probes |
+| `--dry-run` | off | Preview without sending traffic |
+| `--rate-limit` | `0.1` | Seconds between requests |
+| `--timeout` | `10` | Per-request timeout (seconds) |
+| `-y`, `--yes` | off | Skip authorization prompt |
+
+## Example output
+
+```
+########################################################################
+  INQUISITION — Security Reconnaissance Report
+########################################################################
+  Target   : example.com
+  Started  : 2026-03-14 12:00:00 UTC
+  Finished : 2026-03-14 12:01:23 UTC (83.2s)
+  Depth    : standard
+  Mode     : safe
+
+========================================================================
+  EXECUTIVE SUMMARY
+========================================================================
+  Total findings: 12
+    HIGH      : 2
+    MEDIUM    : 5
+    LOW       : 3
+    INFO      : 2
+  CVEs correlated  : 3
+  Misconfigurations: 2
+
+========================================================================
+  REMEDIATION PRIORITY MATRIX
+========================================================================
+  #    Severity   Category         Title
+  ---- ---------- ---------------- --------------------------------------
+  1    HIGH       tls              TLS 1.0 enabled
+  2    HIGH       http_header      Content-Security-Policy missing
+  ...
+```
 
 ## Modules
 
@@ -127,7 +180,7 @@ JSON output contains the same data in structured form suitable for ingestion by 
 
 ## Legal
 
-Only use this tool against targets you own or have explicit written authorization to test. Unauthorized scanning may violate computer fraud and abuse laws.
+Only use this tool against targets you own or have explicit written authorization to test. Unauthorized scanning may violate computer fraud and abuse laws. The tool will prompt for authorization confirmation before each scan.
 
 ## License
 
