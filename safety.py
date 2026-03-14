@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 
-from inquisition.models import ScanConfig
+from models import ScanConfig
 
 
 _AUTHORIZATION_BANNER = """\

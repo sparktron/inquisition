@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from inquisition.models import (
+from models import (
     Finding,
     FindingCategory,
     ReportFormat,
@@ -14,7 +14,7 @@ from inquisition.models import (
     Severity,
     TOOL_REFERENCE,
 )
-from inquisition.vuln_correlation import tools_for_category
+from vuln_correlation import tools_for_category
 
 _SEV_ORDER = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO]
 

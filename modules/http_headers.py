@@ -6,8 +6,8 @@ from typing import Any
 
 import requests
 
-from inquisition.models import Finding, FindingCategory, Severity
-from inquisition.modules.base import BaseModule
+from models import Finding, FindingCategory, Severity
+from modules.base import BaseModule
 
 # Headers that should be present for good security posture
 _SECURITY_HEADERS: dict[str, dict[str, Any]] = {

@@ -8,15 +8,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from inquisition.models import ReportFormat, ScanReport, Severity
-from inquisition.modules import ALL_MODULES
-from inquisition.modules.base import BaseModule
-from inquisition.report import render
-from inquisition.safety import abort, enforce_dry_run, prompt_authorization, validate_config
-from inquisition.vuln_correlation import derive_misconfigurations, lookup_cves_for_cpe
+from models import ReportFormat, ScanReport, Severity
+from modules import ALL_MODULES
+from modules.base import BaseModule
+from report import render
+from safety import abort, enforce_dry_run, prompt_authorization, validate_config
+from vuln_correlation import derive_misconfigurations, lookup_cves_for_cpe
 
 if TYPE_CHECKING:
-    from inquisition.models import Finding, ScanConfig
+    from models import Finding, ScanConfig
 
 logger = logging.getLogger(__name__)
 

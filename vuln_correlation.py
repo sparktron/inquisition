@@ -9,7 +9,7 @@ from urllib.parse import quote
 
 import requests
 
-from inquisition.models import (
+from models import (
     CVERecord,
     Finding,
     FindingCategory,

@@ -6,8 +6,8 @@ import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING
 
-from inquisition.models import Finding, FindingCategory, ScanDepth, Severity
-from inquisition.modules.base import BaseModule
+from models import Finding, FindingCategory, ScanDepth, Severity
+from modules.base import BaseModule
 
 if TYPE_CHECKING:
     pass
