@@ -121,16 +121,41 @@ class HttpHeaderModule(BaseModule):
                 issues: list[str] = []
                 if not cookie.secure:
                     issues.append("missing Secure flag")
-                if "httponly" not in (cookie._rest.get("HttpOnly", "") or "").lower() and not cookie.has_nonstandard_attr("HttpOnly"):
+
+                # HttpOnly detection: requests stores the flag in _rest dict (case-insensitive key)
+                httponly_present = any(
+                    k.lower() == "httponly"
+                    for k in (cookie._rest or {})
+                )
+                if not httponly_present:
                     issues.append("missing HttpOnly flag")
+
+                # SameSite detection
+                samesite_val = next(
+                    (v for k, v in (cookie._rest or {}).items() if k.lower() == "samesite"),
+                    None,
+                )
+                if samesite_val is None:
+                    issues.append("missing SameSite attribute")
+                elif samesite_val.lower() == "none" and not cookie.secure:
+                    issues.append("SameSite=None without Secure flag (rejected by modern browsers)")
+                elif samesite_val.lower() not in ("strict", "lax", "none"):
+                    issues.append(f"invalid SameSite value: {samesite_val!r}")
+
                 if issues:
                     findings.append(Finding(
                         title=f"Insecure cookie: {cookie.name}",
                         category=FindingCategory.HTTP_HEADER,
                         severity=Severity.MEDIUM,
                         evidence=f"Cookie '{cookie.name}' — {', '.join(issues)}",
-                        impact="Cookie may be intercepted or accessed by scripts",
-                        remediation="Set Secure and HttpOnly flags on all cookies",
+                        impact=(
+                            "Cookie may be intercepted over HTTP (no Secure), "
+                            "accessed by scripts (no HttpOnly), or sent in CSRF requests (no SameSite)"
+                        ),
+                        remediation=(
+                            "Set Secure, HttpOnly, and SameSite=Strict (or Lax) on all cookies. "
+                            "Example: Set-Cookie: session=…; Secure; HttpOnly; SameSite=Strict"
+                        ),
                     ))
 
             # Only check HTTPS once for headers; HTTP mainly for redirect check
