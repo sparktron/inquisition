@@ -1168,6 +1168,354 @@ _KB: list[tuple[str, dict[str, str]]] = [
             "  4. Check whether the domain has expired: whois <hostname>"
         ),
     }),
+
+    # -----------------------------------------------------------------------
+    # WAF / CDN detection
+    # -----------------------------------------------------------------------
+    ("waf/cdn", {
+        "analysis": (
+            "A WAF (Web Application Firewall) or CDN (Content Delivery Network) layer was detected "
+            "in front of the target.  This is generally a positive security indicator, but requires "
+            "verification that the protective layer is actively enforcing rules rather than operating "
+            "in 'monitor-only' (log-only) mode.\n\n"
+            "WAFs can be bypassed through payload encoding, HTTP parameter pollution, chunked "
+            "transfer encoding, or by discovering origin IP addresses that bypass the WAF entirely. "
+            "CDNs may cache sensitive responses or strip security headers."
+        ),
+        "remediation": (
+            "  1. Verify WAF is in 'block' mode, not 'log/monitor' mode.\n"
+            "  2. Ensure the WAF ruleset is updated and covers OWASP Top 10.\n"
+            "  3. Block direct-to-origin requests: restrict origin server to accept connections "
+            "only from the WAF/CDN IP ranges.\n"
+            "  4. Review cached content policies to ensure sensitive responses are not cached.\n"
+            "  5. Enable rate limiting and bot mitigation in the WAF configuration.\n"
+            "  6. Periodically test WAF effectiveness with an authorised WAF bypass assessment."
+        ),
+    }),
+    ("no waf/cdn layer", {
+        "analysis": (
+            "No WAF, CDN, or reverse-proxy layer was detected in front of the target.  The server "
+            "appears to be directly internet-facing without an intermediary protection layer.\n\n"
+            "Direct exposure means:\n"
+            "  • The origin IP is public and directly attackable\n"
+            "  • No DDoS mitigation at the edge\n"
+            "  • No bot filtering or rate limiting at the CDN layer\n"
+            "  • Web application attacks reach the origin server directly\n"
+            "  • Bandwidth attacks consume origin server resources directly"
+        ),
+        "remediation": (
+            "  1. Consider placing the service behind Cloudflare (free tier available), AWS WAF + "
+            "CloudFront, Azure Front Door, or Imperva.\n"
+            "  2. At minimum, deploy nginx/HAProxy as a reverse proxy with rate limiting.\n"
+            "  3. Implement fail2ban or similar for SSH and web brute-force protection.\n"
+            "  4. Enable kernel-level SYN flood protection: net.ipv4.tcp_syncookies=1.\n"
+            "  5. Use a cloud provider's DDoS protection if available."
+        ),
+    }),
+
+    # -----------------------------------------------------------------------
+    # DNS zone transfer
+    # -----------------------------------------------------------------------
+    ("zone transfer succeeded", {
+        "analysis": (
+            "A DNS zone transfer (AXFR) succeeded, meaning the target's authoritative name server "
+            "returned its complete zone file.  This exposes every DNS record in the zone — including "
+            "internal hostnames, IP addresses, mail servers, and subdomains that are not publicly "
+            "advertised.\n\n"
+            "Zone transfers were originally designed for secondary name server synchronisation.  "
+            "When unrestricted, they allow any client to receive the full DNS zone, which is a "
+            "reconnaissance goldmine.  Discovered internal hostnames enable attackers to map the "
+            "internal network, identify admin panels, staging environments, and database servers "
+            "that should not be publicly accessible.\n\n"
+            "Notable incidents: early misconfigurations at major organisations exposed internal "
+            "infrastructure via unrestricted AXFR before modern DNS hardening guidance was adopted."
+        ),
+        "remediation": (
+            "  1. Restrict AXFR to secondary NS IP addresses only.\n"
+            "     BIND: allow-transfer { <secondary-ip>; }; in named.conf\n"
+            "     PowerDNS: allow-axfr-ips=<secondary-ip> in pdns.conf\n"
+            "     Windows DNS: Right-click zone → Properties → Zone Transfers → allow only listed servers\n"
+            "  2. Test the fix: dig AXFR <domain> @<ns-server> should return REFUSED.\n"
+            "  3. For cloud DNS (Route53, Cloud DNS, Azure DNS): AXFR is disabled by default — "
+            "     migrate if you have not already.\n"
+            "  4. Review the transferred zone for hostnames that should not be DNS-reachable.\n"
+            "  5. Rotate any credentials that may be implied by exposed internal hostnames."
+        ),
+    }),
+
+    # -----------------------------------------------------------------------
+    # Subdomain takeover
+    # -----------------------------------------------------------------------
+    ("subdomain takeover", {
+        "analysis": (
+            "A subdomain has a CNAME record pointing to a third-party service where the underlying "
+            "resource (GitHub Pages project, Heroku app, S3 bucket, etc.) may no longer exist or "
+            "has been deleted.  An attacker can register that same resource at the third-party "
+            "service and serve arbitrary content under your domain.\n\n"
+            "This is a serious vulnerability because:\n"
+            "  • Content served under your domain inherits your domain's cookie scope — an attacker "
+            "    can set cookies for the parent domain and steal sessions\n"
+            "  • Same-origin restrictions are bypassed — the attacker's content runs under your "
+            "    domain's origin, enabling XSS against other pages on the domain\n"
+            "  • Phishing credibility is dramatically higher (URL shows your domain)\n\n"
+            "Real-world examples: Dozens of major companies including Uber, Microsoft, and "
+            "HackerOne have had subdomain takeovers reported via bug bounty programmes."
+        ),
+        "remediation": (
+            "  1. Verify whether the CNAME target resource is claimed/active.\n"
+            "  2. If the resource is no longer needed: delete the CNAME DNS record immediately.\n"
+            "  3. If the resource should still exist: re-create it at the third-party provider "
+            "     to prevent anyone else from claiming it.\n"
+            "  4. Run periodic DNS audits: compare all CNAME records against active resources.\n"
+            "  5. Tools: subjack, nuclei (subdomain-takeover templates), can-i-take-over-xyz list.\n"
+            "  6. Before decommissioning any third-party resource, always remove the DNS CNAME "
+            "     record first."
+        ),
+    }),
+
+    # -----------------------------------------------------------------------
+    # security.txt
+    # -----------------------------------------------------------------------
+    ("security.txt not found", {
+        "analysis": (
+            "The target does not have a security.txt file at /.well-known/security.txt as specified "
+            "by RFC 9116.  Security.txt provides a standardised way for security researchers to "
+            "report vulnerabilities to the organisation.\n\n"
+            "Without a security.txt, researchers who discover vulnerabilities may:\n"
+            "  • Be unable to find the correct contact\n"
+            "  • Resort to public disclosure without warning\n"
+            "  • Contact the wrong team, delaying response\n\n"
+            "Many bug bounty platforms and responsible disclosure frameworks now require security.txt "
+            "as a baseline requirement."
+        ),
+        "remediation": (
+            "  1. Create /.well-known/security.txt (RFC 9116 format):\n"
+            "     Contact: mailto:security@example.com\n"
+            "     Expires: 2027-01-01T00:00:00.000Z\n"
+            "     Encryption: https://example.com/pgp-key.asc\n"
+            "     Policy: https://example.com/security-policy\n"
+            "  2. Use https://securitytxt.org/ to generate the file.\n"
+            "  3. Optionally sign the file with GPG for authenticity verification.\n"
+            "  4. Set Expires to no more than 1 year in the future and automate renewal."
+        ),
+    }),
+
+    # -----------------------------------------------------------------------
+    # robots.txt
+    # -----------------------------------------------------------------------
+    ("robots.txt discloses", {
+        "analysis": (
+            "The target's robots.txt file contains Disallow directives that reveal internal "
+            "application paths.  While robots.txt is intended to guide search engine crawlers, "
+            "it is completely public and widely scraped by attackers looking for hidden endpoints.\n\n"
+            "Listing sensitive paths in robots.txt effectively advertises their existence.  Common "
+            "discoveries include admin panels (/admin, /dashboard), staging environments (/staging), "
+            "backup files, and internal API endpoints.\n\n"
+            "Ironically, Disallow: /admin tells an attacker exactly where to look first."
+        ),
+        "remediation": (
+            "  1. Do not rely on robots.txt for security — it is public and provides no protection.\n"
+            "  2. Protect sensitive paths with authentication at the application or web-server level.\n"
+            "  3. Consider using a minimal robots.txt that only disallows paths that should not "
+            "     appear in search results (not paths that need to be secured).\n"
+            "  4. Remove or genericise paths that reveal internal structure if they don't need "
+            "     to be in robots.txt for legitimate SEO reasons."
+        ),
+    }),
+
+    # -----------------------------------------------------------------------
+    # Admin panels
+    # -----------------------------------------------------------------------
+    ("admin panel accessible", {
+        "analysis": (
+            "An administrative or management interface was found accessible on the public internet. "
+            "Admin panels (Kibana, Grafana, Jenkins, Jupyter, Portainer, etc.) typically provide "
+            "elevated access to data, configuration, or execution capabilities.\n\n"
+            "Publicly accessible admin panels are a top target for attackers because:\n"
+            "  • Default credentials are commonly left in place\n"
+            "  • Authentication bypass CVEs frequently target these interfaces\n"
+            "  • Unauthenticated versions expose full data or RCE (e.g., Jupyter, Portainer)\n"
+            "  • Even authenticated panels reduce the attack surface to a single credential"
+        ),
+        "remediation": (
+            "  1. Restrict admin panel ports/paths to trusted IP ranges at the firewall.\n"
+            "  2. Place admin interfaces behind a VPN — they should not be directly internet-facing.\n"
+            "  3. Enable authentication if not already present (check for default credentials).\n"
+            "  4. Add an additional authentication layer (SSO/OAuth2 proxy, nginx basic auth).\n"
+            "  5. Monitor admin panel access logs for anomalous activity.\n"
+            "  6. Keep admin software updated — authenticate-bypass CVEs are regularly published."
+        ),
+    }),
+    ("admin panel present but protected", {
+        "analysis": (
+            "An administrative interface was found at this path.  The server returned a 401/403, "
+            "indicating authentication is enforced.  However, the panel's presence on the public "
+            "internet is still a security risk — authentication can be bypassed if software is "
+            "not kept up to date or if weak credentials are used."
+        ),
+        "remediation": (
+            "  1. Move the admin panel behind a VPN or IP allowlist.\n"
+            "  2. Ensure strong, unique credentials and MFA are enforced.\n"
+            "  3. Apply security patches promptly — authentication bypass CVEs are common.\n"
+            "  4. Enable brute-force protection (rate limiting, account lockout)."
+        ),
+    }),
+
+    # -----------------------------------------------------------------------
+    # Backup / sensitive files
+    # -----------------------------------------------------------------------
+    ("sensitive file exposed", {
+        "analysis": (
+            "A file that should never be publicly accessible was found in the web root.  Backup "
+            "files (.bak, .old, .zip, .sql), configuration files (.env, docker-compose.yml), and "
+            "database dumps are the highest-value targets for attackers during reconnaissance.\n\n"
+            "These files often contain:\n"
+            "  • Database credentials and connection strings\n"
+            "  • API keys and OAuth secrets\n"
+            "  • Encryption keys and JWT secrets\n"
+            "  • Internal network topology\n"
+            "  • Full application source code\n\n"
+            "Even a single exposed .env file can provide complete system compromise with no "
+            "further exploitation needed."
+        ),
+        "remediation": (
+            "  1. Remove the file from the web root immediately.\n"
+            "  2. Assume any credentials or secrets in the file are compromised — rotate them all.\n"
+            "  3. Add web-server rules to deny access to sensitive file extensions:\n"
+            "     nginx: location ~* \\.(bak|sql|env|old|zip|tar\\.gz)$ { deny all; }\n"
+            "     Apache: <FilesMatch \\.(bak|sql|env|old|zip)$> Require all denied </FilesMatch>\n"
+            "  4. Audit git history: git log --all -- <path> to check if it was previously committed.\n"
+            "  5. Run a recurring check for backup files in deployment pipelines."
+        ),
+    }),
+
+    # -----------------------------------------------------------------------
+    # GraphQL introspection
+    # -----------------------------------------------------------------------
+    ("graphql introspection enabled", {
+        "analysis": (
+            "The GraphQL endpoint has introspection enabled, allowing anyone to query the full API "
+            "schema — every type, query, mutation, and field.  This dramatically accelerates "
+            "reconnaissance by eliminating the need to guess API structure.\n\n"
+            "With introspection, an attacker can:\n"
+            "  • Enumerate all available queries and mutations in seconds\n"
+            "  • Discover data fields that may not be visible in the UI\n"
+            "  • Identify mutations that modify data (including deletions)\n"
+            "  • Find hidden admin queries or undocumented fields\n\n"
+            "Introspection is a development convenience that should be disabled in production. "
+            "Notable APIs that have exposed sensitive data through GraphQL introspection include "
+            "several major SaaS platforms discovered via bug bounty programmes."
+        ),
+        "remediation": (
+            "  1. Disable introspection in production:\n"
+            "     Apollo Server: introspection: process.env.NODE_ENV !== 'production'\n"
+            "     Graphene (Python): GRAPHENE = {'INTROSPECTION': False}\n"
+            "     GraphQL Java: schema.introspection(false)\n"
+            "     Hasura: HASURA_GRAPHQL_ENABLE_INTROSPECTION=false\n"
+            "  2. Implement query depth limiting and complexity analysis.\n"
+            "  3. Add field-level authorization — don't rely on obscurity.\n"
+            "  4. Log and alert on introspection queries in production if you need to keep it "
+            "     enabled for tooling (restrict by IP or auth token instead).\n"
+            "  5. Use persisted queries to restrict allowed operations."
+        ),
+    }),
+
+    # -----------------------------------------------------------------------
+    # HTTP TRACE
+    # -----------------------------------------------------------------------
+    ("http trace method enabled", {
+        "analysis": (
+            "The server accepts HTTP TRACE requests.  TRACE echoes the request back to the client, "
+            "including all headers.  This enables Cross-Site Tracing (XST), a variation of XSS that "
+            "can be used to steal HttpOnly cookies.\n\n"
+            "XST Attack Flow:\n"
+            "  1. Attacker injects JavaScript that sends an XmlHttpRequest TRACE to the target\n"
+            "  2. The server echoes all request headers back in the response body\n"
+            "  3. JavaScript reads the response body, including cookies marked HttpOnly\n"
+            "  4. HttpOnly protection is bypassed\n\n"
+            "While modern browsers have restrictions on sending TRACE via XHR, TRACE is considered "
+            "a security risk and should be disabled per PCI DSS requirements."
+        ),
+        "remediation": (
+            "  1. Disable TRACE in web server config:\n"
+            "     Apache: TraceEnable Off  (in httpd.conf or .htaccess)\n"
+            "     Nginx: Add in server block: if ($request_method = TRACE) { return 405; }\n"
+            "     IIS: Remove TRACE from allowed verbs in web.config\n"
+            "     Node.js/Express: app.use((req,res,next)=> req.method==='TRACE' ? res.sendStatus(405) : next())\n"
+            "  2. Verify: curl -X TRACE https://example.com/ should return 405 Method Not Allowed.\n"
+            "  3. PCI DSS Requirement 6.6 prohibits enabling TRACE on payment-processing systems."
+        ),
+    }),
+
+    # -----------------------------------------------------------------------
+    # Cookie SameSite
+    # -----------------------------------------------------------------------
+    ("samesite", {
+        "analysis": (
+            "A cookie is missing the SameSite attribute.  SameSite controls whether cookies are "
+            "sent with cross-site requests, making it the primary browser-level defence against "
+            "Cross-Site Request Forgery (CSRF) attacks.\n\n"
+            "Without SameSite:\n"
+            "  • Cookies are sent in cross-origin requests (SameSite=None behaviour in older browsers)\n"
+            "  • CSRF attacks can perform authenticated actions on behalf of the victim\n"
+            "  • Session cookies sent to attacker-controlled sites via <img>, <form>, or fetch()\n\n"
+            "Chrome 80+ defaults unspecified SameSite to Lax, but this is not universally "
+            "guaranteed and explicit setting is best practice.  SameSite=None requires the "
+            "Secure flag to function in modern browsers."
+        ),
+        "remediation": (
+            "  1. Set SameSite=Strict for session/authentication cookies:\n"
+            "     Set-Cookie: sessionid=…; Secure; HttpOnly; SameSite=Strict\n"
+            "  2. Use SameSite=Lax if cross-origin GET navigation must include the cookie "
+            "     (e.g., OAuth flows, links from emails).\n"
+            "  3. Use SameSite=None; Secure only for cookies explicitly designed for cross-site "
+            "     embedding (e.g., third-party widgets, OAuth).\n"
+            "  4. In addition to SameSite, implement CSRF tokens for state-changing operations.\n"
+            "  5. Verify with: developer tools → Application → Cookies → SameSite column."
+        ),
+    }),
+
+    # -----------------------------------------------------------------------
+    # Port risk enrichment
+    # -----------------------------------------------------------------------
+    ("smb", {
+        "analysis": (
+            "SMB (Server Message Block) port 445 is exposed to the internet.  SMB is a network "
+            "file-sharing protocol that was the vector for the WannaCry and NotPetya ransomware "
+            "outbreaks (exploiting MS17-010 / EternalBlue, leaked from the NSA).\n\n"
+            "Internet-exposed SMB is one of the highest-risk exposures possible:\n"
+            "  • EternalBlue (CVE-2017-0144) allows unauthenticated remote code execution on "
+            "    unpatched Windows systems\n"
+            "  • Anonymous SMB sessions may enumerate shares, users, and files\n"
+            "  • SMBv1 has multiple critical vulnerabilities and should be disabled entirely\n"
+            "  • SMB credential relay attacks (NTLM relay) are trivially automated"
+        ),
+        "remediation": (
+            "  1. Block TCP 445 at the firewall immediately — SMB should never be internet-facing.\n"
+            "  2. Apply MS17-010 patch if not already done (critical).\n"
+            "  3. Disable SMBv1: Set-SmbServerConfiguration -EnableSMB1Protocol $false\n"
+            "  4. If SMB file sharing is required, use a VPN or Azure Files/S3 instead.\n"
+            "  5. Run: nmap -p 445 --script smb-vuln-ms17-010 <target> to verify EternalBlue exposure."
+        ),
+    }),
+    ("mongodb", {
+        "analysis": (
+            "MongoDB port 27017 is accessible from the public internet.  MongoDB was historically "
+            "configured with no authentication by default, leading to numerous mass-data-leak "
+            "incidents where entire databases were wiped and ransomed.\n\n"
+            "Internet-exposed MongoDB instances have resulted in billions of records being leaked, "
+            "including patient medical records, financial data, and personal information.  The "
+            "Shodan search engine indexes thousands of unauthenticated MongoDB instances at any time."
+        ),
+        "remediation": (
+            "  1. Block port 27017 at the firewall — MongoDB should never be internet-facing.\n"
+            "  2. Bind to localhost only: net.bindIp: 127.0.0.1 in mongod.conf\n"
+            "  3. Enable authentication: security.authorization: enabled\n"
+            "  4. Create role-based users: db.createUser({user:…, roles:[{role:'readWrite',db:…}]})\n"
+            "  5. Enable TLS: net.tls.mode: requireTLS\n"
+            "  6. Run MongoDB Ops Manager or Atlas for managed, secured deployments."
+        ),
+    }),
 ]
 
 
