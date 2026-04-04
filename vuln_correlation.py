@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 _NVD_API = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 _NVD_RATE_LIMIT = 6.0  # seconds between NVD calls (public API limit)
 
+# In-process cache: CPE string → list[CVERecord]
+# Avoids duplicate API calls when the same CPE appears in multiple findings.
+_cve_cache: dict[str, list[CVERecord]] = {}
+
 
 def _cvss_to_severity(score: float) -> Severity:
     if score >= 9.0:
@@ -53,6 +57,10 @@ def lookup_cves_for_cpe(cpe: str, timeout: float = 15.0) -> list[CVERecord]:
     if not cpe_match.startswith("cpe:2.3:"):
         return []
 
+    # Return cached result if available (avoids redundant API calls and rate-limit delays)
+    if cpe_match in _cve_cache:
+        return _cve_cache[cpe_match]
+
     params: dict[str, str] = {
         "cpeName": cpe_match,
         "resultsPerPage": "10",
@@ -67,12 +75,12 @@ def lookup_cves_for_cpe(cpe: str, timeout: float = 15.0) -> list[CVERecord]:
             headers={"User-Agent": "Inquisition/0.1 SecurityScanner"},
         )
         if resp.status_code != 200:
-            logger.debug("NVD API returned %d for CPE %s", resp.status_code, cpe)
+            logger.warning("NVD API returned HTTP %d for CPE %s — CVE data may be incomplete", resp.status_code, cpe)
             return []
 
         data: dict[str, Any] = resp.json()
     except (requests.RequestException, ValueError) as exc:
-        logger.debug("NVD lookup failed for CPE %s: %s", cpe, exc)
+        logger.warning("NVD lookup failed for CPE %s: %s — CVE data may be incomplete", cpe, exc)
         return []
 
     records: list[CVERecord] = []
@@ -109,6 +117,7 @@ def lookup_cves_for_cpe(cpe: str, timeout: float = 15.0) -> list[CVERecord]:
             references=refs,
         ))
 
+    _cve_cache[cpe_match] = records
     return records
 
 
@@ -252,6 +261,70 @@ _MISCONFIG_RULES: list[dict[str, Any]] = [
         "description": "phpinfo() page publicly accessible — full server configuration disclosed",
         "severity": Severity.HIGH,
         "remediation": "Remove phpinfo files from production immediately",
+    },
+    {
+        "categories": [FindingCategory.APPLICATION],
+        "title_contains": "zone transfer succeeded",
+        "name": "DNS zone transfer unrestricted",
+        "description": "DNS AXFR succeeded — full zone contents exposed to any client",
+        "severity": Severity.CRITICAL,
+        "remediation": "Restrict AXFR to authorised secondary nameserver IPs only",
+    },
+    {
+        "categories": [FindingCategory.DNS],
+        "title_contains": "subdomain takeover",
+        "name": "Potential subdomain takeover via dangling CNAME",
+        "description": "CNAME points to unclaimed third-party resource — attacker may claim it",
+        "severity": Severity.HIGH,
+        "remediation": "Remove CNAME record or re-create the third-party resource",
+    },
+    {
+        "categories": [FindingCategory.APPLICATION],
+        "title_contains": "graphql introspection enabled",
+        "name": "GraphQL introspection enabled in production",
+        "description": "Full API schema is publicly enumerable via introspection",
+        "severity": Severity.MEDIUM,
+        "remediation": "Disable GraphQL introspection in production configuration",
+    },
+    {
+        "categories": [FindingCategory.APPLICATION],
+        "title_contains": "http trace method enabled",
+        "name": "HTTP TRACE method enabled",
+        "description": "TRACE method enabled — Cross-Site Tracing (XST) risk",
+        "severity": Severity.MEDIUM,
+        "remediation": "Disable TRACE: Apache TraceEnable Off; Nginx return 405 on TRACE",
+    },
+    {
+        "categories": [FindingCategory.APPLICATION],
+        "title_contains": "sensitive file exposed",
+        "name": "Sensitive file publicly accessible",
+        "description": "Backup, config, or secret file exposed in web root",
+        "severity": Severity.CRITICAL,
+        "remediation": "Remove file from web root; rotate any exposed credentials; block via web-server config",
+    },
+    {
+        "categories": [FindingCategory.APPLICATION],
+        "title_contains": "admin panel accessible",
+        "name": "Admin panel publicly accessible",
+        "description": "Management interface reachable from the internet without restriction",
+        "severity": Severity.HIGH,
+        "remediation": "Restrict admin panel to VPN or trusted IP ranges",
+    },
+    {
+        "categories": [FindingCategory.PORT],
+        "title_contains": "445/SMB",
+        "name": "SMB exposed to internet",
+        "description": "SMB/CIFS port 445 reachable from internet — EternalBlue/WannaCry risk",
+        "severity": Severity.CRITICAL,
+        "remediation": "Block TCP 445 at firewall; disable SMBv1; apply MS17-010 patch",
+    },
+    {
+        "categories": [FindingCategory.PORT],
+        "title_contains": "5900/VNC",
+        "name": "VNC exposed to internet",
+        "description": "VNC remote desktop port accessible from public internet",
+        "severity": Severity.HIGH,
+        "remediation": "Restrict VNC to localhost; use VPN for remote desktop access",
     },
 ]
 
