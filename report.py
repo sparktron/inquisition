@@ -109,7 +109,7 @@ def _render_deep_analysis(lines: list[str], report: ScanReport) -> None:
 
             label = f"[{_SEVERITY_LABEL[f.severity]}] {f.title}"
             lines.append(f"\n  {label}")
-            lines.append("  " + "\u2504" * (len(label) + 2))
+            lines.append("  " + "-" * (len(label) + 2))
             lines.extend(_wrap_paragraphs(analysis_text))
             lines.append(f"\n    Evidence: {f.evidence}")
             lines.append("")
@@ -145,7 +145,7 @@ def _render_remediation_guide(lines: list[str], report: ScanReport) -> None:
 
             label = f"[{_SEVERITY_LABEL[f.severity]}] {f.title}"
             lines.append(f"  {label}")
-            lines.append("  " + "\u2504" * (len(label) + 2))
+            lines.append("  " + "-" * (len(label) + 2))
             lines.extend(_wrap_paragraphs(remediation_text))
             if f.verification:
                 lines.append(f"\n    Verification: {f.verification}")
