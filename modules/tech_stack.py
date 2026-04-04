@@ -124,7 +124,7 @@ class TechStackModule(BaseModule):
                     category=FindingCategory.TECH_STACK,
                     severity=Severity.INFO,
                     evidence=evidence,
-                    cpe=f"{cpe}:{version_str}:*:*:*:*:*:*:*" if cpe and version_str else cpe,
+                    cpe=f"{cpe}:{version_str.replace(':', '_')}:*:*:*:*:*:*:*" if cpe and version_str else cpe,
                 ))
 
         # --- Path probing (standard/deep) ---
