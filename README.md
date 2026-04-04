@@ -57,10 +57,10 @@ git clone https://github.com/sparktron/inquisition.git
 cd inquisition
 pip install -r requirements.txt
 
-# Run a scan (interactive)
+# Run a scan (prompts for authorization before sending traffic)
 python inquisition.py example.com
 
-# Full deep scan, no prompts (pre-authorised target only)
+# Full deep scan, skip the authorization prompt (pre-authorised target only)
 python inquisition.py example.com --depth deep --yes
 
 # Save HTML report
@@ -115,10 +115,10 @@ The **target** is a hostname or IP address (`example.com`, `93.184.216.34`, `int
 ### Common Examples
 
 ```bash
-# 1. Interactive scan (prompts for authorization)
+# 1. Standard scan — prompts for authorization before sending any traffic
 python inquisition.py example.com
 
-# 2. Full assessment, no prompts (pre-authorised targets only)
+# 2. Full assessment, skip authorization prompt (pre-authorised targets only)
 python inquisition.py example.com --yes --depth deep
 
 # 3. Quick reconnaissance only
