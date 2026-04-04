@@ -57,11 +57,11 @@ git clone https://github.com/sparktron/inquisition.git
 cd inquisition
 pip install -r requirements.txt
 
-# Run a scan (prompts for authorization before sending traffic)
+# Run a standard scan
 python inquisition.py example.com
 
-# Full deep scan, skip the authorization prompt (pre-authorised target only)
-python inquisition.py example.com --depth deep --yes
+# Full deep scan
+python inquisition.py example.com --depth deep
 
 # Save HTML report
 python inquisition.py example.com -o report.html
@@ -110,16 +110,16 @@ python inquisition.py <target> [options]
 
 The **target** is a hostname or IP address (`example.com`, `93.184.216.34`, `internal.company.local`, etc.).
 
-**Important:** Inquisition will display an authorization banner and prompt for confirmation before sending any traffic. This is intentional — it ensures you have explicit permission to scan the target. Use `--yes` / `-y` to suppress this prompt in automated workflows (only when pre-authorised).
+**Important:** Ensure you have authorization to scan the target before running this tool, as it will begin reconnaissance immediately upon execution.
 
 ### Common Examples
 
 ```bash
-# 1. Standard scan — prompts for authorization before sending any traffic
+# 1. Standard scan
 python inquisition.py example.com
 
-# 2. Full assessment, skip authorization prompt (pre-authorised targets only)
-python inquisition.py example.com --yes --depth deep
+# 2. Full deep assessment
+python inquisition.py example.com --depth deep
 
 # 3. Quick reconnaissance only
 python inquisition.py example.com --depth quick
@@ -205,23 +205,20 @@ python inquisition.py example.com -o report.txt    # → Text format
 | `--rate-limit` | float (seconds) | 0.1 | Minimum delay between requests within a module |
 | `--timeout` | float (seconds) | 10.0 | Per-request timeout for all HTTP/socket operations |
 
-#### Authorization & Testing
+#### Testing & Debugging
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `-y`, `--yes` | flag | off | Skip authorization prompt (use only if pre-authorised) |
 | `--dry-run` | flag | off | Preview scan without sending any traffic |
 | `-v`, `--verbose` | flag | off | Enable debug logging to stderr |
 
-### Safety & Authorization
+### Safety
 
 **Inquisition is safe by design:**
 
 - ✅ All probes are **read-only** — no exploit payloads, no login attempts, no injection
-- ✅ **Authorization prompt** before any traffic — prevents accidental scanning of unowned targets
 - ✅ **Rate limiting** to avoid overwhelming targets (default 0.1s between requests)
 - ✅ **Timeout controls** to gracefully handle slow/hanging connections
-
-The authorization prompt can be suppressed with `--yes` only for scripted runs where you have **explicit prior written authorization** to scan the target.
+- ✅ **Dry-run mode** (`--dry-run`) previews what would be scanned without sending any traffic
 
 ---
 
@@ -643,7 +640,7 @@ Confirm [y/n]: y
 ### Example 2: Save HTML Report
 
 ```bash
-$ python inquisition.py example.com -o report.html --yes --depth deep
+$ python inquisition.py example.com -o report.html --depth deep
 
 [*] Starting scan of example.com (depth=deep)
 ...
@@ -659,7 +656,7 @@ The generated HTML report includes:
 ### Example 3: JSON Export for Automation
 
 ```bash
-$ python inquisition.py example.com -f json -o findings.json --yes
+$ python inquisition.py example.com -f json -o findings.json
 
 $ jq '.findings[] | select(.severity=="CRITICAL")' findings.json
 

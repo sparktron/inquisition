@@ -19,7 +19,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Examples:\n"
             "  inquisition example.com\n"
             "  inquisition example.com --depth deep --format html --output report.html\n"
-            "  inquisition example.com --depth quick --yes --brief\n"
+            "  inquisition example.com --depth quick --brief\n"
             "  inquisition 192.168.1.10 --ports 22 80 443 8080 --dry-run\n"
         ),
     )
@@ -56,12 +56,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Omit verbose deep-analysis and remediation guide from text/HTML report",
     )
 
-    parser.add_argument(
-        "--yes", "-y", "--auto",
-        action="store_true",
-        dest="yes",
-        help="Skip the authorization prompt (use responsibly)",
-    )
 
     parser.add_argument(
         "--threads",
@@ -144,7 +138,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         run_scan(
             config,
-            skip_auth=args.yes,
+            skip_auth=True,
             brief=args.brief,
             output_path=args.output,
         )
