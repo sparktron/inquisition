@@ -14,15 +14,73 @@ if TYPE_CHECKING:
 
 # Well-known service names for common ports
 _SERVICE_HINTS: dict[int, str] = {
+    # Network services
     21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS",
-    80: "HTTP", 110: "POP3", 143: "IMAP", 443: "HTTPS", 445: "SMB",
-    993: "IMAPS", 995: "POP3S", 3306: "MySQL", 3389: "RDP",
-    5432: "PostgreSQL", 5900: "VNC", 6379: "Redis", 8080: "HTTP-Alt",
-    8443: "HTTPS-Alt", 9200: "Elasticsearch",
+    110: "POP3", 143: "IMAP", 445: "SMB",
+    993: "IMAPS", 995: "POP3S",
+    # Web services
+    80: "HTTP", 443: "HTTPS",
+    3000: "Node.js/Rails", 3001: "Node.js/Rails", 3002: "Node.js", 3003: "Node.js",
+    4200: "Angular", 5000: "Flask/Django", 5173: "Vite",
+    8000: "HTTP", 8001: "HTTP", 8008: "HTTP", 8080: "HTTP-Alt", 8081: "HTTP-Alt",
+    8082: "HTTP-Alt", 8083: "HTTP-Alt", 8088: "HTTP-Alt", 8090: "HTTP-Alt",
+    8443: "HTTPS-Alt", 8888: "HTTP-Alt/Jupyter", 9000: "HTTP", 9090: "HTTP",
+    # Databases
+    3306: "MySQL", 5432: "PostgreSQL", 6379: "Redis", 27017: "MongoDB",
+    # Enterprise servers
+    7001: "WebLogic", 7474: "Neo4j", 8010: "Tomcat", 8086: "InfluxDB",
+    8161: "ActiveMQ", 8686: "GlassFish", 9200: "Elasticsearch", 9300: "Elasticsearch-Node",
+    # Other services
+    2375: "Docker", 2376: "Docker-Secure", 3389: "RDP", 5005: "JDebug", 5555: "ADB",
+    5900: "VNC", 5984: "CouchDB", 6443: "Kubernetes", 10250: "Kubelet",
 }
 
-# Extended port list for deep scans
-_DEEP_PORTS = tuple(range(1, 1025))
+# Comprehensive web server ports for deep scans
+# Includes: standard HTTP/HTTPS, common app server ports, development frameworks,
+# cloud platforms, containerization, monitoring, and enterprise application servers
+_WEBSERVER_PORTS = (
+    # Standard web
+    80, 443,
+    # HTTP alternates (common web servers and proxies)
+    8000, 8001, 8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009,
+    8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8089,
+    8090, 8091, 8099, 8888, 8889,
+    # HTTPS alternates
+    8443, 8444, 8445, 8446, 8447, 8448, 8449, 8453, 8454,
+    # High-number HTTP ports
+    9000, 9001, 9090, 9091, 9099, 9443, 9999,
+    # JavaScript/Node.js frameworks
+    3000, 3001, 3002, 3003, 3004, 3005,
+    # More app server ports
+    4000, 4200, 4443, 4567, 5000, 5005, 5173, 5174, 5432, 5443, 5500, 5555, 5600,
+    6000, 6001, 6080, 6443, 6545, 6789, 6969,
+    7000, 7001, 7080, 7175, 7547, 7777, 7778, 7779,
+    # Enterprise app servers (Tomcat, JBoss, WebLogic, etc.)
+    8010, 8020, 8025, 8030, 8040, 8050, 8060, 8070, 8160, 8161, 8200,
+    # Container and cloud platforms
+    2375, 2376,  # Docker
+    6443,        # Kubernetes API
+    8042, 8088,  # Hadoop YARN
+    8480, 8481,  # JBoss
+    9200, 9300,  # Elasticsearch
+    # Databases (sometimes exposed as web services)
+    3306,        # MySQL
+    5432,        # PostgreSQL
+    6379,        # Redis
+    27017, 27018, 27019, 27020,  # MongoDB
+    # Monitoring and admin panels
+    8161, 8162,  # ActiveMQ
+    8686, 8687,  # GlassFish
+    9999,        # Various admin panels
+    # Miscellaneous services
+    1080, 1433, 1521, 1944, 2181, 3128, 3389, 5005, 5555, 5900, 5984, 6379, 7474,
+    7687, 8012, 8020, 8086, 8140, 8500, 8834, 9042, 9160, 9300, 9999, 10000, 10250,
+)
+
+# Extended port list for deep scans (all well-known ports 1-1024 + webserver high ports)
+_DEEP_PORTS = tuple(sorted(set(
+    range(1, 1025) + _WEBSERVER_PORTS
+)))
 
 
 class PortScanModule(BaseModule):
