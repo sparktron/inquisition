@@ -32,8 +32,16 @@ class PortScanModule(BaseModule):
         findings: list[Finding] = []
         target = self.config.target
 
+        # Custom ports supplied via --ports always override depth defaults.
+        _default_ports: tuple[int, ...] = (
+            21, 22, 23, 25, 53, 80, 110, 143, 443, 445,
+            993, 995, 3306, 3389, 5432, 5900, 6379, 8080, 8443, 9200,
+        )
         ports: tuple[int, ...]
-        if self.config.depth == ScanDepth.DEEP:
+        if self.config.ports != _default_ports:
+            # User explicitly specified ports — honour them regardless of depth
+            ports = self.config.ports
+        elif self.config.depth == ScanDepth.DEEP:
             ports = _DEEP_PORTS
         elif self.config.depth == ScanDepth.QUICK:
             ports = (22, 80, 443, 8080, 8443)
@@ -89,14 +97,42 @@ class PortScanModule(BaseModule):
                         severity = Severity.HIGH
                         impact = "Telnet transmits credentials in cleartext"
                         remediation = "Disable Telnet and use SSH instead"
+                    elif port == 21:
+                        severity = Severity.MEDIUM
+                        impact = "FTP transmits credentials in cleartext; anonymous access may be enabled"
+                        remediation = "Disable FTP; use SFTP/FTPS instead. If required, disable anonymous login"
+                    elif port == 445:
+                        severity = Severity.HIGH
+                        impact = "SMB exposed — EternalBlue/WannaCry exploitation risk if unpatched"
+                        remediation = "Block SMB (445) at the firewall; apply MS17-010 patch; disable SMBv1"
+                    elif port == 5900:
+                        severity = Severity.HIGH
+                        impact = "VNC exposed — remote desktop access with potentially weak auth"
+                        remediation = "Restrict VNC to localhost or VPN; enable strong password/NLA"
                     elif port in (6379, 9200):
                         severity = Severity.HIGH
-                        impact = f"{service} exposed to the internet — potential data leak"
-                        remediation = f"Restrict {service} to localhost or private network"
+                        impact = f"{service} exposed to the internet — unauthenticated data access possible"
+                        remediation = f"Restrict {service} to localhost or private network; enable authentication"
+                    elif port == 27017:
+                        severity = Severity.HIGH
+                        impact = "MongoDB exposed — unauthenticated access may allow full DB read/write"
+                        remediation = "Bind MongoDB to localhost; enable --auth; block port 27017 at firewall"
+                    elif port == 5432:
+                        severity = Severity.MEDIUM
+                        impact = "PostgreSQL exposed to internet — brute-force / misconfigured pg_hba.conf risk"
+                        remediation = "Restrict PostgreSQL to trusted IPs; enforce strong passwords and SSL"
+                    elif port == 3306:
+                        severity = Severity.MEDIUM
+                        impact = "MySQL exposed to internet — brute-force and data exfiltration risk"
+                        remediation = "Restrict MySQL to localhost or trusted IPs; disable root remote login"
                     elif port == 3389:
                         severity = Severity.MEDIUM
-                        impact = "RDP exposed — brute-force / BlueKeep risk"
-                        remediation = "Restrict RDP access via VPN or firewall rules"
+                        impact = "RDP exposed — brute-force / BlueKeep (CVE-2019-0708) risk"
+                        remediation = "Restrict RDP access via VPN or firewall rules; enable NLA; patch BlueKeep"
+                    elif port in (8080, 8443):
+                        severity = Severity.LOW
+                        impact = f"Alternate HTTP/S port {port} open — may expose dev server or admin panel"
+                        remediation = "Verify this port intentionally serves traffic; restrict if it is a debug/dev endpoint"
 
                     findings.append(Finding(
                         title=f"Open port: {port}/{service}",
