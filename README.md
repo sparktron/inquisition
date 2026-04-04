@@ -58,13 +58,13 @@ cd inquisition
 pip install -r requirements.txt
 
 # Run a scan (interactive)
-python cli.py example.com
+python inquisition.py example.com
 
 # Full deep scan, no prompts (pre-authorised target only)
-python cli.py example.com --depth deep --yes
+python inquisition.py example.com --depth deep --yes
 
 # Save HTML report
-python cli.py example.com -o report.html
+python inquisition.py example.com -o report.html
 ```
 
 ---
@@ -88,14 +88,14 @@ cd inquisition
 pip install -r requirements.txt
 
 # Run directly with Python (no installation)
-python cli.py example.com
+python inquisition.py example.com
 ```
 
-**Note:** Due to the flat module layout (non-namespaced imports), `pip install -e .` may not create a working console script. The recommended approach is to run `python cli.py` directly or create a shell alias:
+**Note:** Due to the flat module layout (non-namespaced imports), the console script entry point in pyproject.toml may not work reliably. The recommended approach is to run `python inquisition.py` directly or create a shell alias:
 
 ```bash
 # Add to ~/.bashrc or ~/.zshrc for convenience
-alias inquisition='python /path/to/inquisition/cli.py'
+alias inquisition='python /path/to/inquisition/inquisition.py'
 ```
 
 ---
@@ -105,7 +105,7 @@ alias inquisition='python /path/to/inquisition/cli.py'
 ### Basic Invocation
 
 ```bash
-python cli.py <target> [options]
+python inquisition.py <target> [options]
 ```
 
 The **target** is a hostname or IP address (`example.com`, `93.184.216.34`, `internal.company.local`, etc.).
@@ -116,34 +116,34 @@ The **target** is a hostname or IP address (`example.com`, `93.184.216.34`, `int
 
 ```bash
 # 1. Interactive scan (prompts for authorization)
-python cli.py example.com
+python inquisition.py example.com
 
 # 2. Full assessment, no prompts (pre-authorised targets only)
-python cli.py example.com --yes --depth deep
+python inquisition.py example.com --yes --depth deep
 
 # 3. Quick reconnaissance only
-python cli.py example.com --depth quick
+python inquisition.py example.com --depth quick
 
 # 4. Save HTML report for stakeholder review
-python cli.py example.com -o report.html
+python inquisition.py example.com -o report.html
 
 # 5. Brief text report (no remediation steps) to stdout
-python cli.py example.com --brief
+python inquisition.py example.com --brief
 
 # 6. Internal hostname on custom port (standard scan)
-python cli.py internal.company.local --depth standard
+python inquisition.py internal.company.local --depth standard
 
 # 7. Dry run (preview without sending traffic)
-python cli.py example.com --dry-run
+python inquisition.py example.com --dry-run
 
 # 8. JSON for automated parsing
-python cli.py example.com -f json -o findings.json
+python inquisition.py example.com -f json -o findings.json
 
 # 9. Slower scanning to avoid rate-limit triggers
-python cli.py example.com --rate-limit 0.5 --timeout 15
+python inquisition.py example.com --rate-limit 0.5 --timeout 15
 
 # 10. Custom port list (must use custom ports, not depth defaults)
-python cli.py example.com --ports 22 80 443 8080 8443 9000
+python inquisition.py example.com --ports 22 80 443 8080 8443 9000
 ```
 
 ### Scan Depth
@@ -151,9 +151,9 @@ python cli.py example.com --ports 22 80 443 8080 8443 9000
 Three depth levels control the scope of port scanning and path probing:
 
 ```bash
-python cli.py example.com --depth quick      # Lightweight scan
-python cli.py example.com --depth standard   # Balanced (default)
-python cli.py example.com --depth deep       # Thorough
+python inquisition.py example.com --depth quick      # Lightweight scan
+python inquisition.py example.com --depth standard   # Balanced (default)
+python inquisition.py example.com --depth deep       # Thorough
 ```
 
 | Depth | TCP Ports | Path Probing | Admin Panels | Zone Transfer | Typical Duration |
@@ -169,17 +169,17 @@ python cli.py example.com --depth deep       # Thorough
 Inquisition supports three output formats:
 
 ```bash
-python cli.py example.com -f text    # Human-readable (default)
-python cli.py example.com -f html    # Self-contained HTML with collapsible sections
-python cli.py example.com -f json    # Machine-readable JSON for parsing/integration
+python inquisition.py example.com -f text    # Human-readable (default)
+python inquisition.py example.com -f html    # Self-contained HTML with collapsible sections
+python inquisition.py example.com -f json    # Machine-readable JSON for parsing/integration
 ```
 
 When using `--output`, the format is inferred from the file extension:
 
 ```bash
-python cli.py example.com -o report.html   # → HTML format
-python cli.py example.com -o report.json   # → JSON format
-python cli.py example.com -o report.txt    # → Text format
+python inquisition.py example.com -o report.html   # → HTML format
+python inquisition.py example.com -o report.json   # → JSON format
+python inquisition.py example.com -o report.txt    # → Text format
 ```
 
 ### Options Reference
@@ -583,7 +583,7 @@ Every scan generates the following sections (unless `--brief` is used):
 ### Example 1: Basic Target Assessment
 
 ```bash
-$ python cli.py example.com
+$ python inquisition.py example.com
 
 [*] Inquisition Security Reconnaissance Scanner
 
@@ -643,7 +643,7 @@ Confirm [y/n]: y
 ### Example 2: Save HTML Report
 
 ```bash
-$ python cli.py example.com -o report.html --yes --depth deep
+$ python inquisition.py example.com -o report.html --yes --depth deep
 
 [*] Starting scan of example.com (depth=deep)
 ...
@@ -659,7 +659,7 @@ The generated HTML report includes:
 ### Example 3: JSON Export for Automation
 
 ```bash
-$ python cli.py example.com -f json -o findings.json --yes
+$ python inquisition.py example.com -f json -o findings.json --yes
 
 $ jq '.findings[] | select(.severity=="CRITICAL")' findings.json
 
