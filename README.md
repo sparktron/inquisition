@@ -160,9 +160,35 @@ python inquisition.py example.com --depth deep       # Thorough
 |---|---|---|---|---|---|
 | `quick` | 5 core (22, 80, 443, 8080, 8443) | No | No | No | 10–20s |
 | `standard` | 20 well-known | Yes | No | Yes* | 30–60s |
-| `deep` | Full 1–1024 | Yes | Yes | Yes* | 2–5min |
+| `deep` | 1–1024 + 133 web/app ports | Yes | Yes | Yes* | 3–7min |
 
 *Requires `dnspython`; skipped if missing.
+
+#### Deep Scan: Comprehensive Web Server Ports
+
+The deep scan includes all ports 1–1024 plus a curated list of 133 additional web and application server ports:
+
+**Standard Web (2 ports):** 80, 443
+
+**HTTP Alternates (30 ports):** 8000–8009, 8080–8090, 8099, 8888–8889
+
+**HTTPS Alternates (9 ports):** 8443–8449, 8453–8454
+
+**High-Number HTTP (7 ports):** 9000, 9001, 9090–9091, 9099, 9443, 9999
+
+**JavaScript/Node.js Frameworks (6 ports):** 3000–3005
+
+**Application Servers (30+ ports):** 4000, 4200 (Angular), 4443, 4567, 5000 (Flask/Django), 5005, 5173 (Vite), 5174, 5432, 5443, 5500, 5555, 5600, 6000, 6001, 6080, 6443, 6545, 6789, 6969, 7000, 7001, 7080, 7175, 7547, 7777–7779
+
+**Enterprise Servers (15+ ports):** 8010 (Tomcat), 8020, 8025, 8030, 8040, 8050, 8060, 8070, 8160–8162, 8200, 8686–8687 (Glassfish), 8480–8481 (JBoss)
+
+**Cloud/Container Platforms (8 ports):** 2375–2376 (Docker), 6443 (Kubernetes), 8042, 8088 (Hadoop YARN), 9200, 9300 (Elasticsearch), 10250 (Kubelet)
+
+**Databases (8 ports):** 3306 (MySQL), 5432 (PostgreSQL), 6379 (Redis), 27017–27020 (MongoDB)
+
+**Monitoring/Admin (6 ports):** 8161–8162 (ActiveMQ), 8686–8687 (Glassfish), 8834, 9999
+
+**Other Services (20+ ports):** 1080, 1433, 1521, 1944, 2181, 3128, 3389 (RDP), 5005, 5555, 5900 (VNC), 5984 (CouchDB), 7474 (Neo4j), 8012, 8086 (InfluxDB), 8140, 8500, 9042, 9160, 10000, 10250
 
 ### Output Formats
 
