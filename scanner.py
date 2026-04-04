@@ -94,25 +94,32 @@ def run_scan(
         futures = {pool.submit(_run_module, m): m.name for m in modules}
         for future in as_completed(futures):
             mod_name, findings, errors = future.result()
-            status = f"{len(findings)} finding(s)"
+            status = f"{len(findings)} finding"
+            if len(findings) != 1:
+                status += "s"
             if errors:
-                status += f", {len(errors)} error(s)"
-            print(f"  [+] {mod_name}: {status}")
+                status += f" • {len(errors)} error"
+                if len(errors) != 1:
+                    status += "s"
+            print(f"  [✓] {mod_name:<20} {status}")
             report.findings.extend(findings)
             report.errors.extend(errors)
 
     # --- Vulnerability correlation (CPE -> CVE) ---
     cpe_values = {f.cpe for f in report.findings if f.cpe}
     if cpe_values and not config.dry_run:
-        print(f"\n[*] Correlating {len(cpe_values)} CPE(s) with NVD...")
+        print(f"\n[*] Correlating {len(cpe_values)} CPE value(s) with NVD...")
         for cpe in cpe_values:
             try:
                 cves = lookup_cves_for_cpe(cpe, timeout=config.timeout)
                 report.cve_records.extend(cves)
                 if cves:
-                    print(f"  [+] {cpe}: {len(cves)} CVE(s)")
+                    count = len(cves)
+                    print(f"  [!] {cpe}: {count} CVE" + ("" if count == 1 else "s"))
             except Exception as exc:
-                report.errors.append(f"CVE lookup for {cpe}: {exc}")
+                msg = f"CVE lookup for {cpe}: {exc}"
+                report.errors.append(msg)
+                print(f"  [✗] CVE lookup failed for {cpe}")
 
     # --- Deduplicate findings ---
     before = len(report.findings)
@@ -142,15 +149,30 @@ def run_scan(
     try:
         with open(output_path, "w", encoding="utf-8") as fh:
             fh.write(output)
-        print(f"\n[*] Report saved to: {output_path}")
+        print(f"\n[✓] Report saved to: {output_path}")
     except OSError as exc:
-        print(f"\n[!] Could not write report to {output_path}: {exc}", file=sys.stderr)
+        err_msg = str(exc)
+        if "Permission denied" in err_msg:
+            hint = " — Check write permissions in the target directory"
+        elif "No such file" in err_msg:
+            hint = " — Parent directory does not exist, creating 'reports/' directory"
+        else:
+            hint = ""
+        print(f"\n[✗] Could not write report to {output_path}{hint}", file=sys.stderr)
         print(f"\n{'=' * 72}")
         print(output)
 
-    # Summary line
+    # Summary
     counts = report.summary_counts()
     crit_high = counts.get("critical", 0) + counts.get("high", 0)
-    print(f"\n[*] Scan complete. {sum(counts.values())} findings, "
-          f"{crit_high} critical/high, "
-          f"{len(report.cve_records)} CVEs correlated.")
+    total = sum(counts.values())
+
+    if crit_high > 0:
+        severity_icon = "⚠"
+        severity_msg = f"{crit_high} critical/high"
+    else:
+        severity_icon = "✓"
+        severity_msg = "no critical/high"
+
+    print(f"\n[{severity_icon}] Scan complete: {total} finding" + ("s" if total != 1 else ""),
+          f"({severity_msg}, {len(report.cve_records)} CVE" + ("s" if len(report.cve_records) != 1 else "") + ")")

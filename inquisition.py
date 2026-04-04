@@ -6,6 +6,10 @@ import argparse
 import logging
 import sys
 
+# Suppress urllib3 SSL warnings (read-only reconnaissance, unverified requests expected)
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 from models import ReportFormat, ScanConfig, ScanDepth
 from scanner import run_scan
 
