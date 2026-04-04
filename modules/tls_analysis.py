@@ -170,7 +170,14 @@ class TlsAnalysisModule(BaseModule):
                             evidence=f"Valid for {days_left} more days (until {not_after})",
                         ))
                 except ValueError:
-                    pass
+                    findings.append(Finding(
+                        title="Certificate date unparseable",
+                        category=FindingCategory.TLS,
+                        severity=Severity.MEDIUM,
+                        evidence=f"notAfter field has unexpected format: {not_after!r}",
+                        impact="Cannot verify certificate expiry — manual inspection required",
+                        remediation="Inspect the certificate manually with: openssl s_client -connect host:443 | openssl x509 -noout -dates",
+                    ))
 
             # SAN check
             san = cert.get("subjectAltName", ())
