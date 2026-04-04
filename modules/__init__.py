@@ -8,6 +8,8 @@ from modules.tls_analysis import TlsAnalysisModule
 from modules.http_headers import HttpHeaderModule
 from modules.tech_stack import TechStackModule
 from modules.app_checks import AppChecksModule
+from modules.waf_detection import WafDetectionModule
+from modules.content_discovery import ContentDiscoveryModule
 
 ALL_MODULES: list[type] = [
     DnsReconModule,
@@ -16,6 +18,8 @@ ALL_MODULES: list[type] = [
     HttpHeaderModule,
     TechStackModule,
     AppChecksModule,
+    WafDetectionModule,
+    ContentDiscoveryModule,
 ]
 
 __all__ = [
@@ -25,5 +29,7 @@ __all__ = [
     "HttpHeaderModule",
     "TechStackModule",
     "AppChecksModule",
+    "WafDetectionModule",
+    "ContentDiscoveryModule",
     "ALL_MODULES",
 ]
