@@ -2,10 +2,27 @@
 
 from __future__ import annotations
 
+import json
+
 import requests
 
 from models import Finding, FindingCategory, ScanDepth, Severity
 from modules.base import BaseModule
+
+# GraphQL introspection query (read-only, no mutations)
+_GRAPHQL_INTROSPECTION_QUERY = """
+{
+  __schema {
+    queryType { name }
+    mutationType { name }
+    subscriptionType { name }
+    types { name kind description }
+  }
+}
+""".strip()
+
+# HTTP methods to enumerate on the root path
+_METHODS_TO_TEST = ("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE")
 
 # Common application-level checks (all read-only, no payloads)
 _CHECKS: list[dict[str, str]] = [
@@ -184,6 +201,10 @@ class AppChecksModule(BaseModule):
                     impact = "GraphQL endpoint may allow introspection"
                     remediation = "Disable GraphQL introspection in production"
 
+                # Extra: run GraphQL introspection if the endpoint responds
+                if path == "/graphql" and severity != Severity.INFO:
+                    self._graphql_introspection(base_url, findings)
+
                 findings.append(Finding(
                     title=title,
                     category=FindingCategory.APPLICATION,
@@ -193,4 +214,135 @@ class AppChecksModule(BaseModule):
                     remediation=remediation,
                 ))
 
+        # --- HTTP method enumeration ---
+        if self.config.depth in (ScanDepth.STANDARD, ScanDepth.DEEP):
+            self._enumerate_http_methods(base_url, findings)
+
         return findings
+
+    # -----------------------------------------------------------------------
+
+    def _graphql_introspection(self, base_url: str, findings: list[Finding]) -> None:
+        """Send a GraphQL introspection query to enumerate the schema."""
+        self._rate_limit()
+        try:
+            resp = requests.post(
+                f"{base_url}/graphql",
+                json={"query": _GRAPHQL_INTROSPECTION_QUERY},
+                timeout=self.config.timeout,
+                verify=False,
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": "Inquisition/0.1 SecurityScanner",
+                },
+            )
+        except requests.RequestException:
+            return
+
+        if resp.status_code != 200:
+            return
+
+        try:
+            data = resp.json()
+        except (ValueError, json.JSONDecodeError):
+            return
+
+        schema = data.get("data", {}).get("__schema")
+        if not schema:
+            # Introspection was blocked or returned no schema
+            findings.append(Finding(
+                title="GraphQL introspection disabled",
+                category=FindingCategory.APPLICATION,
+                severity=Severity.INFO,
+                evidence=f"POST /graphql returned HTTP 200 but introspection query returned no schema",
+                impact="GraphQL schema enumeration is blocked — good security posture",
+                remediation="",
+            ))
+            return
+
+        type_names = [t["name"] for t in schema.get("types", []) if not t["name"].startswith("__")]
+        mutation_type = schema.get("mutationType")
+        findings.append(Finding(
+            title="GraphQL introspection enabled",
+            category=FindingCategory.APPLICATION,
+            severity=Severity.MEDIUM,
+            evidence=(
+                f"Schema exposed: {len(type_names)} type(s): {', '.join(type_names[:15])}"
+                + (" …" if len(type_names) > 15 else "")
+                + (f". Mutations available: yes ({mutation_type['name']})" if mutation_type else ". No mutations.")
+            ),
+            impact=(
+                "Full API schema exposed — attackers can enumerate all queries, mutations, "
+                "types, and fields without authentication, accelerating API abuse"
+            ),
+            remediation=(
+                "Disable introspection in production. "
+                "In Apollo Server: introspection: false in server config. "
+                "In Graphene: GRAPHENE = {'ATOMIC_MUTATIONS': True} and restrict introspection. "
+                "Consider field-level authorization and depth/complexity limiting."
+            ),
+        ))
+
+    def _enumerate_http_methods(self, base_url: str, findings: list[Finding]) -> None:
+        """Probe which HTTP methods the server accepts on the root path."""
+        # First try OPTIONS to get Allow header
+        self._rate_limit()
+        allowed_from_options: list[str] = []
+        try:
+            opt_resp = requests.options(
+                f"{base_url}/",
+                timeout=self.config.timeout,
+                verify=False,
+                headers={"User-Agent": "Inquisition/0.1 SecurityScanner"},
+            )
+            allow_header = opt_resp.headers.get("Allow", "")
+            if allow_header:
+                allowed_from_options = [m.strip().upper() for m in allow_header.split(",")]
+        except requests.RequestException:
+            pass
+
+        # Flag dangerous methods
+        dangerous = {"PUT", "DELETE", "PATCH", "TRACE"}
+        dangerous_allowed = dangerous & set(allowed_from_options)
+
+        if "TRACE" in allowed_from_options:
+            findings.append(Finding(
+                title="HTTP TRACE method enabled",
+                category=FindingCategory.APPLICATION,
+                severity=Severity.MEDIUM,
+                evidence=f"OPTIONS /  →  Allow: {', '.join(allowed_from_options)}",
+                impact=(
+                    "HTTP TRACE allows Cross-Site Tracing (XST) attacks — "
+                    "JavaScript can use TRACE to read HttpOnly cookies via reflected headers"
+                ),
+                remediation=(
+                    "Disable TRACE in web server config. "
+                    "Apache: TraceEnable Off. Nginx: rewrite, location, or limit_except. "
+                    "IIS: Remove TRACE from allowed verbs."
+                ),
+            ))
+
+        if dangerous_allowed - {"TRACE"}:
+            findings.append(Finding(
+                title=f"Potentially dangerous HTTP methods enabled: {', '.join(sorted(dangerous_allowed - {'TRACE'}))}",
+                category=FindingCategory.APPLICATION,
+                severity=Severity.LOW,
+                evidence=f"OPTIONS /  →  Allow: {', '.join(allowed_from_options)}",
+                impact=(
+                    "PUT/DELETE/PATCH on root may allow unauthorized resource manipulation "
+                    "if access controls are not enforced at the application layer"
+                ),
+                remediation=(
+                    "Restrict HTTP methods at the web-server level to only those required. "
+                    "Apache: <LimitExcept GET POST HEAD> Deny from all </LimitExcept>. "
+                    "Nginx: limit_except GET POST { deny all; }."
+                ),
+            ))
+
+        if allowed_from_options:
+            findings.append(Finding(
+                title="HTTP methods enumerated via OPTIONS",
+                category=FindingCategory.APPLICATION,
+                severity=Severity.INFO,
+                evidence=f"Allowed methods: {', '.join(allowed_from_options)}",
+            ))
