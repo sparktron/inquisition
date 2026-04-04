@@ -1,171 +1,231 @@
-# inquisition
+# Inquisition
 
-A read-only website fingerprinting and security reconnaissance tool. Identifies technologies, frameworks, open ports, TLS configuration, HTTP security headers, and known vulnerabilities on a target host — then produces a detailed analysis of every issue found, including why it is a problem and exactly what to do about it.
+**A comprehensive, read-only security reconnaissance scanner for identifying misconfigurations, exposed services, and known vulnerabilities on authorised targets.**
 
-## Features
+Inquisition probes your target across DNS, network, TLS, HTTP, application layers—then generates a detailed analysis of every issue found, explaining *why* it matters and *exactly how* to fix it. Reports include risk scoring, remediation priority matrices, and deep-dive guidance with platform-specific configuration examples.
 
-- **DNS reconnaissance** — A/AAAA records, reverse DNS, subdomain enumeration, SPF/DMARC checks
-- **Port scanning** — TCP connect-scan across configurable port ranges with banner grabbing
-- **TLS/SSL analysis** — protocol version, cipher suites, certificate validity and expiration
-- **HTTP header audit** — missing security headers, information disclosure, insecure cookies
-- **Technology detection** — CMS, frameworks, server software via body/header signatures and path probing
-- **Application checks** — CORS, debug endpoints, exposed API docs, sensitive path exposure
-- **CVE correlation** — CPE-based lookup against the NVD API
-- **Misconfiguration detection** — 18 pattern-matched rules for common security weaknesses
-- **Deep issue analysis** — per-finding explanation of what the vulnerability is, why it is dangerous, named CVEs, and real-world attack scenarios
-- **Remediation guide** — per-finding step-by-step fix instructions with platform-specific configuration examples and verification commands
-- **Risk score and security grade** — weighted numeric score and A+–F letter grade derived from all findings
-- **Finding deduplication** — duplicate findings from overlapping module probes are collapsed automatically
-- **Text, JSON, and HTML output** — HTML report is fully self-contained with collapsible deep-dive sections
+**Read-only by design.** No exploit payloads. No authentication bypasses. No injection attacks. Safe for scanning without special approval.
 
-## Requirements
+## Key Features
 
-- Python 3.10+
-- pip
+### Reconnaissance & Fingerprinting
+- **DNS reconnaissance** — A/AAAA resolution, reverse DNS, subdomain enumeration, MX/NS/TXT records, SPF/DMARC checks, **DNS zone transfer (AXFR) detection**
+- **Port scanning** — TCP connect-scan with banner grabbing; enhanced service detection for Telnet, SMB, VNC, Redis, Elasticsearch, MongoDB, MySQL, PostgreSQL, RDP
+- **TLS/SSL analysis** — protocol versions, cipher suites, certificate validity/expiration, self-signed detection, hostname mismatch
+- **WAF/CDN detection** — Identifies Cloudflare, AWS CloudFront, Akamai, Fastly, Imperva, Sucuri, and 20+ other protective layers
+- **Technology stack detection** — WordPress, Joomla, Drupal, Laravel, Django, PHP, nginx, Apache, IIS, Node.js, and more via body/header signatures and path probing
 
-## Installation
+### Security Headers & Application Layer
+- **HTTP header audit** — HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, **SameSite cookie validation**, information disclosure headers
+- **Application checks** — CORS misconfiguration, XSS-Protection disabled, **GraphQL introspection**, **HTTP method enumeration (TRACE/PUT/DELETE)**, debug endpoints, exposed API docs
+- **Content discovery** — **security.txt validation (RFC 9116)**, **robots.txt path leakage**, admin panels (Kibana, Grafana, Jenkins, Jupyter, Portainer, etc.), backup files, sensitive configs (`.env`, `docker-compose.yml`, `.htpasswd`)
+
+### Vulnerability Analysis
+- **CVE correlation** — CPE-based lookup against the National Vulnerability Database (NVD) with CVSS scoring and references
+- **Subdomain takeover detection** — Identifies dangling CNAMEs pointing to unclaimed Heroku apps, GitHub Pages, S3 buckets, etc.
+- **Misconfiguration detection** — 30+ pattern-matched rules for common security weaknesses (expired certs, legacy TLS, missing HSTS, exposed credentials, etc.)
+
+### Reporting & Analysis
+- **Deep issue analysis** — Multi-paragraph explanations of what each vulnerability is, why it's dangerous, named CVE references, and real-world attack scenarios
+- **Remediation guidance** — Step-by-step fix instructions with platform-specific examples (nginx, Apache, IIS, Docker, Kubernetes, AWS, Azure)
+- **Risk scoring & grading** — Weighted numeric score (0–∞) and security grade (A+ to F) derived from all findings
+- **Priority matrix** — Ranked table of CRITICAL/HIGH/MEDIUM findings sorted by severity
+- **Finding deduplication** — Overlapping probes automatically collapsed to eliminate noise
+- **Text, JSON, and HTML output** — HTML reports are self-contained with collapsible sections for deep dives and remediation
+
+---
+
+## Table of Contents
+
+1. [Quick Start](#quick-start)
+2. [Installation](#installation)
+3. [Usage](#usage)
+4. [Report Structure](#report-structure)
+5. [Modules Reference](#modules-reference)
+6. [Misconfiguration Rules](#misconfiguration-rules)
+7. [Examples](#examples)
+8. [Legal & Safety](#legal--safety)
+9. [License](#license)
+
+---
+
+## Quick Start
 
 ```bash
+# Clone and install
 git clone https://github.com/sparktron/inquisition.git
 cd inquisition
 pip install -r requirements.txt
-pip install -e .
+
+# Run a scan (interactive)
+python cli.py example.com
+
+# Full deep scan, no prompts (pre-authorised target only)
+python cli.py example.com --depth deep --yes
+
+# Save HTML report
+python cli.py example.com -o report.html
 ```
+
+---
+
+## Installation
+
+### Requirements
+
+- **Python 3.10+** (type hints, match statements)
+- **pip** (package installer)
+- Optional: **dnspython** (for advanced DNS queries like zone transfer attempts; installed by requirements.txt)
+
+### Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/sparktron/inquisition.git
+cd inquisition
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run directly with Python (no installation)
+python cli.py example.com
+```
+
+**Note:** Due to the flat module layout (non-namespaced imports), `pip install -e .` may not create a working console script. The recommended approach is to run `python cli.py` directly or create a shell alias:
+
+```bash
+# Add to ~/.bashrc or ~/.zshrc for convenience
+alias inquisition='python /path/to/inquisition/cli.py'
+```
+
+---
 
 ## Usage
 
-```bash
-./inquisition <target> [options]
-```
-
-The target is a **hostname or IP address** (e.g. `example.com` or `93.184.216.34`).
-
-### Auto mode
-
-Run a full deep assessment with no user interaction:
+### Basic Invocation
 
 ```bash
-./inquisition --auto example.com
+python cli.py <target> [options]
 ```
 
-Auto mode sets scan depth to `deep` and suppresses the authorization prompt. Use this for scripted or unattended runs where you have pre-authorized the target.
+The **target** is a hostname or IP address (`example.com`, `93.184.216.34`, `internal.company.local`, etc.).
 
-### Basic scan
+**Important:** Inquisition will display an authorization banner and prompt for confirmation before sending any traffic. This is intentional — it ensures you have explicit permission to scan the target. Use `--yes` / `-y` to suppress this prompt in automated workflows (only when pre-authorised).
+
+### Common Examples
 
 ```bash
-./inquisition example.com
+# 1. Interactive scan (prompts for authorization)
+python cli.py example.com
+
+# 2. Full assessment, no prompts (pre-authorised targets only)
+python cli.py example.com --yes --depth deep
+
+# 3. Quick reconnaissance only
+python cli.py example.com --depth quick
+
+# 4. Save HTML report for stakeholder review
+python cli.py example.com -o report.html
+
+# 5. Brief text report (no remediation steps) to stdout
+python cli.py example.com --brief
+
+# 6. Internal hostname on custom port (standard scan)
+python cli.py internal.company.local --depth standard
+
+# 7. Dry run (preview without sending traffic)
+python cli.py example.com --dry-run
+
+# 8. JSON for automated parsing
+python cli.py example.com -f json -o findings.json
+
+# 9. Slower scanning to avoid rate-limit triggers
+python cli.py example.com --rate-limit 0.5 --timeout 15
+
+# 10. Custom port list (must use custom ports, not depth defaults)
+python cli.py example.com --ports 22 80 443 8080 8443 9000
 ```
 
-Before sending any traffic, inquisition displays an authorization banner and asks you to confirm that you have permission to scan the target. Use `-y` to skip this prompt in automated workflows.
+### Scan Depth
 
-### Scan depth
+Three depth levels control the scope of port scanning and path probing:
 
 ```bash
-# Quick — top ports only, basic checks
-./inquisition example.com -d quick
-
-# Standard (default) — balanced coverage
-./inquisition example.com -d standard
-
-# Deep — full port range, thorough probing
-./inquisition example.com -d deep
+python cli.py example.com --depth quick      # Lightweight scan
+python cli.py example.com --depth standard   # Balanced (default)
+python cli.py example.com --depth deep       # Thorough
 ```
 
-| Depth | Ports scanned | Checks |
-|---|---|---|
-| `quick` | 5 core ports (22, 80, 443, 8080, 8443) | Basic checks only |
-| `standard` | 20 well-known ports | Standard checks including path probing |
-| `deep` | Full 1–1024 range | All checks, thorough probing |
+| Depth | TCP Ports | Path Probing | Admin Panels | Zone Transfer | Typical Duration |
+|---|---|---|---|---|---|
+| `quick` | 5 core (22, 80, 443, 8080, 8443) | No | No | No | 10–20s |
+| `standard` | 20 well-known | Yes | No | Yes* | 30–60s |
+| `deep` | Full 1–1024 | Yes | Yes | Yes* | 2–5min |
 
-### Output format
+*Requires `dnspython`; skipped if missing.
 
-Three formats are supported. Format is inferred automatically from the output file extension when `--output` is used.
+### Output Formats
+
+Inquisition supports three output formats:
 
 ```bash
-# Human-readable text (default)
-./inquisition example.com -f text
-
-# Self-contained HTML report
-./inquisition example.com -f html
-
-# Machine-readable JSON
-./inquisition example.com -f json
+python cli.py example.com -f text    # Human-readable (default)
+python cli.py example.com -f html    # Self-contained HTML with collapsible sections
+python cli.py example.com -f json    # Machine-readable JSON for parsing/integration
 ```
 
-### Saving reports to a file
-
-Use `-o` / `--output` to write the report to a file. The file extension is used to infer the format when `--format` is not explicitly set.
+When using `--output`, the format is inferred from the file extension:
 
 ```bash
-# Save as HTML (format inferred from extension)
-./inquisition example.com -o report.html
-
-# Save as JSON
-./inquisition example.com -o report.json
-
-# Save as text with explicit format
-./inquisition example.com -f text -o report.txt
+python cli.py example.com -o report.html   # → HTML format
+python cli.py example.com -o report.json   # → JSON format
+python cli.py example.com -o report.txt    # → Text format
 ```
 
-### Brief mode
+### Options Reference
 
-Suppress the deep-dive analysis and remediation sections for a more concise text report:
+#### Target & Scope
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `target` | string | *required* | Hostname, IP address, or internal DNS name |
+| `-d`, `--depth` | `quick` \| `standard` \| `deep` | `standard` | Scan depth: controls ports and path probing |
+| `--ports` | list of ints | 20 well-known | Override default ports (e.g. `--ports 22 80 443 8080`) |
 
-```bash
-./inquisition example.com --brief
-```
+#### Output & Reporting
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `-f`, `--format` | `text` \| `json` \| `html` | `text` | Report output format |
+| `-o`, `--output` | path | stdout | Write report to file (extension infers format) |
+| `--brief` | flag | off | Omit deep-dive analysis and remediation sections |
 
-The executive summary, priority matrix, and detailed findings table are still included. Only the DEEP ISSUE ANALYSIS and REMEDIATION GUIDE sections are omitted.
+#### Concurrency & Timing
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `-t`, `--threads` | int | 10 | Max concurrent threads per module |
+| `--rate-limit` | float (seconds) | 0.1 | Minimum delay between requests within a module |
+| `--timeout` | float (seconds) | 10.0 | Per-request timeout for all HTTP/socket operations |
 
-### Safe mode
+#### Authorization & Testing
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `-y`, `--yes` | flag | off | Skip authorization prompt (use only if pre-authorised) |
+| `--dry-run` | flag | off | Preview scan without sending any traffic |
+| `-v`, `--verbose` | flag | off | Enable debug logging to stderr |
 
-Safe mode (enabled by default) restricts all probes to read-only operations — no exploit payloads, no authentication bypass attempts, no injection. Disable it only when you have explicit authorization and understand the implications.
+### Safety & Authorization
 
-```bash
-# Safe mode on (default)
-./inquisition example.com --safe-mode
+**Inquisition is safe by design:**
 
-# Disable safe mode
-./inquisition example.com --no-safe-mode
-```
+- ✅ All probes are **read-only** — no exploit payloads, no login attempts, no injection
+- ✅ **Authorization prompt** before any traffic — prevents accidental scanning of unowned targets
+- ✅ **Rate limiting** to avoid overwhelming targets (default 0.1s between requests)
+- ✅ **Timeout controls** to gracefully handle slow/hanging connections
 
-### Dry run
+The authorization prompt can be suppressed with `--yes` only for scripted runs where you have **explicit prior written authorization** to scan the target.
 
-Preview the scan configuration without sending any network traffic:
+---
 
-```bash
-./inquisition example.com --dry-run
-```
-
-### Concurrency and rate limiting
-
-```bash
-# Custom thread count (default: 10)
-./inquisition example.com -t 5
-
-# Minimum seconds between requests (default: 0.1)
-./inquisition example.com --rate-limit 0.5
-
-# Per-request timeout in seconds (default: 10)
-./inquisition example.com --timeout 30
-```
-
-### Full options reference
-
-| Flag | Default | Description |
-|---|---|---|
-| `target` | — | Hostname or IP to scan |
-| `--auto` | off | Full deep assessment, no user interaction |
-| `-d`, `--depth` | `standard` | Scan depth: `quick`, `standard`, `deep` |
-| `-f`, `--format` | `text` | Output format: `text`, `json`, `html` |
-| `-o`, `--output` | — | Write report to file (extension infers format) |
-| `--brief` | off | Omit deep-dive analysis and remediation sections |
-| `-t`, `--threads` | `10` | Max concurrent threads |
-| `--safe-mode` / `--no-safe-mode` | on | Restrict to read-only probes |
-| `--dry-run` | off | Preview without sending traffic |
-| `--rate-limit` | `0.1` | Seconds between requests |
-| `--timeout` | `10` | Per-request timeout (seconds) |
-| `-y`, `--yes` | off | Skip authorization prompt |
+## Report Structure
 
 ## Report structure
 
@@ -271,44 +331,397 @@ The HTML report is a self-contained single file (no external dependencies). Each
   ...
 ```
 
-## Modules
+---
 
-| Module | What it checks |
+## Modules Reference
+
+Inquisition runs 8 specialised modules concurrently, each with a specific focus:
+
+### 1. DNS Reconnaissance (`dns_recon`)
+**What it does:** Resolves DNS records, enumerates subdomains, checks email security.
+
+**Checks:**
+- A/AAAA resolution and IP discovery
+- Reverse DNS lookups
+- Subdomain enumeration (16 common prefixes: www, mail, dev, staging, api, admin, etc.)
+- MX/NS/TXT record queries
+- SPF record validation
+- DMARC record detection
+- **DNS zone transfer (AXFR) attempts** — reveals entire zone if unrestricted
+- **Subdomain takeover detection** — identifies dangling CNAME records on 24+ third-party services
+
+**Severity:** CRITICAL for zone transfer success; HIGH for subdomain takeover
+
+---
+
+### 2. Port Scanning (`port_scan`)
+**What it does:** TCP connection scanning with banner grabbing and service-specific risk analysis.
+
+**Checks:**
+- TCP connect-scan on configurable port ranges
+- Banner grabbing (sends `\r\n`, reads response)
+- Service identification
+- Enhanced risk flagging for:
+  - **Telnet (port 23)** → HIGH — cleartext credentials
+  - **SMB (port 445)** → CRITICAL — EternalBlue/WannaCry risk, MS17-010
+  - **FTP (port 21)** → MEDIUM — cleartext auth, anonymous access
+  - **VNC (port 5900)** → HIGH — weak auth risk
+  - **Redis (port 6379)** → HIGH — unauthenticated access
+  - **MongoDB (port 27017)** → HIGH — default no-auth exposure
+  - **Elasticsearch (port 9200)** → HIGH — API exposed
+  - **MySQL (port 3306)** → MEDIUM — brute-force risk
+  - **PostgreSQL (port 5432)** → MEDIUM — misconfigured pg_hba.conf
+  - **RDP (port 3389)** → MEDIUM — BlueKeep risk
+
+**Severity:** Depends on port; Telnet/SMB are HIGH/CRITICAL
+
+---
+
+### 3. TLS Analysis (`tls_analysis`)
+**What it does:** Inspects TLS certificates and protocol configuration.
+
+**Checks:**
+- Protocol version detection (flags SSLv2, SSLv3, TLSv1.0, TLSv1.1)
+- Cipher suite analysis (flags RC4, DES, NULL, EXPORT, anonymous ciphers)
+- Certificate fingerprint (SHA-256)
+- Self-signed certificate detection
+- Certificate expiry and validity period
+- Hostname mismatch in Subject Alternative Names (SAN)
+- Certificate chain validation
+
+**Severity:** CRITICAL for expired certs; HIGH for legacy protocols/weak ciphers
+
+---
+
+### 4. HTTP Headers Audit (`http_headers`)
+**What it does:** Validates HTTP security headers and cookie configuration.
+
+**Checks:**
+- HSTS (Strict-Transport-Security)
+- CSP (Content-Security-Policy)
+- X-Content-Type-Options (MIME-sniffing)
+- X-Frame-Options (clickjacking)
+- Referrer-Policy
+- Permissions-Policy
+- Information disclosure headers (Server, X-Powered-By, X-AspNet-Version)
+- Cookie flags: **Secure**, **HttpOnly**, **SameSite** (Strict/Lax/None)
+- HTTP-to-HTTPS redirect
+
+**Severity:** MEDIUM for missing HSTS/CSP; MEDIUM for insecure cookies
+
+---
+
+### 5. Technology Stack Detection (`tech_stack`)
+**What it does:** Fingerprints CMS, frameworks, and server software.
+
+**Detection methods:**
+- Body signature matching (regex patterns in HTML)
+- Header signature matching (Server, X-Powered-By, X-Generator)
+- Path probing for known endpoints (wp-login.php, /administrator/, /phpmyadmin/, etc.)
+
+**Detected technologies:**
+- CMS: WordPress, Joomla, Drupal, Shopify
+- Frameworks: Laravel, Django, Ruby on Rails, Express.js, Next.js, Nuxt.js
+- Languages: PHP, ASP.NET
+- Servers: nginx, Apache, IIS, LiteSpeed
+- Exposed files: `.env` (CRITICAL), `.git/HEAD` (HIGH)
+
+**CPE correlation:** Detected technologies are matched against the NVD for CVE lookup.
+
+**Severity:** INFO for detection; CRITICAL if `.env` or `.git` are accessible
+
+---
+
+### 6. Application Checks (`app_checks`)
+**What it does:** Detects application-layer misconfigurations.
+
+**Checks:**
+- CORS wildcard (`Access-Control-Allow-Origin: *`)
+- X-XSS-Protection disabled
+- CORS preflight testing
+- **GraphQL introspection query** — tests if schema is enumerable
+- **HTTP method enumeration** — probes OPTIONS and tests TRACE, PUT, DELETE, PATCH
+- Path probing for:
+  - phpinfo.php (HIGH)
+  - Debug endpoints (HIGH)
+  - ELMAH error logs / ASP.NET trace (HIGH)
+  - Swagger UI / API documentation (LOW)
+  - GraphQL endpoint (LOW)
+  - Favicon, sitemap.xml, robots.txt (INFO)
+
+**Severity:** HIGH for GraphQL introspection, TRACE, debug endpoints; MEDIUM for CORS/methods
+
+---
+
+### 7. WAF/CDN Detection (`waf_detection`)
+**What it does:** Identifies protective layers in front of the target.
+
+**Detects (30+ products):**
+- **CDNs:** Cloudflare, AWS CloudFront, Akamai, Fastly, Vercel, Netlify
+- **WAFs:** Imperva Incapsula, Sucuri, Cloudflare WAF
+- **Cache layers:** Varnish, Akamai
+- **Proxies/Gateways:** Kong, AWS API Gateway, Azure Front Door
+- Detection via headers, cookies, response body markers
+
+**Findings:**
+- INFO if WAF/CDN found (confirms protection is in place)
+- LOW if none found (recommends adding protective layer)
+
+---
+
+### 8. Content Discovery (`content_discovery`)
+**What it does:** Finds administrative interfaces, backups, and sensitive files.
+
+**Checks:**
+
+*Always (QUICK/STANDARD/DEEP):*
+- RFC 9116 security.txt validation
+- robots.txt path disclosure analysis
+
+*Standard/Deep only:*
+- **Admin panels (30 checked):** Kibana, Grafana, Jenkins, Prometheus, Spring Boot Actuator, Jupyter, Portainer, RabbitMQ, Consul, Vault, pgAdmin, Adminer, MLflow, Celery Flower, Airflow, etc.
+- **Backup files (24 checked):** `.env.bak`, `.env.prod`, `.sql`, `docker-compose.yml`, `backup.zip`, `.htpasswd`, `Dockerfile`, `.npmrc`, `web.config.bak`, etc.
+
+**Severity:** CRITICAL for exposed `.env` and backups; HIGH for admin panels; MEDIUM for docker-compose.yml, Dockerfile; LOW for .DS_Store
+
+---
+
+## Misconfiguration Rules
+
+The misconfiguration engine derives higher-level findings from raw module output (30+ patterns):
+
+### TLS/Certificate
+- ✗ Expired TLS certificate (CRITICAL)
+- ✗ Self-signed certificate (MEDIUM)
+- ✗ Legacy TLS enabled — TLS 1.0/1.1 (HIGH)
+- ✗ Weak cipher suites (HIGH)
+- ✗ Certificate date unparseable (MEDIUM)
+
+### HTTP & Network
+- ✗ HSTS not enabled (MEDIUM)
+- ✗ CSP not configured (MEDIUM)
+- ✗ Clickjacking protection absent — X-Frame-Options (LOW)
+- ✗ Unencrypted HTTP served — no redirect to HTTPS (MEDIUM)
+- ✗ Session cookies lack security flags (MEDIUM)
+- ✗ Overly permissive CORS policy (MEDIUM)
+
+### File & Configuration Exposure
+- ✗ Environment file publicly accessible — `.env` (CRITICAL)
+- ✗ Git repository exposed — `.git/` (HIGH)
+- ✗ Database dumps exposed — `.sql` files (CRITICAL)
+- ✗ Docker Compose config exposed (MEDIUM)
+- ✗ Sensitive file publicly accessible (CRITICAL)
+
+### Services & Protocols
+- ✗ Telnet service exposed (HIGH)
+- ✗ SMB exposed to internet (CRITICAL)
+- ✗ Redis exposed to internet (HIGH)
+- ✗ Elasticsearch exposed to internet (HIGH)
+- ✗ RDP exposed to internet (MEDIUM)
+- ✗ MongoDB exposed to internet (HIGH)
+- ✗ phpMyAdmin accessible (HIGH)
+
+### Application Layer
+- ✗ PHP configuration page exposed — phpinfo (HIGH)
+- ✗ Admin panel publicly accessible (HIGH/MEDIUM)
+- ✗ GraphQL introspection enabled in production (MEDIUM)
+- ✗ HTTP TRACE method enabled (MEDIUM)
+- ✗ DNS zone transfer unrestricted (CRITICAL)
+- ✗ Subdomain takeover via dangling CNAME (HIGH)
+
+---
+
+## Risk Scoring & Security Grade
+
+### Scoring Formula
+
+Each finding is weighted by severity:
+
+| Severity | Weight |
 |---|---|
-| `dns_recon` | A/AAAA resolution, reverse DNS, subdomain enumeration, MX/NS/TXT records, SPF, DMARC |
-| `port_scan` | TCP connect-scan with banner grabbing; flags Telnet, Redis, Elasticsearch, RDP, VNC |
-| `tls_analysis` | Protocol version, cipher suite strength, certificate expiry, self-signed, hostname mismatch |
-| `http_headers` | HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, leaky headers, cookie flags, HTTP→HTTPS redirect |
-| `tech_stack` | WordPress, Joomla, Drupal, PHP, nginx, Apache, IIS, and more via body/header signatures; probes for `.env`, `.git`, `phpMyAdmin`, Apache mod_status |
-| `app_checks` | CORS wildcard, XSS-Protection disabled, phpinfo, ELMAH, ASP.NET trace, debug endpoints, Swagger UI, GraphQL introspection |
+| CRITICAL | 40 |
+| HIGH | 15 |
+| MEDIUM | 5 |
+| LOW | 1 |
+| INFO | 0 |
 
-## Misconfiguration rules
+**Risk Score = Sum of (finding count × severity weight)**
 
-The misconfiguration engine derives higher-level findings from raw module output. Covered patterns:
+### Security Grade
 
-- Expired TLS certificate
-- Self-signed certificate
-- Legacy TLS enabled (TLS 1.0 / 1.1)
-- Weak TLS cipher suite
-- HSTS not enabled
-- CSP not configured
-- Clickjacking protection absent (X-Frame-Options)
-- Unencrypted HTTP served (no redirect)
-- Session cookies lack security flags
-- Overly permissive CORS policy
-- PHP configuration page exposed
-- Environment file publicly accessible (`.env`)
-- Git repository exposed (`.git`)
-- Redis exposed to internet
-- Elasticsearch exposed to internet
-- RDP exposed to internet
-- Telnet service exposed
-- phpMyAdmin accessible
+| Grade | Score | Assessment |
+|---|---|---|
+| **A+** | 0 | No findings — clean bill of health |
+| **A** | 1–9 | Negligible — informational findings only |
+| **B** | 10–24 | Minor — low-severity issues present |
+| **C** | 25–49 | Moderate — medium-severity issues require attention |
+| **D** | 50–99 | Significant risk — high-severity issues present |
+| **F** | 100+ | Critical — immediate action required; high-risk exposure |
 
-## Legal
+---
 
-Only use this tool against targets you own or have explicit written authorization to test. Unauthorized scanning may violate computer fraud and abuse laws. The tool will prompt for authorization confirmation before each scan.
+## Report Sections
+
+Every scan generates the following sections (unless `--brief` is used):
+
+| Section | Content |
+|---|---|
+| **Executive Summary** | Finding counts by severity, CVE count, misconfiguration count, risk score, security grade |
+| **Remediation Priority Matrix** | Ranked CRITICAL → HIGH → MEDIUM findings for quick triage |
+| **Detailed Findings** | Per-finding evidence, impact, quick fix, CPE, recommended tools |
+| **Deep Issue Analysis** | Multi-paragraph explanation: what is the vulnerability, why is it dangerous, real-world attacks, named CVEs *(omitted with `--brief`)* |
+| **Remediation Guide** | Step-by-step fix instructions with platform-specific examples (nginx, Apache, IIS, Docker, K8s, AWS, Azure) *(omitted with `--brief`)* |
+| **CVE Correlation** | CVEs matched to detected CPEs via NVD API, with CVSS scores and references |
+| **Misconfiguration Summary** | Higher-level patterns derived from findings |
+| **Tool Reference** | Recommended open-source tools for deeper investigation by category |
+| **Scan Metadata** | Scan duration, configuration, and any errors encountered |
+
+---
+
+## Examples
+
+### Example 1: Basic Target Assessment
+
+```bash
+$ python cli.py example.com
+
+[*] Inquisition Security Reconnaissance Scanner
+
+ ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+ ┃  AUTHORIZATION REQUIRED                                              ┃
+ ┃  Do you have permission to scan: example.com?                        ┃
+ ┃  This tool is designed for authorised security testing only.        ┃
+ ┃  Unauthorised scanning may violate laws.                             ┃
+ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+Confirm [y/n]: y
+
+[*] Starting scan of example.com (depth=standard)
+
+  [+] dns_recon: 6 finding(s)
+  [+] port_scan: 3 finding(s)
+  [+] tls_analysis: 5 finding(s)
+  [+] http_headers: 8 finding(s)
+  [+] tech_stack: 2 finding(s)
+  [+] app_checks: 4 finding(s)
+  [+] waf_detection: 1 finding(s)
+  [+] content_discovery: 2 finding(s)
+
+[*] Correlating 3 CPE(s) with NVD...
+  [+] cpe:2.3:a:nginx:nginx:1.24.0:*:*:*:*:*:*:*: 2 CVE(s)
+  [+] cpe:2.3:a:openssl:openssl:3.0.1:*:*:*:*:*:*:*: 1 CVE(s)
+
+[*] Removed 2 duplicate finding(s)
+
+[*] 4 misconfiguration(s) detected
+
+========================================================================
+  INQUISITION — Security Reconnaissance Report
+========================================================================
+  Target   : example.com
+  Started  : 2026-04-04 15:32:00 UTC
+  Finished : 2026-04-04 15:32:47 UTC (47.2s)
+  Depth    : standard
+  Mode     : safe
+
+========================================================================
+  EXECUTIVE SUMMARY
+========================================================================
+  Total findings: 28
+    CRITICAL : 1
+    HIGH     : 4
+    MEDIUM   : 10
+    LOW      : 8
+    INFO     : 5
+
+  CVEs correlated  : 3
+  Misconfigurations: 4
+
+  Risk score : 72  |  Security grade : D
+```
+
+### Example 2: Save HTML Report
+
+```bash
+$ python cli.py example.com -o report.html --yes --depth deep
+
+[*] Starting scan of example.com (depth=deep)
+...
+[*] Report saved to: report.html
+```
+
+The generated HTML report includes:
+- Severity-coloured finding cards
+- Collapsible "Issue Analysis" and "Remediation Steps" sections
+- CVE table with CVSS scores
+- No external dependencies (fully self-contained)
+
+### Example 3: JSON Export for Automation
+
+```bash
+$ python cli.py example.com -f json -o findings.json --yes
+
+$ jq '.findings[] | select(.severity=="CRITICAL")' findings.json
+
+{
+  "title": "Environment file exposure",
+  "category": "tech_stack",
+  "severity": "critical",
+  "evidence": "HTTP 200 at https://example.com/.env (247 bytes)",
+  "impact": "Environment file may contain credentials and secrets",
+  "remediation": "Block public access to .env files via web server config",
+  "cpe": ""
+}
+```
+
+---
+
+## Legal & Safety
+
+### Authorization
+
+**Only use Inquisition against targets you own or have explicit written authorization to test.**
+
+Unauthorized security scanning may violate computer fraud and abuse laws in your jurisdiction. Inquisition requires explicit authorization confirmation before each scan — use this to ensure you have proper permission.
+
+### Safety by Design
+
+Inquisition is intentionally **read-only and passive:**
+
+- ✅ No exploit payloads or weaponized techniques
+- ✅ No authentication bypass attempts
+- ✅ No injection, fuzzing, or enumeration of application logic
+- ✅ No modifications to target systems
+- ✅ No extraction of private data
+
+It is safe to run against production systems when authorized.
+
+### Responsible Disclosure
+
+If you discover a vulnerability on a system you own, consider:
+
+1. **Check for security.txt** — Does the target publish security contact info per RFC 9116?
+2. **Responsible disclosure process** — Give the organisation reasonable time to patch before public disclosure
+3. **Bug bounty programmes** — Many organisations offer rewards for responsibly disclosed vulnerabilities
+
+---
 
 ## License
 
 MIT
+
+---
+
+## Contributing
+
+Contributions are welcome. Please open an issue or pull request at the repository.
+
+For bug reports or feature requests, provide:
+- Description of the issue
+- Steps to reproduce (if applicable)
+- Expected vs. actual behaviour
+- Scan output (sanitise any sensitive data)
+
+---
+
+**Last updated:** April 2026
