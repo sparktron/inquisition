@@ -79,7 +79,7 @@ _WEBSERVER_PORTS = (
 
 # Extended port list for deep scans (all well-known ports 1-1024 + webserver high ports)
 _DEEP_PORTS = tuple(sorted(set(
-    range(1, 1025) + _WEBSERVER_PORTS
+    tuple(range(1, 1025)) + _WEBSERVER_PORTS
 )))
 
 
