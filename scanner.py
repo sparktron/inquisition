@@ -15,6 +15,19 @@ from modules import ALL_MODULES
 from modules.base import BaseModule
 from report import render
 from safety import abort, enforce_dry_run, prompt_authorization, validate_config
+from ui import (
+    console,
+    make_progress,
+    print_cve_error,
+    print_cve_match,
+    print_cve_phase,
+    print_error,
+    print_header,
+    print_info,
+    print_module_result,
+    print_summary,
+    print_warning,
+)
 from vuln_correlation import derive_misconfigurations, lookup_cves_for_cpe
 
 if TYPE_CHECKING:
@@ -65,7 +78,7 @@ def run_scan(
     warnings = validate_config(config)
     if warnings:
         for w in warnings:
-            print(f"[!] {w}", file=sys.stderr)
+            print_warning(w)
         abort("Invalid configuration — cannot proceed.")
 
     # --- Authorization ---
@@ -73,9 +86,13 @@ def run_scan(
         if not prompt_authorization(config):
             abort("Authorization denied — aborting scan.")
 
-    # --- Dry-run banner ---
-    if enforce_dry_run(config):
-        print("\n[*] DRY-RUN mode — no network traffic will be generated.\n")
+    # --- Header ---
+    print_header(
+        target=config.target,
+        depth=config.depth.value,
+        fmt=config.report_format.value,
+        dry_run=config.dry_run,
+    )
 
     # --- Initialize report ---
     report = ScanReport(
@@ -85,53 +102,46 @@ def run_scan(
     )
 
     # --- Run fingerprinting modules ---
-    print(f"[*] Starting scan of {config.target} (depth={config.depth.value})\n")
-
     modules = [cls(config) for cls in ALL_MODULES]
 
-    # Run modules concurrently (each module handles its own internal rate-limiting)
-    with ThreadPoolExecutor(max_workers=min(config.max_threads, len(modules))) as pool:
-        futures = {pool.submit(_run_module, m): m.name for m in modules}
-        for future in as_completed(futures):
-            mod_name, findings, errors = future.result()
-            status = f"{len(findings)} finding"
-            if len(findings) != 1:
-                status += "s"
-            if errors:
-                status += f" • {len(errors)} error"
-                if len(errors) != 1:
-                    status += "s"
-            print(f"  [✓] {mod_name:<20} {status}")
-            report.findings.extend(findings)
-            report.errors.extend(errors)
+    progress = make_progress()
+    with progress:
+        task = progress.add_task("scanning", total=len(modules))
+        with ThreadPoolExecutor(max_workers=min(config.max_threads, len(modules))) as pool:
+            futures = {pool.submit(_run_module, m): m.name for m in modules}
+            for future in as_completed(futures):
+                mod_name, findings, errors = future.result()
+                print_module_result(mod_name, len(findings), len(errors))
+                progress.advance(task)
+                report.findings.extend(findings)
+                report.errors.extend(errors)
 
     # --- Vulnerability correlation (CPE -> CVE) ---
     cpe_values = {f.cpe for f in report.findings if f.cpe}
     if cpe_values and not config.dry_run:
-        print(f"\n[*] Correlating {len(cpe_values)} CPE value(s) with NVD...")
+        print_cve_phase(len(cpe_values))
         for cpe in cpe_values:
             try:
                 cves = lookup_cves_for_cpe(cpe, timeout=config.timeout)
                 report.cve_records.extend(cves)
                 if cves:
-                    count = len(cves)
-                    print(f"  [!] {cpe}: {count} CVE" + ("" if count == 1 else "s"))
+                    print_cve_match(cpe, len(cves))
             except Exception as exc:
-                msg = f"CVE lookup for {cpe}: {exc}"
-                report.errors.append(msg)
-                print(f"  [✗] CVE lookup failed for {cpe}")
+                report.errors.append(f"CVE lookup for {cpe}: {exc}")
+                print_cve_error(cpe)
 
     # --- Deduplicate findings ---
     before = len(report.findings)
     report.findings = _deduplicate(report.findings)
     dupes = before - len(report.findings)
     if dupes:
-        print(f"\n[*] Removed {dupes} duplicate finding(s)")
+        print_info(f"removed {dupes} duplicate finding" + ("s" if dupes != 1 else ""))
 
     # --- Misconfiguration checks ---
     report.misconfigurations = derive_misconfigurations(report.findings)
     if report.misconfigurations:
-        print(f"\n[*] {len(report.misconfigurations)} misconfiguration(s) detected")
+        n = len(report.misconfigurations)
+        print_info(f"{n} misconfiguration" + ("s" if n != 1 else "") + " detected")
 
     # --- Finalize ---
     report.finished_at = datetime.now(timezone.utc)
@@ -146,33 +156,29 @@ def run_scan(
         reports_dir.mkdir(exist_ok=True)
         output_path = str(reports_dir / f"{timestamp}_{safe_target}.md")
 
+    report_saved = False
     try:
         with open(output_path, "w", encoding="utf-8") as fh:
             fh.write(output)
-        print(f"\n[✓] Report saved to: {output_path}")
+        report_saved = True
     except OSError as exc:
         err_msg = str(exc)
         if "Permission denied" in err_msg:
-            hint = " — Check write permissions in the target directory"
+            hint = "check write permissions on the target directory"
         elif "No such file" in err_msg:
-            hint = " — Parent directory does not exist, creating 'reports/' directory"
+            hint = "parent directory does not exist"
         else:
-            hint = ""
-        print(f"\n[✗] Could not write report to {output_path}{hint}", file=sys.stderr)
-        print(f"\n{'=' * 72}")
-        print(output)
+            hint = err_msg
+        print_error(f"could not write report to {output_path}", hint)
+        console.print(output)
 
-    # Summary
+    # --- Summary ---
     counts = report.summary_counts()
-    crit_high = counts.get("critical", 0) + counts.get("high", 0)
-    total = sum(counts.values())
-
-    if crit_high > 0:
-        severity_icon = "⚠"
-        severity_msg = f"{crit_high} critical/high"
-    else:
-        severity_icon = "✓"
-        severity_msg = "no critical/high"
-
-    print(f"\n[{severity_icon}] Scan complete: {total} finding" + ("s" if total != 1 else ""),
-          f"({severity_msg}, {len(report.cve_records)} CVE" + ("s" if len(report.cve_records) != 1 else "") + ")")
+    print_summary(
+        target=config.target,
+        total=sum(counts.values()),
+        counts=counts,
+        cve_count=len(report.cve_records),
+        misconfig_count=len(report.misconfigurations),
+        output_path=output_path if report_saved else "(not saved)",
+    )

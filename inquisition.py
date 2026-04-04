@@ -147,7 +147,8 @@ def main(argv: list[str] | None = None) -> None:
             output_path=args.output,
         )
     except KeyboardInterrupt:
-        print("\n[!] Scan interrupted by user.", file=sys.stderr)
+        from ui import print_interrupted
+        print_interrupted()
         sys.exit(130)
 
 
