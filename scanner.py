@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from models import ReportFormat, ScanReport, Severity
@@ -130,14 +132,19 @@ def run_scan(
     # --- Render report ---
     output = render(report, config.report_format, brief=brief)
 
-    if output_path:
-        try:
-            with open(output_path, "w", encoding="utf-8") as fh:
-                fh.write(output)
-            print(f"\n[*] Report saved to: {output_path}")
-        except OSError as exc:
-            print(f"\n[!] Could not write report to {output_path}: {exc}", file=sys.stderr)
-    else:
+    if not output_path:
+        timestamp = report.started_at.strftime("%Y%m%d_%H%M%S")
+        safe_target = re.sub(r"[^\w\-]", "_", config.target)
+        reports_dir = Path("reports")
+        reports_dir.mkdir(exist_ok=True)
+        output_path = str(reports_dir / f"{timestamp}_{safe_target}.md")
+
+    try:
+        with open(output_path, "w", encoding="utf-8") as fh:
+            fh.write(output)
+        print(f"\n[*] Report saved to: {output_path}")
+    except OSError as exc:
+        print(f"\n[!] Could not write report to {output_path}: {exc}", file=sys.stderr)
         print(f"\n{'=' * 72}")
         print(output)
 
