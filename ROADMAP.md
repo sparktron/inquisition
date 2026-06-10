@@ -237,6 +237,8 @@ is captured)
 - **Authenticated scanning** — no login-aware crawling, so the authenticated
   surface (where most risk lives) is invisible.
 - Mixed-content and Subresource-Integrity checks on discovered assets.
+  **Status:** Homepage-level checks implemented 2026-06-10; crawler phase will
+  expand this across discovered pages.
 
 **Active testing tier** (optional, breaks read-only positioning — gate behind a
 flag)
@@ -289,7 +291,8 @@ Goal: the tool's existing output is correct and its claims are true.
 ### Phase 2 — Depth of Analysis ("most secure" core)
 - [x] **Header and control quality grading** — CSP/HSTS/header-value/cookie-prefix
       grading, SPF/DMARC policy strength, and DKIM presence are implemented.
-      Remaining: mixed-content and SRI.
+      Mixed-content and SRI checks run against homepage assets; crawler phase
+      will broaden coverage across discovered pages.
 - [ ] **TLS depth** — full protocol/cipher enumeration, HSTS preload check,
       OCSP/CT, chain validation.
 - [ ] **Crawler** — discover links from homepage + sitemap.xml + robots.txt and

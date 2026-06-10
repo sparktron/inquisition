@@ -19,7 +19,7 @@ Inquisition probes your target across DNS, network, TLS, HTTP, application layer
 
 ### Security Headers & Application Layer
 - **HTTP header audit** — HSTS policy and preload status, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, **SameSite cookie validation**, information disclosure headers
-- **Application checks** — CORS misconfiguration, XSS-Protection disabled, **GraphQL introspection**, **HTTP method Allow-header inspection**, debug endpoints, exposed API docs
+- **Application checks** — CORS misconfiguration, XSS-Protection disabled, mixed content, missing Subresource Integrity, **GraphQL introspection**, **HTTP method Allow-header inspection**, debug endpoints, exposed API docs
 - **Content discovery** — **security.txt validation (RFC 9116)**, **robots.txt path leakage**, admin panels (Kibana, Grafana, Jenkins, Jupyter, Portainer, etc.), backup files, sensitive configs (`.env`, `docker-compose.yml`, `.htpasswd`)
 
 ### Vulnerability Analysis
@@ -468,6 +468,8 @@ Inquisition runs 8 specialised modules concurrently, each with a specific focus:
 - CORS wildcard (`Access-Control-Allow-Origin: *`)
 - X-XSS-Protection disabled
 - CORS preflight testing
+- Mixed-content references on the HTTPS homepage
+- Missing Subresource Integrity on third-party script/stylesheet assets
 - **GraphQL introspection query** — tests if schema is enumerable
 - **HTTP method inspection** — checks the `OPTIONS` `Allow` header for dangerous advertised methods such as TRACE, PUT, DELETE, and PATCH
 - Path probing for:

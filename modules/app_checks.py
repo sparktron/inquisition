@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from html.parser import HTMLParser
 import json
+from urllib.parse import urljoin, urlparse
 
 from models import Finding, FindingCategory, ScanDepth, Severity
 from modules.base import BaseModule
@@ -60,6 +63,58 @@ _INFO_PATHS: list[tuple[str, str, list[str]]] = [
     ("/swagger", "Swagger UI exposed", ["swagger"]),
     ("/api-docs", "API documentation exposed", ["swagger", "openapi"]),
 ]
+
+
+@dataclass(frozen=True)
+class _AssetReference:
+    tag: str
+    attr: str
+    url: str
+    integrity: str
+    crossorigin: str
+    rel: str
+
+
+class _AssetParser(HTMLParser):
+    def __init__(self, base_url: str) -> None:
+        super().__init__()
+        self.base_url = base_url
+        self.assets: list[_AssetReference] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_map = {name.lower(): value or "" for name, value in attrs}
+        for attr in ("src", "href", "action", "poster"):
+            value = attr_map.get(attr)
+            if value:
+                self.assets.append(self._asset(tag, attr, value, attr_map))
+        srcset = attr_map.get("srcset")
+        if srcset:
+            for value in _parse_srcset_urls(srcset):
+                self.assets.append(self._asset(tag, "srcset", value, attr_map))
+
+    def _asset(self, tag: str, attr: str, url: str, attr_map: dict[str, str]) -> _AssetReference:
+        return _AssetReference(
+            tag=tag.lower(),
+            attr=attr,
+            url=urljoin(self.base_url, url.strip()),
+            integrity=attr_map.get("integrity", ""),
+            crossorigin=attr_map.get("crossorigin", ""),
+            rel=attr_map.get("rel", ""),
+        )
+
+
+def _parse_srcset_urls(value: str) -> list[str]:
+    urls: list[str] = []
+    for candidate in value.split(","):
+        parts = candidate.strip().split()
+        if parts:
+            urls.append(parts[0])
+    return urls
+
+
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parsed = urlparse(url)
+    return (parsed.scheme.lower(), parsed.hostname or "", parsed.port)
 
 
 class AppChecksModule(BaseModule):
@@ -123,6 +178,8 @@ class AppChecksModule(BaseModule):
                     impact=check["impact"],
                     remediation=check["remediation"],
                 ))
+
+        self._check_homepage_assets(base_url, main_resp.text, findings)
 
         # --- CORS preflight check ---
         self._rate_limit()
@@ -218,6 +275,52 @@ class AppChecksModule(BaseModule):
         return findings
 
     # -----------------------------------------------------------------------
+
+    def _check_homepage_assets(self, base_url: str, html: str, findings: list[Finding]) -> None:
+        if not base_url.startswith("https://") or not html:
+            return
+
+        parser = _AssetParser(f"{base_url}/")
+        parser.feed(html[:500_000])
+        mixed_content = [
+            asset.url for asset in parser.assets
+            if urlparse(asset.url).scheme.lower() == "http"
+        ]
+        if mixed_content:
+            examples = ", ".join(mixed_content[:5])
+            findings.append(Finding(
+                title="Mixed content references found",
+                category=FindingCategory.APPLICATION,
+                severity=Severity.MEDIUM,
+                evidence=f"HTTPS page references insecure assets: {examples}",
+                impact="Browsers may block active mixed content or load passive content over an interceptable channel",
+                remediation="Load all page assets over HTTPS and replace hard-coded http:// URLs.",
+            ))
+
+        page_origin = _origin(base_url)
+        third_party_without_sri = [
+            asset.url for asset in parser.assets
+            if self._requires_sri(asset) and _origin(asset.url) != page_origin and not asset.integrity
+        ]
+        if third_party_without_sri:
+            examples = ", ".join(third_party_without_sri[:5])
+            findings.append(Finding(
+                title="Subresource Integrity missing on third-party assets",
+                category=FindingCategory.APPLICATION,
+                severity=Severity.LOW,
+                evidence=f"Third-party script/stylesheet without integrity: {examples}",
+                impact="If a third-party CDN or dependency is compromised, modified code may execute in users' browsers",
+                remediation="Add integrity hashes and crossorigin attributes to third-party script and stylesheet tags.",
+            ))
+
+    @staticmethod
+    def _requires_sri(asset: _AssetReference) -> bool:
+        parsed = urlparse(asset.url)
+        if parsed.scheme.lower() not in ("http", "https"):
+            return False
+        if asset.tag == "script" and asset.attr == "src":
+            return True
+        return asset.tag == "link" and asset.attr == "href" and "stylesheet" in asset.rel.lower().split()
 
     def _graphql_introspection(self, base_url: str, findings: list[Finding]) -> None:
         """Send a GraphQL introspection query to enumerate the schema."""

@@ -278,6 +278,37 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
         self.assertIn("HTTP TRACE method enabled", titles)
         self.assertTrue(any("DELETE" in title for title in titles))
 
+    def test_app_checks_fixture_reports_mixed_content_and_missing_sri(self) -> None:
+        html = """
+        <html>
+          <head>
+            <script src="https://cdn.example.net/app.js"></script>
+            <script src="/local.js"></script>
+            <link rel="stylesheet" href="https://cdn.example.net/app.css">
+            <link rel="icon" href="https://cdn.example.net/favicon.ico">
+          </head>
+          <body>
+            <img src="http://example.test/logo.png">
+          </body>
+        </html>
+        """
+
+        def fake_get(url: str, **_: object) -> RecordedResponse:
+            self.assertEqual(url, "https://example.test/")
+            return RecordedResponse(status_code=200, text=html, url=url)
+
+        findings = AppChecksModule(
+            ScanConfig(target="example.test", depth=ScanDepth.QUICK, rate_limit=0),
+            http_client=cast(Any, RecordedHttpClient(get=fake_get)),
+        ).run()
+
+        titles = {finding.title for finding in findings}
+        self.assertIn("Mixed content references found", titles)
+        sri_finding = next(f for f in findings if f.title == "Subresource Integrity missing on third-party assets")
+        self.assertIn("https://cdn.example.net/app.js", sri_finding.evidence)
+        self.assertIn("https://cdn.example.net/app.css", sri_finding.evidence)
+        self.assertNotIn("favicon.ico", sri_finding.evidence)
+
     def test_dns_fixture_reports_records_without_global_socket_timeout(self) -> None:
         def fake_resolve(name: str, qtype: str, **_: object) -> list[RecordedTextRecord]:
             if name == "example.test" and qtype == "MX":
