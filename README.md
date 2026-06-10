@@ -11,7 +11,7 @@ Inquisition probes your target across DNS, network, TLS, HTTP, application layer
 ## Key Features
 
 ### Reconnaissance & Fingerprinting
-- **DNS reconnaissance** — A/AAAA resolution, reverse DNS, subdomain enumeration, MX/NS/TXT records, SPF/DMARC checks, **DNS zone transfer (AXFR) detection**
+- **DNS reconnaissance** — A/AAAA resolution, reverse DNS, subdomain enumeration, MX/NS/TXT records, SPF/DMARC presence and policy-strength checks, **DNS zone transfer (AXFR) detection**
 - **Port scanning** — TCP connect-scan with banner grabbing; enhanced service detection for Telnet, SMB, VNC, Redis, Elasticsearch, MongoDB, MySQL, PostgreSQL, RDP
 - **TLS/SSL analysis** — negotiated protocol/cipher, certificate validity/expiration, self-signed detection, hostname mismatch
 - **WAF/CDN detection** — Signature-based detection for common protective layers including Cloudflare, AWS CloudFront, Akamai, Fastly, Imperva, and Sucuri
@@ -371,8 +371,8 @@ Inquisition runs 8 specialised modules concurrently, each with a specific focus:
 - Reverse DNS lookups
 - Subdomain enumeration using a curated list of common prefixes (`www`, `mail`, `dev`, `staging`, `api`, `admin`, etc.)
 - MX/NS/TXT record queries
-- SPF record presence check
-- DMARC record detection
+- SPF record presence and enforcement-strength checks (`+all`, `?all`, `~all`, missing `all`)
+- DMARC record detection and policy-strength checks (`p=none`, partial `pct`, weak subdomain policy)
 - **DNS zone transfer (AXFR) attempts** — reveals entire zone if unrestricted
 - **Subdomain takeover detection** — identifies dangling CNAME records on 24+ third-party services
 
@@ -431,9 +431,11 @@ Inquisition runs 8 specialised modules concurrently, each with a specific focus:
 - Permissions-Policy
 - Information disclosure headers (Server, X-Powered-By, X-AspNet-Version)
 - Cookie flags: **Secure**, **HttpOnly**, **SameSite** (Strict/Lax/None)
+- Header quality checks for weak HSTS max-age, permissive CSP sources, invalid
+  defensive header values, broad Permissions-Policy, and cookie prefix rules
 - HTTP-to-HTTPS redirect
 
-**Severity:** MEDIUM for missing HSTS/CSP; MEDIUM for insecure cookies
+**Severity:** MEDIUM for missing or weak HSTS/CSP; MEDIUM for insecure cookies
 
 ---
 

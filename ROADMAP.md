@@ -213,12 +213,15 @@ Presence-only checks and read-only recon give a good _external posture_ baseline
 but stop short of "absolute most secure." Gaps, grouped:
 
 **Quality-of-control grading**
-- CSP analyzed for `unsafe-inline`/`unsafe-eval`/wildcard sources, not just
+- [x] CSP analyzed for `unsafe-inline`/`unsafe-eval`/wildcard sources, not just
   presence.
-- HSTS `max-age` threshold + `includeSubDomains` + **preload list** membership.
-- DMARC **policy strength** (`p=none` vs `quarantine`/`reject`), SPF `~all` vs
-  `-all`, and **DKIM** presence (currently unchecked).
-- Cookie `__Host-`/`__Secure-` prefix validation.
+- [x] HSTS `max-age` threshold + `includeSubDomains` checks.
+- HSTS **preload list** membership.
+- [x] DMARC **policy strength** (`p=none` vs `quarantine`/`reject`) and SPF
+  `~all`/`?all`/`+all` vs `-all`.
+- [x] **DKIM** presence via common-selector probe (positive-only; absence is not
+  conclusive because selectors are arbitrary).
+- [x] Cookie `__Host-`/`__Secure-` prefix validation.
 
 **TLS depth** (README says "cipher suites" but only the single negotiated cipher
 is captured)
@@ -284,8 +287,9 @@ Goal: the tool's existing output is correct and its claims are true.
 - [x] **B8** Proper RFC 6125 wildcard SAN matching.
 
 ### Phase 2 — Depth of Analysis ("most secure" core)
-- [ ] **Header quality grading** — CSP/HSTS/DMARC/SPF/DKIM content analysis,
-      cookie prefixes, mixed content, SRI.
+- [x] **Header and control quality grading** — CSP/HSTS/header-value/cookie-prefix
+      grading, SPF/DMARC policy strength, and DKIM presence are implemented.
+      Remaining: HSTS preload-list membership, mixed-content, and SRI.
 - [ ] **TLS depth** — full protocol/cipher enumeration, HSTS preload check,
       OCSP/CT, chain validation.
 - [ ] **Crawler** — discover links from homepage + sitemap.xml + robots.txt and

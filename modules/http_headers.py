@@ -45,6 +45,41 @@ _SECURITY_HEADERS: dict[str, dict[str, Any]] = {
 # Headers that reveal too much information
 _LEAKY_HEADERS = ("Server", "X-Powered-By", "X-AspNet-Version", "X-AspNetMvc-Version")
 
+_MIN_HSTS_MAX_AGE = 31_536_000
+_SAFE_REFERRER_POLICIES = {
+    "no-referrer",
+    "same-origin",
+    "strict-origin",
+    "strict-origin-when-cross-origin",
+}
+_SENSITIVE_PERMISSIONS = ("camera", "microphone", "geolocation", "payment", "usb")
+
+
+def _header_value(headers: Any, name: str) -> str:
+    """Return a header value using case-insensitive lookup."""
+    value = headers.get(name)
+    if value is not None:
+        return str(value)
+    name_lower = name.lower()
+    for key, candidate in headers.items():
+        if str(key).lower() == name_lower:
+            return str(candidate)
+    return ""
+
+
+def _parse_directives(value: str) -> dict[str, str]:
+    directives: dict[str, str] = {}
+    for part in value.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" in part:
+            name, _, directive_value = part.partition("=")
+        else:
+            name, _, directive_value = part.partition(" ")
+        directives[name.lower()] = directive_value.strip()
+    return directives
+
 
 class HttpHeaderModule(BaseModule):
     name = "http_headers"
@@ -91,8 +126,9 @@ class HttpHeaderModule(BaseModule):
             ))
 
             # Check for missing security headers
+            header_names = {k.lower() for k in headers}
             for header_name, meta in _SECURITY_HEADERS.items():
-                if header_name.lower() not in {k.lower() for k in headers}:
+                if header_name.lower() not in header_names:
                     findings.append(Finding(
                         title=f"Missing header: {header_name}",
                         category=FindingCategory.HTTP_HEADER,
@@ -101,10 +137,12 @@ class HttpHeaderModule(BaseModule):
                         impact=meta["impact"],
                         remediation=meta["remediation"],
                     ))
+                else:
+                    self._check_header_quality(url, header_name, _header_value(headers, header_name), findings)
 
             # Check for leaky headers
             for header_name in _LEAKY_HEADERS:
-                value = headers.get(header_name)
+                value = _header_value(headers, header_name)
                 if value:
                     findings.append(Finding(
                         title=f"Information disclosure: {header_name}",
@@ -140,6 +178,17 @@ class HttpHeaderModule(BaseModule):
                     issues.append("SameSite=None without Secure flag (rejected by modern browsers)")
                 elif samesite_val.lower() not in ("strict", "lax", "none"):
                     issues.append(f"invalid SameSite value: {samesite_val!r}")
+
+                cookie_name_lower = cookie.name.lower()
+                if cookie_name_lower.startswith("__secure-") and not cookie.secure:
+                    issues.append("__Secure- prefix requires Secure flag")
+                if cookie_name_lower.startswith("__host-"):
+                    if not cookie.secure:
+                        issues.append("__Host- prefix requires Secure flag")
+                    if cookie.domain:
+                        issues.append("__Host- prefix forbids Domain attribute")
+                    if cookie.path != "/":
+                        issues.append("__Host- prefix requires Path=/")
 
                 if issues:
                     findings.append(Finding(
@@ -177,3 +226,160 @@ class HttpHeaderModule(BaseModule):
                     ))
 
         return findings
+
+    def _check_header_quality(
+        self,
+        url: str,
+        header_name: str,
+        value: str,
+        findings: list[Finding],
+    ) -> None:
+        if header_name == "Strict-Transport-Security":
+            self._check_hsts_quality(url, value, findings)
+        elif header_name == "Content-Security-Policy":
+            self._check_csp_quality(url, value, findings)
+        elif header_name == "X-Content-Type-Options":
+            if value.strip().lower() != "nosniff":
+                findings.append(Finding(
+                    title="Weak header value: X-Content-Type-Options",
+                    category=FindingCategory.HTTP_HEADER,
+                    severity=Severity.LOW,
+                    evidence=f"{url} returns X-Content-Type-Options: {value}",
+                    impact="Browsers may still MIME-sniff responses if the header is not set to nosniff",
+                    remediation="Set X-Content-Type-Options: nosniff",
+                ))
+        elif header_name == "X-Frame-Options":
+            if value.strip().lower() not in ("deny", "sameorigin"):
+                findings.append(Finding(
+                    title="Weak header value: X-Frame-Options",
+                    category=FindingCategory.HTTP_HEADER,
+                    severity=Severity.LOW,
+                    evidence=f"{url} returns X-Frame-Options: {value}",
+                    impact="Unexpected frame policy values may not protect against clickjacking",
+                    remediation="Set X-Frame-Options: DENY or SAMEORIGIN, or use CSP frame-ancestors",
+                ))
+        elif header_name == "Referrer-Policy":
+            policy = value.strip().lower()
+            if policy not in _SAFE_REFERRER_POLICIES:
+                findings.append(Finding(
+                    title="Weak header value: Referrer-Policy",
+                    category=FindingCategory.HTTP_HEADER,
+                    severity=Severity.LOW,
+                    evidence=f"{url} returns Referrer-Policy: {value}",
+                    impact="Sensitive URL paths or query strings may leak to third-party origins",
+                    remediation="Use strict-origin-when-cross-origin, strict-origin, same-origin, or no-referrer",
+                ))
+        elif header_name == "Permissions-Policy":
+            self._check_permissions_policy_quality(url, value, findings)
+
+    def _check_hsts_quality(self, url: str, value: str, findings: list[Finding]) -> None:
+        directives = _parse_directives(value)
+        max_age_raw = directives.get("max-age", "")
+        try:
+            max_age = int(max_age_raw)
+        except ValueError:
+            findings.append(Finding(
+                title="Weak HSTS policy: invalid max-age",
+                category=FindingCategory.HTTP_HEADER,
+                severity=Severity.MEDIUM,
+                evidence=f"{url} returns Strict-Transport-Security: {value}",
+                impact="Browsers may ignore malformed HSTS policies, leaving users vulnerable to SSL stripping",
+                remediation="Set Strict-Transport-Security: max-age=31536000; includeSubDomains",
+            ))
+            return
+
+        if max_age < _MIN_HSTS_MAX_AGE:
+            findings.append(Finding(
+                title="Weak HSTS policy: max-age too short",
+                category=FindingCategory.HTTP_HEADER,
+                severity=Severity.MEDIUM,
+                evidence=f"{url} returns max-age={max_age}; expected at least {_MIN_HSTS_MAX_AGE}",
+                impact="Short HSTS durations reduce protection against downgrade and SSL-stripping attacks",
+                remediation="Set HSTS max-age to at least 31536000 seconds after confirming HTTPS works everywhere",
+            ))
+        if "includesubdomains" not in directives:
+            findings.append(Finding(
+                title="Weak HSTS policy: includeSubDomains missing",
+                category=FindingCategory.HTTP_HEADER,
+                severity=Severity.LOW,
+                evidence=f"{url} returns Strict-Transport-Security: {value}",
+                impact="Subdomains may remain vulnerable to HTTPS downgrade attacks",
+                remediation="Add includeSubDomains once every subdomain supports HTTPS",
+            ))
+
+    def _check_csp_quality(self, url: str, value: str, findings: list[Finding]) -> None:
+        directives = _parse_directives(value)
+        script_src = directives.get("script-src", directives.get("default-src", ""))
+        default_src = directives.get("default-src", "")
+
+        if not default_src:
+            findings.append(Finding(
+                title="Weak CSP: default-src missing",
+                category=FindingCategory.HTTP_HEADER,
+                severity=Severity.LOW,
+                evidence=f"{url} returns Content-Security-Policy: {value}",
+                impact="Resources without explicit directives may fall back to overly broad browser defaults",
+                remediation="Add a restrictive default-src directive, such as default-src 'self'",
+            ))
+        if "'unsafe-inline'" in script_src or "'unsafe-eval'" in script_src:
+            findings.append(Finding(
+                title="Weak CSP: unsafe script execution allowed",
+                category=FindingCategory.HTTP_HEADER,
+                severity=Severity.MEDIUM,
+                evidence=f"{url} allows unsafe script sources: {script_src}",
+                impact="CSP may not meaningfully mitigate XSS when unsafe-inline or unsafe-eval is allowed",
+                remediation="Replace unsafe inline scripts with nonces or hashes and remove unsafe-eval",
+            ))
+        if "*" in script_src.split() or "*" in default_src.split():
+            findings.append(Finding(
+                title="Weak CSP: wildcard source allowed",
+                category=FindingCategory.HTTP_HEADER,
+                severity=Severity.MEDIUM,
+                evidence=f"{url} returns Content-Security-Policy: {value}",
+                impact="Wildcard sources allow arbitrary origins to provide scripts or other resources",
+                remediation="Replace wildcard sources with explicit trusted origins",
+            ))
+        if "object-src" not in directives:
+            findings.append(Finding(
+                title="Weak CSP: object-src missing",
+                category=FindingCategory.HTTP_HEADER,
+                severity=Severity.LOW,
+                evidence=f"{url} returns Content-Security-Policy: {value}",
+                impact="Legacy plugin content may not be explicitly blocked",
+                remediation="Add object-src 'none' to the Content-Security-Policy",
+            ))
+        if "frame-ancestors" not in directives:
+            findings.append(Finding(
+                title="Weak CSP: frame-ancestors missing",
+                category=FindingCategory.HTTP_HEADER,
+                severity=Severity.LOW,
+                evidence=f"{url} returns Content-Security-Policy: {value}",
+                impact="Clickjacking protection is not expressed in CSP",
+                remediation="Add frame-ancestors 'none' or frame-ancestors 'self'",
+            ))
+
+    def _check_permissions_policy_quality(self, url: str, value: str, findings: list[Finding]) -> None:
+        policy = value.lower().replace(" ", "")
+        missing = [feature for feature in _SENSITIVE_PERMISSIONS if f"{feature}=" not in policy]
+        permissive = [
+            feature for feature in _SENSITIVE_PERMISSIONS
+            if f"{feature}=*" in policy or f"{feature}=self" in policy or f"{feature}=(self)" in policy
+        ]
+        if missing:
+            findings.append(Finding(
+                title="Weak Permissions-Policy: sensitive features not restricted",
+                category=FindingCategory.HTTP_HEADER,
+                severity=Severity.LOW,
+                evidence=f"{url} does not explicitly restrict: {', '.join(missing)}",
+                impact="Browser features may be available to pages or embedded content unless restricted elsewhere",
+                remediation="Explicitly disable unused sensitive features, e.g. camera=(), microphone=(), geolocation=()",
+            ))
+        if permissive:
+            findings.append(Finding(
+                title="Weak Permissions-Policy: sensitive features allowed",
+                category=FindingCategory.HTTP_HEADER,
+                severity=Severity.MEDIUM,
+                evidence=f"{url} allows sensitive features: {', '.join(permissive)}",
+                impact="Compromised scripts or embedded content may request access to sensitive browser capabilities",
+                remediation="Disable unused sensitive features with empty allowlists, e.g. camera=(), microphone=()",
+            ))

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from models import Finding, FindingCategory, Severity
 from modules.base import BaseModule
+from modules.security_grading import Issue, grade_dmarc, grade_spf
 
 if TYPE_CHECKING:
     pass
@@ -18,6 +19,13 @@ _COMMON_SUBDOMAINS = [
     "blog", "dev", "staging", "api", "admin", "vpn", "cdn", "app",
     "test", "old", "beta", "secure", "portal", "dashboard", "m",
     "shop", "store", "support", "help", "status", "monitoring",
+]
+
+# Common DKIM selectors used by major mail providers. DKIM selectors are
+# arbitrary per-domain, so this list only enables a best-effort positive probe.
+_COMMON_DKIM_SELECTORS = [
+    "default", "google", "selector1", "selector2", "s1", "s2",
+    "k1", "k2", "mail", "dkim", "mandrill", "mailjet", "smtp", "zoho",
 ]
 
 # Third-party services that indicate potential subdomain takeover if CNAME points there
@@ -149,10 +157,17 @@ class DnsReconModule(BaseModule):
                         severity=Severity.INFO,
                         evidence=f"{qtype}: {', '.join(records)}",
                     ))
-                    # Check for SPF / DMARC in TXT
+                    # Check for SPF in TXT — flag if missing, grade strength if present.
                     if qtype == "TXT":
-                        all_txt = " ".join(records).lower()
-                        if "v=spf1" not in all_txt:
+                        spf_record = next(
+                            (
+                                r.replace('"', "").strip()
+                                for r in records
+                                if "v=spf1" in r.lower()
+                            ),
+                            None,
+                        )
+                        if spf_record is None:
                             findings.append(Finding(
                                 title="Missing SPF record",
                                 category=FindingCategory.MISCONFIGURATION,
@@ -161,19 +176,39 @@ class DnsReconModule(BaseModule):
                                 impact="Email spoofing may be possible",
                                 remediation="Add an SPF TXT record to the domain",
                             ))
+                        else:
+                            self._append_email_auth_findings(
+                                "SPF",
+                                target,
+                                spf_record,
+                                grade_spf(spf_record),
+                                findings,
+                            )
                 except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers):
                     pass
 
-            # DMARC check
+            # DMARC check — flag if missing, grade policy strength if present.
             self._rate_limit()
             try:
                 dmarc = dns.resolver.resolve(f"_dmarc.{target}", "TXT", lifetime=self.config.timeout)
+                dmarc_records = [str(r).replace('"', "").strip() for r in dmarc]
+                dmarc_record = next(
+                    (r for r in dmarc_records if "v=dmarc1" in r.lower()),
+                    dmarc_records[0] if dmarc_records else "",
+                )
                 findings.append(Finding(
                     title="DMARC record found",
                     category=FindingCategory.DNS,
                     severity=Severity.INFO,
-                    evidence=f"DMARC: {', '.join(str(r) for r in dmarc)}",
+                    evidence=f"DMARC: {', '.join(dmarc_records)}",
                 ))
+                self._append_email_auth_findings(
+                    "DMARC",
+                    target,
+                    dmarc_record,
+                    grade_dmarc(dmarc_record),
+                    findings,
+                )
             except Exception:
                 findings.append(Finding(
                     title="Missing DMARC record",
@@ -182,6 +217,28 @@ class DnsReconModule(BaseModule):
                     evidence=f"No DMARC record at _dmarc.{target}",
                     impact="Email spoofing / phishing risk",
                     remediation="Add a DMARC TXT record at _dmarc.<domain>",
+                ))
+
+            # --- DKIM probe (common selectors) ---
+            # DKIM selectors are arbitrary, so absence via common selectors is
+            # not conclusive — only report when a record is actually found.
+            found_selectors: list[str] = []
+            for selector in _COMMON_DKIM_SELECTORS:
+                self._rate_limit()
+                try:
+                    dkim = dns.resolver.resolve(
+                        f"{selector}._domainkey.{target}", "TXT", lifetime=self.config.timeout
+                    )
+                    if any("v=dkim1" in str(r).lower() or "p=" in str(r).lower() for r in dkim):
+                        found_selectors.append(selector)
+                except Exception:
+                    pass
+            if found_selectors:
+                findings.append(Finding(
+                    title="DKIM record found",
+                    category=FindingCategory.DNS,
+                    severity=Severity.INFO,
+                    evidence=f"DKIM selector(s) present for {target}: {', '.join(found_selectors)}",
                 ))
 
             # --- DNS zone transfer (AXFR) attempt ---
@@ -266,3 +323,21 @@ class DnsReconModule(BaseModule):
             pass  # dnspython not installed — skip advanced DNS
 
         return findings
+
+    @staticmethod
+    def _append_email_auth_findings(
+        record_type: str,
+        target: str,
+        record: str,
+        issues: list[Issue],
+        findings: list[Finding],
+    ) -> None:
+        for issue in issues:
+            findings.append(Finding(
+                title=f"Weak {record_type} policy: {issue.summary}",
+                category=FindingCategory.MISCONFIGURATION,
+                severity=issue.severity,
+                evidence=f"{record_type} record for {target}: {record}",
+                impact=issue.impact,
+                remediation=issue.remediation,
+            ))

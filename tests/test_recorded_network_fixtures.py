@@ -40,6 +40,19 @@ class RecordedTextRecord:
         return self.value
 
 
+@dataclass
+class RecordedCookie:
+    name: str
+    secure: bool = True
+    path: str = "/"
+    domain: str = ""
+    rest: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def _rest(self) -> dict[str, str]:
+        return self.rest
+
+
 class RecordedHttpClient:
     def __init__(
         self,
@@ -125,6 +138,62 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
         self.assertIn("Information disclosure: Server", titles)
         self.assertIn("HTTP redirects to HTTPS", titles)
 
+    def test_http_header_fixture_reports_weak_header_values_and_cookie_prefixes(self) -> None:
+        headers = {
+            "Strict-Transport-Security": "max-age=300",
+            "Content-Security-Policy": "script-src * 'unsafe-inline'",
+            "X-Content-Type-Options": "none",
+            "X-Frame-Options": "ALLOWALL",
+            "Referrer-Policy": "unsafe-url",
+            "Permissions-Policy": "camera=(self)",
+        }
+        responses = {
+            "https://example.test/": RecordedResponse(
+                status_code=200,
+                headers=headers,
+                cookies=[
+                    RecordedCookie(
+                        name="__Host-session",
+                        secure=False,
+                        path="/app",
+                        domain="example.test",
+                        rest={"HttpOnly": "true", "SameSite": "Strict"},
+                    )
+                ],
+                url="https://example.test/",
+            ),
+            "http://example.test/": RecordedResponse(
+                status_code=301,
+                headers=headers,
+                url="https://example.test/",
+            ),
+        }
+
+        def fake_get(url: str, **_: object) -> RecordedResponse:
+            return responses[url]
+
+        findings = HttpHeaderModule(
+            ScanConfig(target="example.test", rate_limit=0),
+            http_client=cast(Any, RecordedHttpClient(get=fake_get)),
+        ).run()
+
+        titles = {finding.title for finding in findings}
+        self.assertIn("Weak HSTS policy: max-age too short", titles)
+        self.assertIn("Weak HSTS policy: includeSubDomains missing", titles)
+        self.assertIn("Weak CSP: unsafe script execution allowed", titles)
+        self.assertIn("Weak CSP: wildcard source allowed", titles)
+        self.assertIn("Weak CSP: object-src missing", titles)
+        self.assertIn("Weak CSP: frame-ancestors missing", titles)
+        self.assertIn("Weak header value: X-Content-Type-Options", titles)
+        self.assertIn("Weak header value: X-Frame-Options", titles)
+        self.assertIn("Weak header value: Referrer-Policy", titles)
+        self.assertIn("Weak Permissions-Policy: sensitive features not restricted", titles)
+        self.assertIn("Weak Permissions-Policy: sensitive features allowed", titles)
+        insecure_cookie = next(f for f in findings if f.title == "Insecure cookie: __Host-session")
+        self.assertIn("__Host- prefix requires Secure flag", insecure_cookie.evidence)
+        self.assertIn("__Host- prefix forbids Domain attribute", insecure_cookie.evidence)
+        self.assertIn("__Host- prefix requires Path=/", insecure_cookie.evidence)
+
     def test_waf_fixture_detects_cloudflare_header(self) -> None:
         response = RecordedResponse(
             status_code=200,
@@ -203,6 +272,31 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
         self.assertIn("DNS TXT records", titles)
         self.assertIn("DMARC record found", titles)
         setdefaulttimeout.assert_not_called()
+
+    def test_dns_fixture_reports_weak_spf_and_dmarc_policy(self) -> None:
+        def fake_resolve(name: str, qtype: str, **_: object) -> list[RecordedTextRecord]:
+            if name == "example.test" and qtype == "MX":
+                return []
+            if name == "example.test" and qtype == "NS":
+                return []
+            if name == "example.test" and qtype == "TXT":
+                return [RecordedTextRecord('"v=spf1 +all"')]
+            if name == "_dmarc.example.test" and qtype == "TXT":
+                return [RecordedTextRecord('"v=DMARC1; p=none; pct=50"')]
+            return []
+
+        config = ScanConfig(target="example.test", depth=ScanDepth.QUICK, rate_limit=0)
+        with (
+            patch("modules.dns_recon._safe_dns_resolve", return_value=["203.0.113.10"]),
+            patch("modules.dns_recon.socket.gethostbyaddr", side_effect=OSError),
+            patch("dns.resolver.resolve", side_effect=fake_resolve),
+        ):
+            findings = DnsReconModule(config).run()
+
+        titles = {finding.title for finding in findings}
+        self.assertIn("Weak SPF policy: SPF uses +all (passes everyone)", titles)
+        self.assertIn("Weak DMARC policy: DMARC policy is p=none (monitor only)", titles)
+        self.assertIn("Weak DMARC policy: DMARC applies to only 50% of mail (pct=50)", titles)
 
     def test_port_scan_fixture_reports_open_ssh_with_passive_banner(self) -> None:
         RecordedSocket.connected_ports = []
