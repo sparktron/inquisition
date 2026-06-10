@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import requests
+import requests  # type: ignore[import-untyped]
 
 from models import Finding, FindingCategory, Severity
 from modules.base import BaseModule

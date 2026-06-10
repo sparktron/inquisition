@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-import requests
+import requests  # type: ignore[import-untyped]
 
 from models import Finding, FindingCategory, Severity
 from modules.base import BaseModule

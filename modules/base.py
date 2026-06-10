@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import abc
+import threading
 import time
 from typing import TYPE_CHECKING
 
@@ -18,15 +19,17 @@ class BaseModule(abc.ABC):
     def __init__(self, config: ScanConfig) -> None:
         self.config = config
         self._last_request_time: float = 0.0
+        self._rate_limit_lock = threading.Lock()
 
     def _rate_limit(self) -> None:
         """Block until at least ``config.rate_limit`` seconds have passed
         since the previous outbound request."""
-        elapsed = time.monotonic() - self._last_request_time
-        remaining = self.config.rate_limit - elapsed
-        if remaining > 0:
-            time.sleep(remaining)
-        self._last_request_time = time.monotonic()
+        with self._rate_limit_lock:
+            elapsed = time.monotonic() - self._last_request_time
+            remaining = self.config.rate_limit - elapsed
+            if remaining > 0:
+                time.sleep(remaining)
+            self._last_request_time = time.monotonic()
 
     @abc.abstractmethod
     def run(self) -> list[Finding]:

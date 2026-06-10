@@ -5,9 +5,13 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
+
+# Ensure local modules can be imported
+sys.path.insert(0, str(Path(__file__).parent))
 
 # Suppress urllib3 SSL warnings (read-only reconnaissance, unverified requests expected)
-import urllib3
+import urllib3  # type: ignore[import-untyped]
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from models import ReportFormat, ScanConfig, ScanDepth
@@ -87,6 +91,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--connect-timeout",
+        type=float,
+        default=2.0,
+        metavar="SECS",
+        dest="connect_timeout",
+        help="TCP connect timeout for port scanning in seconds (default: 2.0)",
+    )
+
+    parser.add_argument(
         "--ports",
         type=int,
         nargs="+",
@@ -105,6 +118,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--verbose", "-v",
         action="store_true",
         help="Enable verbose debug logging",
+    )
+
+    parser.add_argument(
+        "--yes",
+        "--i-am-authorized",
+        action="store_true",
+        dest="authorized",
+        help="Confirm that you are authorized to scan the target and skip the interactive prompt",
     )
 
     return parser.parse_args(argv)
@@ -136,13 +157,14 @@ def main(argv: list[str] | None = None) -> None:
         dry_run=args.dry_run,
         rate_limit=args.rate_limit,
         timeout=args.timeout,
+        connect_timeout=args.connect_timeout,
         ports=ports,
     )
 
     try:
         run_scan(
             config,
-            skip_auth=True,
+            skip_auth=args.authorized or args.dry_run,
             brief=args.brief,
             output_path=args.output,
         )

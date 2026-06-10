@@ -43,14 +43,32 @@ def _deduplicate(findings: list[Finding]) -> list[Finding]:
     structural issue (e.g. 'Missing header: CSP') can surface twice.  Keep
     the first occurrence, which tends to carry the most evidence detail.
     """
-    seen: set[tuple] = set()
+    seen: set[tuple[str, str, str, str]] = set()
     deduped: list[Finding] = []
     for f in findings:
-        key = (f.title.lower(), f.category, f.severity)
+        scheme = f.metadata.get("scheme", "")
+        if not scheme:
+            match = re.search(r"\bhttps?://", f.evidence)
+            scheme = match.group(0).rstrip(":/") if match else ""
+        key = (f.title.lower(), f.category.value, f.severity.value, scheme)
         if key not in seen:
             seen.add(key)
             deduped.append(f)
     return deduped
+
+
+def _default_report_path(report: ScanReport, report_format: ReportFormat) -> Path:
+    """Return the default report path for the selected output format."""
+    extensions = {
+        ReportFormat.TEXT: ".txt",
+        ReportFormat.JSON: ".json",
+        ReportFormat.HTML: ".html",
+    }
+    timestamp = report.started_at.strftime("%Y%m%d_%H%M%S")
+    safe_target = re.sub(r"[^\w\-]", "_", report.target)
+    reports_dir = Path("reports")
+    reports_dir.mkdir(exist_ok=True)
+    return reports_dir / f"{timestamp}_{safe_target}{extensions[report_format]}"
 
 
 def _run_module(module: BaseModule) -> tuple[str, list[Finding], list[str]]:
@@ -150,11 +168,7 @@ def run_scan(
     output = render(report, config.report_format, brief=brief)
 
     if not output_path:
-        timestamp = report.started_at.strftime("%Y%m%d_%H%M%S")
-        safe_target = re.sub(r"[^\w\-]", "_", config.target)
-        reports_dir = Path("reports")
-        reports_dir.mkdir(exist_ok=True)
-        output_path = str(reports_dir / f"{timestamp}_{safe_target}.md")
+        output_path = str(_default_report_path(report, config.report_format))
 
     report_saved = False
     try:

@@ -5,9 +5,8 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any
-from urllib.parse import quote
 
-import requests
+import requests  # type: ignore[import-untyped]
 
 from models import (
     CVERecord,
@@ -32,6 +31,21 @@ _NVD_RATE_LIMIT = 6.0  # seconds between NVD calls (public API limit)
 _cve_cache: dict[str, list[CVERecord]] = {}
 
 
+def _normalize_cpe23(cpe: str) -> str:
+    """Return a full 13-field CPE 2.3 string, padding omitted fields with '*'.
+
+    The scanner often detects products without exact versions. NVD's
+    virtualMatchString parameter accepts wildcarded CPE 2.3 values, so we
+    normalize partial product identifiers instead of dropping CVE correlation.
+    """
+    parts = cpe.split(":")
+    if len(parts) < 5 or parts[:2] != ["cpe", "2.3"]:
+        return ""
+    if len(parts) > 13:
+        return ""
+    return ":".join(parts + ["*"] * (13 - len(parts)))
+
+
 def _cvss_to_severity(score: float) -> Severity:
     if score >= 9.0:
         return Severity.CRITICAL
@@ -52,9 +66,8 @@ def lookup_cves_for_cpe(cpe: str, timeout: float = 15.0) -> list[CVERecord]:
     if not cpe:
         return []
 
-    # Normalize partial CPEs
-    cpe_match = cpe
-    if not cpe_match.startswith("cpe:2.3:"):
+    cpe_match = _normalize_cpe23(cpe)
+    if not cpe_match:
         return []
 
     # Return cached result if available (avoids redundant API calls and rate-limit delays)
@@ -62,7 +75,7 @@ def lookup_cves_for_cpe(cpe: str, timeout: float = 15.0) -> list[CVERecord]:
         return _cve_cache[cpe_match]
 
     params: dict[str, str] = {
-        "cpeName": cpe_match,
+        "virtualMatchString": cpe_match,
         "resultsPerPage": "10",
     }
 

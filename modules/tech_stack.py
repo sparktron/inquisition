@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-import requests
+import requests  # type: ignore[import-untyped]
 
 from models import Finding, FindingCategory, ScanDepth, Severity
 from modules.base import BaseModule
@@ -82,6 +82,7 @@ class TechStackModule(BaseModule):
         # --- Fetch main page ---
         body = ""
         headers: dict[str, str] = {}
+        base_url = ""
         for scheme in ("https", "http"):
             url = f"{scheme}://{target}/"
             self._rate_limit()
@@ -95,6 +96,7 @@ class TechStackModule(BaseModule):
                 )
                 body = resp.text[:100_000]  # cap body size
                 headers = dict(resp.headers)
+                base_url = f"{scheme}://{target}"
                 break
             except requests.RequestException:
                 continue
@@ -128,9 +130,9 @@ class TechStackModule(BaseModule):
                 ))
 
         # --- Path probing (standard/deep) ---
-        if self.config.depth in (ScanDepth.STANDARD, ScanDepth.DEEP):
+        if base_url and self.config.depth in (ScanDepth.STANDARD, ScanDepth.DEEP):
             for path, tech, cpe in _PROBE_PATHS:
-                url = f"https://{target}{path}"
+                url = f"{base_url}{path}"
                 self._rate_limit()
                 try:
                     resp = requests.get(
@@ -176,6 +178,7 @@ class TechStackModule(BaseModule):
                             impact=impact,
                             remediation=remediation,
                             cpe=cpe,
+                            metadata={"scheme": base_url.split(":", 1)[0], "url": url},
                         ))
 
         if not findings:

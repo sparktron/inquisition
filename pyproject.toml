@@ -10,7 +10,15 @@ requires-python = ">=3.10"
 dependencies = [
     "requests>=2.31",
     "dnspython>=2.4",
+    "rich>=13.0",
 ]
+
+[tool.setuptools]
+py-modules = ["inquisition", "scanner", "report", "models", "safety", "analysis_kb", "vuln_correlation", "ui"]
+
+[tool.setuptools.packages.find]
+include = ["modules*"]
+exclude = ["reports", "tests"]
 
 [project.scripts]
 inquisition = "inquisition:main"

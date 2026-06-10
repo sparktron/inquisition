@@ -59,6 +59,7 @@ class ScanConfig:
     dry_run: bool = False
     rate_limit: float = 0.1  # seconds between requests
     timeout: float = 10.0  # per-request timeout in seconds
+    connect_timeout: float = 2.0  # TCP connect timeout in seconds
     ports: tuple[int, ...] = (
         21, 22, 23, 25, 53, 80, 110, 143, 443, 445,
         993, 995, 3306, 3389, 5432, 5900, 6379, 8080, 8443, 9200,

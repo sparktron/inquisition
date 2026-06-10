@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-import requests
+import requests  # type: ignore[import-untyped]
 
 from models import Finding, FindingCategory, ScanDepth, Severity
 from modules.base import BaseModule
@@ -21,8 +21,8 @@ _GRAPHQL_INTROSPECTION_QUERY = """
 }
 """.strip()
 
-# HTTP methods to enumerate on the root path
-_METHODS_TO_TEST = ("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE")
+# Dangerous methods that are reported when advertised by the OPTIONS Allow header.
+_DANGEROUS_METHODS = {"PUT", "DELETE", "PATCH", "TRACE"}
 
 # Common application-level checks (all read-only, no payloads)
 _CHECKS: list[dict[str, str]] = [
@@ -302,8 +302,7 @@ class AppChecksModule(BaseModule):
             pass
 
         # Flag dangerous methods
-        dangerous = {"PUT", "DELETE", "PATCH", "TRACE"}
-        dangerous_allowed = dangerous & set(allowed_from_options)
+        dangerous_allowed = _DANGEROUS_METHODS & set(allowed_from_options)
 
         if "TRACE" in allowed_from_options:
             findings.append(Finding(
@@ -341,8 +340,11 @@ class AppChecksModule(BaseModule):
 
         if allowed_from_options:
             findings.append(Finding(
-                title="HTTP methods enumerated via OPTIONS",
+                title="HTTP methods reported via OPTIONS",
                 category=FindingCategory.APPLICATION,
                 severity=Severity.INFO,
-                evidence=f"Allowed methods: {', '.join(allowed_from_options)}",
+                evidence=(
+                    f"Allowed methods: {', '.join(allowed_from_options)}. "
+                    "This is based on the Allow header; methods not advertised by the server may still exist."
+                ),
             ))

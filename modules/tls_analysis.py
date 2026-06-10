@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import ssl
 import socket
+import tempfile
+import warnings
+import _ssl
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from models import Finding, FindingCategory, Severity
 from modules.base import BaseModule
@@ -20,14 +25,35 @@ def _get_cert_info(host: str, port: int, timeout: float) -> dict[str, Any] | Non
     try:
         with socket.create_connection((host, port), timeout=timeout) as raw:
             with ctx.wrap_socket(raw, server_hostname=host) as tls:
+                cert_der = tls.getpeercert(binary_form=True)
                 return {
-                    "peer_cert": tls.getpeercert(binary_form=False),
-                    "peer_cert_der": tls.getpeercert(binary_form=True),
+                    "peer_cert": _decode_cert_der(cert_der) if cert_der else {},
+                    "peer_cert_der": cert_der,
                     "version": tls.version(),
                     "cipher": tls.cipher(),
                 }
     except (ssl.SSLError, socket.error, OSError):
         return None
+
+
+def _decode_cert_der(cert_der: bytes) -> dict[str, Any]:
+    """Decode DER certificate bytes into the dict shape returned by SSLSocket."""
+    tmp_name = ""
+    try:
+        pem = ssl.DER_cert_to_PEM_cert(cert_der)
+        with tempfile.NamedTemporaryFile("w", encoding="ascii", delete=False) as tmp:
+            tmp.write(pem)
+            tmp_name = tmp.name
+        decode_cert = cast(Callable[[str], dict[str, Any]], getattr(_ssl, "_test_decode_cert"))
+        return decode_cert(tmp_name)
+    except (OSError, ValueError, ssl.SSLError):
+        return {}
+    finally:
+        if tmp_name:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
 
 
 class TlsAnalysisModule(BaseModule):
@@ -189,14 +215,27 @@ class TlsAnalysisModule(BaseModule):
                     severity=Severity.INFO,
                     evidence=f"SANs: {', '.join(san_names)}",
                 ))
-            if target not in san_names and f"*.{'.'.join(target.split('.')[1:])}" not in san_names:
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", DeprecationWarning)
+                    ssl.match_hostname(cert, target)
+            except ssl.CertificateError as exc:
                 findings.append(Finding(
                     title="Hostname not in certificate SAN",
                     category=FindingCategory.TLS,
                     severity=Severity.MEDIUM,
-                    evidence=f"{target} not listed in SANs: {san_names}",
+                    evidence=f"{target} does not match certificate names: {exc}",
                     impact="Certificate mismatch warning in browsers",
                     remediation="Reissue certificate to include the target hostname",
                 ))
+        elif cert_der:
+            findings.append(Finding(
+                title="Certificate parse failed",
+                category=FindingCategory.TLS,
+                severity=Severity.MEDIUM,
+                evidence="Certificate bytes were retrieved but could not be parsed",
+                impact="Certificate validity, expiration, and hostname matching could not be verified",
+                remediation="Inspect the certificate manually with: openssl s_client -connect host:443 | openssl x509 -noout -text",
+            ))
 
         return findings

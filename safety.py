@@ -68,6 +68,9 @@ def validate_config(config: ScanConfig) -> list[str]:
     if config.timeout <= 0:
         warnings.append("Timeout must be positive.")
 
+    if config.connect_timeout <= 0:
+        warnings.append("Connect timeout must be positive.")
+
     return warnings
 
 

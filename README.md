@@ -4,7 +4,9 @@
 
 Inquisition probes your target across DNS, network, TLS, HTTP, application layers—then generates a detailed analysis of every issue found, explaining *why* it matters and *exactly how* to fix it. Reports include risk scoring, remediation priority matrices, and deep-dive guidance with platform-specific configuration examples.
 
-**Read-only by design.** No exploit payloads. No authentication bypasses. No injection attacks. Safe for scanning without special approval.
+**Read-only active reconnaissance by design.** No exploit payloads, authentication bypasses, injection attacks, login attempts, or data-modifying requests are sent. Inquisition does send non-mutating reconnaissance probes such as DNS lookups, TCP connects, HTTP `GET`/`OPTIONS`, CORS preflights, and GraphQL introspection checks, so only scan targets you are authorized to assess.
+
+> **Current review status:** Inquisition is a useful external reconnaissance baseline, but it is not yet a complete "all clear" security assurance tool. A June 2026 code review fixed the first correctness issues and tracks remaining coverage gaps in [ROADMAP.md](ROADMAP.md). Do not rely on reports alone for production security sign-off.
 
 ## Key Features
 
@@ -17,7 +19,7 @@ Inquisition probes your target across DNS, network, TLS, HTTP, application layer
 
 ### Security Headers & Application Layer
 - **HTTP header audit** — HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, **SameSite cookie validation**, information disclosure headers
-- **Application checks** — CORS misconfiguration, XSS-Protection disabled, **GraphQL introspection**, **HTTP method enumeration (TRACE/PUT/DELETE)**, debug endpoints, exposed API docs
+- **Application checks** — CORS misconfiguration, XSS-Protection disabled, **GraphQL introspection**, **HTTP method Allow-header inspection**, debug endpoints, exposed API docs
 - **Content discovery** — **security.txt validation (RFC 9116)**, **robots.txt path leakage**, admin panels (Kibana, Grafana, Jenkins, Jupyter, Portainer, etc.), backup files, sensitive configs (`.env`, `docker-compose.yml`, `.htpasswd`)
 
 ### Vulnerability Analysis
@@ -57,14 +59,14 @@ git clone https://github.com/sparktron/inquisition.git
 cd inquisition
 pip install -r requirements.txt
 
-# Run a standard scan
-python inquisition.py example.com
+# Run a standard scan (live scans prompt unless --yes is supplied)
+python inquisition.py example.com --yes
 
 # Full deep scan
-python inquisition.py example.com --depth deep
+python inquisition.py example.com --depth deep --yes
 
 # Save HTML report
-python inquisition.py example.com -o report.html
+python inquisition.py example.com -o report.html --yes
 ```
 
 ---
@@ -88,14 +90,13 @@ cd inquisition
 pip install -r requirements.txt
 
 # Run directly with Python (no installation)
-python inquisition.py example.com
+python inquisition.py example.com --yes
 ```
 
-**Note:** Due to the flat module layout (non-namespaced imports), the console script entry point in pyproject.toml may not work reliably. The recommended approach is to run `python inquisition.py` directly or create a shell alias:
+**Note:** The source checkout can be run directly with `python inquisition.py`. When installed with `pip install .`, the `inquisition` console script is also available.
 
 ```bash
-# Add to ~/.bashrc or ~/.zshrc for convenience
-alias inquisition='python /path/to/inquisition/inquisition.py'
+inquisition example.com --yes
 ```
 
 ---
@@ -229,19 +230,21 @@ python inquisition.py example.com -o report.txt    # → Text format
 |---|---|---|---|
 | `-t`, `--threads` | int | 10 | Max concurrent threads per module |
 | `--rate-limit` | float (seconds) | 0.1 | Minimum delay between requests within a module |
-| `--timeout` | float (seconds) | 10.0 | Per-request timeout for all HTTP/socket operations |
+| `--timeout` | float (seconds) | 10.0 | Per-request timeout for HTTP, TLS, DNS, and API operations |
+| `--connect-timeout` | float (seconds) | 2.0 | TCP connect timeout for port scanning |
 
 #### Testing & Debugging
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `--dry-run` | flag | off | Preview scan without sending any traffic |
+| `--yes`, `--i-am-authorized` | flag | off | Confirm authorization and skip the interactive live-scan prompt |
 | `-v`, `--verbose` | flag | off | Enable debug logging to stderr |
 
 ### Safety
 
 **Inquisition is safe by design:**
 
-- ✅ All probes are **read-only** — no exploit payloads, no login attempts, no injection
+- ✅ All probes are **read-only active checks** — no exploit payloads, no login attempts, no injection, and no data-modifying requests
 - ✅ **Rate limiting** to avoid overwhelming targets (default 0.1s between requests)
 - ✅ **Timeout controls** to gracefully handle slow/hanging connections
 - ✅ **Dry-run mode** (`--dry-run`) previews what would be scanned without sending any traffic
@@ -463,7 +466,7 @@ Inquisition runs 8 specialised modules concurrently, each with a specific focus:
 - X-XSS-Protection disabled
 - CORS preflight testing
 - **GraphQL introspection query** — tests if schema is enumerable
-- **HTTP method enumeration** — probes OPTIONS and tests TRACE, PUT, DELETE, PATCH
+- **HTTP method inspection** — checks the `OPTIONS` `Allow` header for dangerous advertised methods such as TRACE, PUT, DELETE, and PATCH
 - Path probing for:
   - phpinfo.php (HIGH)
   - Debug endpoints (HIGH)
@@ -709,13 +712,14 @@ Unauthorized security scanning may violate computer fraud and abuse laws in your
 
 ### Safety by Design
 
-Inquisition is intentionally **read-only and passive:**
+Inquisition is intentionally **read-only active reconnaissance:**
 
 - ✅ No exploit payloads or weaponized techniques
 - ✅ No authentication bypass attempts
 - ✅ No injection, fuzzing, or enumeration of application logic
 - ✅ No modifications to target systems
 - ✅ No extraction of private data
+- ✅ Live scans require interactive authorization or `--yes` / `--i-am-authorized`
 
 It is safe to run against production systems when authorized.
 

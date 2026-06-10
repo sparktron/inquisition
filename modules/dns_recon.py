@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from typing import TYPE_CHECKING
 
 from models import Finding, FindingCategory, Severity
@@ -50,12 +51,21 @@ _TAKEOVER_CANDIDATES: dict[str, tuple[str, str]] = {
 
 def _safe_dns_resolve(hostname: str, timeout: float) -> list[str]:
     """Resolve a hostname, returning IP addresses or an empty list on failure."""
+    executor = ThreadPoolExecutor(max_workers=1)
     try:
-        socket.setdefaulttimeout(timeout)
-        results = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-        return list({r[4][0] for r in results})
-    except (socket.gaierror, socket.timeout, OSError):
+        future = executor.submit(
+            socket.getaddrinfo,
+            hostname,
+            None,
+            socket.AF_UNSPEC,
+            socket.SOCK_STREAM,
+        )
+        results = future.result(timeout=timeout)
+        return list({str(r[4][0]) for r in results})
+    except (TimeoutError, socket.gaierror, socket.timeout, OSError):
         return []
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 class DnsReconModule(BaseModule):
@@ -126,7 +136,7 @@ class DnsReconModule(BaseModule):
 
         # --- MX / NS via dnspython (optional) ---
         try:
-            import dns.resolver  # type: ignore[import-untyped]
+            import dns.resolver
 
             for qtype in ("MX", "NS", "TXT"):
                 self._rate_limit()
@@ -186,8 +196,8 @@ class DnsReconModule(BaseModule):
             for ns in ns_names:
                 self._rate_limit()
                 try:
-                    import dns.zone  # type: ignore[import-untyped]
-                    import dns.query  # type: ignore[import-untyped]
+                    import dns.zone
+                    import dns.query
                     zone = dns.zone.from_xfr(dns.query.xfr(ns, target, timeout=self.config.timeout))
                     record_names = [str(n) for n in zone.nodes.keys()]
                     findings.append(Finding(

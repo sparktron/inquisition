@@ -9,9 +9,11 @@ Probes for:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import re
 
-import requests
+import requests  # type: ignore[import-untyped]
 
 from models import Finding, FindingCategory, ScanDepth, Severity
 from modules.base import BaseModule
@@ -184,25 +186,58 @@ class ContentDiscoveryModule(BaseModule):
                 continue
             body = resp.text[:5000]
             # Validate minimal RFC 9116 fields
-            has_contact = bool(re.search(r"^Contact:", body, re.IGNORECASE | re.MULTILINE))
-            has_expires = bool(re.search(r"^Expires:", body, re.IGNORECASE | re.MULTILINE))
-            if has_contact:
+            contact_match = re.search(r"^Contact:\s*(.+)$", body, re.IGNORECASE | re.MULTILINE)
+            expires_match = re.search(r"^Expires:\s*(.+)$", body, re.IGNORECASE | re.MULTILINE)
+            if contact_match:
+                issues: list[str] = []
+                severity = Severity.INFO
+                remediation = ""
+
+                contact = contact_match.group(1).strip()
+                if not re.match(r"^(https?|mailto|tel):", contact, re.IGNORECASE):
+                    issues.append("Contact value is not a URI")
+
+                expires_status = "missing"
+                if expires_match:
+                    expires_raw = expires_match.group(1).strip()
+                    try:
+                        expires_at = parsedate_to_datetime(expires_raw)
+                        if expires_at.tzinfo is None:
+                            expires_at = expires_at.replace(tzinfo=timezone.utc)
+                        if expires_at <= datetime.now(timezone.utc):
+                            expires_status = f"expired ({expires_raw})"
+                            issues.append("Expires is in the past")
+                        else:
+                            expires_status = f"valid until {expires_raw}"
+                    except (TypeError, ValueError):
+                        expires_status = f"malformed ({expires_raw})"
+                        issues.append("Expires value is malformed")
+                else:
+                    issues.append("Expires field is missing")
+
+                if path != "/.well-known/security.txt":
+                    issues.append("served from non-canonical /security.txt path")
+
+                if issues:
+                    severity = Severity.LOW
+                    remediation = (
+                        "Publish a valid /.well-known/security.txt with Contact and "
+                        "a future Expires timestamp formatted per RFC 9116."
+                    )
+
                 pgp_key = bool(re.search(r"^Encryption:", body, re.IGNORECASE | re.MULTILINE))
                 findings.append(Finding(
-                    title="security.txt present",
+                    title="security.txt present" if not issues else "security.txt needs attention",
                     category=FindingCategory.APPLICATION,
-                    severity=Severity.INFO,
+                    severity=severity,
                     evidence=(
                         f"Found at {base_url}{path}. "
-                        f"Has Contact: yes, Expires: {'yes' if has_expires else 'NO'}, "
+                        f"Contact: {contact}, Expires: {expires_status}, "
                         f"Encryption key: {'yes' if pgp_key else 'no'}"
+                        + (f", Issues: {', '.join(issues)}" if issues else "")
                     ),
                     impact="Security contact is publicly disclosed — aids responsible disclosure",
-                    remediation=(
-                        "Keep security.txt updated. "
-                        "Ensure Expires field is in the future. "
-                        "Add an Encryption field pointing to a PGP key for confidential reports."
-                    ) if not has_expires else "",
+                    remediation=remediation,
                 ))
                 return
         # Not found

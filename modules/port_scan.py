@@ -82,6 +82,10 @@ _DEEP_PORTS = tuple(sorted(set(
     tuple(range(1, 1025)) + _WEBSERVER_PORTS
 )))
 
+_BANNER_PROBE_PORTS = {
+    21, 22, 25, 110, 143, 587, 993, 995,
+}
+
 
 class PortScanModule(BaseModule):
     name = "port_scan"
@@ -120,16 +124,16 @@ class PortScanModule(BaseModule):
         def _probe(port: int) -> tuple[int, bool, str]:
             banner = ""
             try:
+                self._rate_limit()
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                    sock.settimeout(self.config.timeout)
+                    sock.settimeout(self.config.connect_timeout)
                     result = sock.connect_ex((target, port))
                     if result == 0:
-                        # Attempt banner grab (safe, read-only)
-                        try:
-                            sock.sendall(b"\r\n")
-                            banner = sock.recv(1024).decode(errors="replace").strip()
-                        except (socket.timeout, OSError):
-                            pass
+                        if port in _BANNER_PROBE_PORTS:
+                            try:
+                                banner = sock.recv(1024).decode(errors="replace").strip()
+                            except (socket.timeout, OSError):
+                                pass
                         return port, True, banner
             except OSError:
                 pass
