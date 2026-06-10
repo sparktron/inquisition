@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import unittest
 from dataclasses import dataclass
+from typing import Any, cast
 from unittest.mock import patch
-
-import requests  # type: ignore[import-untyped]
 
 from models import Finding, ScanConfig, ScanDepth, Severity
 from modules.content_discovery import ContentDiscoveryModule
+from modules.http_client import HttpRequestException
 from modules.tech_stack import TechStackModule
 
 
@@ -50,10 +50,14 @@ class ModuleBehaviorTests(unittest.TestCase):
     def test_tech_stack_path_probe_uses_http_when_https_homepage_fails(self) -> None:
         calls: list[str] = []
 
-        def fake_get(url: str, **_: object) -> FakeResponse:
+        class FakeHttpClient:
+            def get(self, url: str, **_: object) -> FakeResponse:
+                return fake_get(url)
+
+        def fake_get(url: str) -> FakeResponse:
             calls.append(url)
             if url == "https://example.com/":
-                raise requests.RequestException("tls failed")
+                raise HttpRequestException("tls failed")
             if url == "http://example.com/":
                 return FakeResponse(status_code=200, text="<html></html>")
             if url == "http://example.com/.env":
@@ -65,8 +69,7 @@ class ModuleBehaviorTests(unittest.TestCase):
             depth=ScanDepth.STANDARD,
             rate_limit=0,
         )
-        with patch("modules.tech_stack.requests.get", side_effect=fake_get):
-            findings = TechStackModule(config).run()
+        findings = TechStackModule(config, http_client=cast(Any, FakeHttpClient())).run()
 
         self.assertIn("http://example.com/.env", calls)
         self.assertTrue(

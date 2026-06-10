@@ -13,10 +13,9 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import re
 
-import requests  # type: ignore[import-untyped]
-
 from models import Finding, FindingCategory, ScanDepth, Severity
 from modules.base import BaseModule
+from modules.http_client import HttpRequestException, HttpResponse
 
 
 # ---------------------------------------------------------------------------
@@ -153,29 +152,28 @@ class ContentDiscoveryModule(BaseModule):
         for scheme in ("https", "http"):
             self._rate_limit()
             try:
-                requests.get(
+                self.http.get(
                     f"{scheme}://{target}/",
                     timeout=self.config.timeout,
                     verify=False,
                     allow_redirects=True,
-                    headers={"User-Agent": "Inquisition/0.1 SecurityScanner"},
+                    use_cache=True,
                 )
                 return f"{scheme}://{target}"
-            except requests.RequestException:
+            except HttpRequestException:
                 continue
         return None
 
-    def _get(self, url: str) -> requests.Response | None:
+    def _get(self, url: str) -> HttpResponse | None:
         self._rate_limit()
         try:
-            return requests.get(
+            return self.http.get(
                 url,
                 timeout=self.config.timeout,
                 verify=False,
                 allow_redirects=False,
-                headers={"User-Agent": "Inquisition/0.1 SecurityScanner"},
             )
-        except requests.RequestException:
+        except HttpRequestException:
             return None
 
     def _check_security_txt(self, base_url: str, target: str, findings: list[Finding]) -> None:

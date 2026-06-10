@@ -10,10 +10,9 @@ from __future__ import annotations
 
 import re
 
-import requests  # type: ignore[import-untyped]
-
 from models import Finding, FindingCategory, Severity
 from modules.base import BaseModule
+from modules.http_client import HttpRequestException
 
 
 # ---------------------------------------------------------------------------
@@ -95,25 +94,25 @@ class WafDetectionModule(BaseModule):
 
         self._rate_limit()
         try:
-            resp = requests.get(
+            resp = self.http.get(
                 f"https://{target}/",
                 timeout=self.config.timeout,
                 verify=False,
                 allow_redirects=True,
-                headers={"User-Agent": "Inquisition/0.1 SecurityScanner"},
+                use_cache=True,
             )
-        except requests.RequestException:
+        except HttpRequestException:
             # Fall back to HTTP
             self._rate_limit()
             try:
-                resp = requests.get(
+                resp = self.http.get(
                     f"http://{target}/",
                     timeout=self.config.timeout,
                     verify=False,
                     allow_redirects=True,
-                    headers={"User-Agent": "Inquisition/0.1 SecurityScanner"},
+                    use_cache=True,
                 )
-            except requests.RequestException:
+            except HttpRequestException:
                 return findings
 
         headers_lower = {k.lower(): v for k, v in resp.headers.items()}

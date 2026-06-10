@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from models import Finding, ScanConfig
+    from modules.http_client import HttpClient
 
 
 class BaseModule(abc.ABC):
@@ -16,8 +17,11 @@ class BaseModule(abc.ABC):
 
     name: str = "base"
 
-    def __init__(self, config: ScanConfig) -> None:
+    def __init__(self, config: ScanConfig, http_client: HttpClient | None = None) -> None:
+        from modules.http_client import HttpClient
+
         self.config = config
+        self.http = http_client or HttpClient(config)
         self._last_request_time: float = 0.0
         self._rate_limit_lock = threading.Lock()
 

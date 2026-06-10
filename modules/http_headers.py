@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-import requests  # type: ignore[import-untyped]
-
 from models import Finding, FindingCategory, Severity
 from modules.base import BaseModule
+from modules.http_client import HttpRequestException
 
 # Headers that should be present for good security posture
 _SECURITY_HEADERS: dict[str, dict[str, Any]] = {
@@ -67,14 +66,14 @@ class HttpHeaderModule(BaseModule):
             url = f"{scheme}://{target}/"
             self._rate_limit()
             try:
-                resp = requests.get(
+                resp = self.http.get(
                     url,
                     timeout=self.config.timeout,
                     allow_redirects=True,
                     verify=False,  # we inspect regardless of cert validity
-                    headers={"User-Agent": "Inquisition/0.1 SecurityScanner"},
+                    use_cache=True,
                 )
-            except requests.RequestException as exc:
+            except HttpRequestException as exc:
                 findings.append(Finding(
                     title=f"HTTP request failed ({scheme})",
                     category=FindingCategory.HTTP_HEADER,

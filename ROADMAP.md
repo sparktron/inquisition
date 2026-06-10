@@ -273,7 +273,7 @@ Goal: the tool's existing output is correct and its claims are true.
       content discovery) and reconcile.
 
 ### Phase 1 — Efficiency & Hygiene
-- [ ] **Shared HTTP layer**: one `requests.Session` + homepage-response cache
+- [x] **Shared HTTP layer**: one `requests.Session` + homepage-response cache
       injected into modules; eliminates 4× redundant homepage fetches.
 - [x] **B6 / B7 / B9 / B10** rate-limit + thread-safety + probe-politeness +
       dedup-scheme fixes.

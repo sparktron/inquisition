@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from models import ReportFormat, ScanReport, Severity
 from modules import ALL_MODULES
 from modules.base import BaseModule
+from modules.http_client import HttpClient
 from report import render
 from safety import abort, enforce_dry_run, prompt_authorization, validate_config
 from ui import (
@@ -120,7 +121,8 @@ def run_scan(
     )
 
     # --- Run fingerprinting modules ---
-    modules = [cls(config) for cls in ALL_MODULES]
+    http_client = HttpClient(config)
+    modules = [cls(config, http_client=http_client) for cls in ALL_MODULES]
 
     progress = make_progress()
     with progress:

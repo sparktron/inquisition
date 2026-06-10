@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 
-import requests  # type: ignore[import-untyped]
-
 from models import Finding, FindingCategory, ScanDepth, Severity
 from modules.base import BaseModule
+from modules.http_client import HttpRequestException
 
 # GraphQL introspection query (read-only, no mutations)
 _GRAPHQL_INTROSPECTION_QUERY = """
@@ -84,26 +83,26 @@ class AppChecksModule(BaseModule):
         # --- Fetch main page for header-based checks ---
         self._rate_limit()
         try:
-            main_resp = requests.get(
+            main_resp = self.http.get(
                 f"{base_url}/",
                 timeout=self.config.timeout,
                 allow_redirects=True,
                 verify=False,
-                headers={"User-Agent": "Inquisition/0.1 SecurityScanner"},
+                use_cache=True,
             )
-        except requests.RequestException:
+        except HttpRequestException:
             # Fallback to HTTP
             base_url = f"http://{target}"
             self._rate_limit()
             try:
-                main_resp = requests.get(
+                main_resp = self.http.get(
                     f"{base_url}/",
                     timeout=self.config.timeout,
                     allow_redirects=True,
                     verify=False,
-                    headers={"User-Agent": "Inquisition/0.1 SecurityScanner"},
+                    use_cache=True,
                 )
-            except requests.RequestException as exc:
+            except HttpRequestException as exc:
                 findings.append(Finding(
                     title="Could not reach target",
                     category=FindingCategory.APPLICATION,
@@ -128,13 +127,12 @@ class AppChecksModule(BaseModule):
         # --- CORS preflight check ---
         self._rate_limit()
         try:
-            cors_resp = requests.options(
+            cors_resp = self.http.options(
                 f"{base_url}/",
                 timeout=self.config.timeout,
                 headers={
                     "Origin": "https://evil.example.com",
                     "Access-Control-Request-Method": "GET",
-                    "User-Agent": "Inquisition/0.1 SecurityScanner",
                 },
                 verify=False,
             )
@@ -148,7 +146,7 @@ class AppChecksModule(BaseModule):
                     impact="Cross-origin data theft possible",
                     remediation="Validate the Origin header against an allowlist",
                 ))
-        except requests.RequestException:
+        except HttpRequestException:
             pass
 
         # --- Path-based info checks ---
@@ -157,14 +155,13 @@ class AppChecksModule(BaseModule):
                 url = f"{base_url}{path}"
                 self._rate_limit()
                 try:
-                    resp = requests.get(
+                    resp = self.http.get(
                         url,
                         timeout=self.config.timeout,
                         allow_redirects=False,
                         verify=False,
-                        headers={"User-Agent": "Inquisition/0.1 SecurityScanner"},
                     )
-                except requests.RequestException:
+                except HttpRequestException:
                     continue
 
                 if resp.status_code != 200:
@@ -226,17 +223,16 @@ class AppChecksModule(BaseModule):
         """Send a GraphQL introspection query to enumerate the schema."""
         self._rate_limit()
         try:
-            resp = requests.post(
+            resp = self.http.post(
                 f"{base_url}/graphql",
                 json={"query": _GRAPHQL_INTROSPECTION_QUERY},
                 timeout=self.config.timeout,
                 verify=False,
                 headers={
                     "Content-Type": "application/json",
-                    "User-Agent": "Inquisition/0.1 SecurityScanner",
                 },
             )
-        except requests.RequestException:
+        except HttpRequestException:
             return
 
         if resp.status_code != 200:
@@ -289,16 +285,15 @@ class AppChecksModule(BaseModule):
         self._rate_limit()
         allowed_from_options: list[str] = []
         try:
-            opt_resp = requests.options(
+            opt_resp = self.http.options(
                 f"{base_url}/",
                 timeout=self.config.timeout,
                 verify=False,
-                headers={"User-Agent": "Inquisition/0.1 SecurityScanner"},
             )
             allow_header = opt_resp.headers.get("Allow", "")
             if allow_header:
                 allowed_from_options = [m.strip().upper() for m in allow_header.split(",")]
-        except requests.RequestException:
+        except HttpRequestException:
             pass
 
         # Flag dangerous methods

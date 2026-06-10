@@ -3,15 +3,14 @@ from __future__ import annotations
 import socket
 import unittest
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable, cast
 from unittest.mock import patch
-
-import requests  # type: ignore[import-untyped]
 
 from models import ScanConfig, ScanDepth, Severity
 from modules.app_checks import AppChecksModule
 from modules.dns_recon import DnsReconModule
 from modules.http_headers import HttpHeaderModule
+from modules.http_client import HttpRequestException
 from modules.port_scan import PortScanModule
 from modules.waf_detection import WafDetectionModule
 
@@ -39,6 +38,34 @@ class RecordedTextRecord:
 
     def __str__(self) -> str:
         return self.value
+
+
+class RecordedHttpClient:
+    def __init__(
+        self,
+        *,
+        get: Callable[..., RecordedResponse] | None = None,
+        options: Callable[..., RecordedResponse] | None = None,
+        post: Callable[..., RecordedResponse] | None = None,
+    ) -> None:
+        self._get = get
+        self._options = options
+        self._post = post
+
+    def get(self, url: str, **kwargs: object) -> RecordedResponse:
+        if self._get is None:
+            raise HttpRequestException(f"unexpected GET {url}")
+        return self._get(url, **kwargs)
+
+    def options(self, url: str, **kwargs: object) -> RecordedResponse:
+        if self._options is None:
+            raise HttpRequestException(f"unexpected OPTIONS {url}")
+        return self._options(url, **kwargs)
+
+    def post(self, url: str, **kwargs: object) -> RecordedResponse:
+        if self._post is None:
+            raise HttpRequestException(f"unexpected POST {url}")
+        return self._post(url, **kwargs)
 
 
 class RecordedSocket:
@@ -88,8 +115,10 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
             return responses[url]
 
         config = ScanConfig(target="example.test", rate_limit=0)
-        with patch("modules.http_headers.requests.get", side_effect=fake_get):
-            findings = HttpHeaderModule(config).run()
+        findings = HttpHeaderModule(
+            config,
+            http_client=cast(Any, RecordedHttpClient(get=fake_get)),
+        ).run()
 
         titles = {finding.title for finding in findings}
         self.assertIn("Missing header: Content-Security-Policy", titles)
@@ -104,8 +133,10 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
             url="https://example.test/",
         )
 
-        with patch("modules.waf_detection.requests.get", return_value=response):
-            findings = WafDetectionModule(ScanConfig(target="example.test", rate_limit=0)).run()
+        findings = WafDetectionModule(
+            ScanConfig(target="example.test", rate_limit=0),
+            http_client=cast(Any, RecordedHttpClient(get=lambda *_args, **_kwargs: response)),
+        ).run()
 
         self.assertTrue(any("Cloudflare" in finding.title for finding in findings))
         self.assertTrue(all(finding.severity == Severity.INFO for finding in findings))
@@ -131,11 +162,13 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
             )
 
         config = ScanConfig(target="example.test", depth=ScanDepth.STANDARD, rate_limit=0)
-        with (
-            patch("modules.app_checks.requests.get", side_effect=fake_get),
-            patch("modules.app_checks.requests.options", side_effect=fake_options),
-        ):
-            findings = AppChecksModule(config).run()
+        findings = AppChecksModule(
+            config,
+            http_client=cast(
+                Any,
+                RecordedHttpClient(get=fake_get, options=fake_options),
+            ),
+        ).run()
 
         titles = {finding.title for finding in findings}
         self.assertIn("CORS wildcard", titles)

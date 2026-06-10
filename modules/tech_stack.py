@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import re
 
-import requests  # type: ignore[import-untyped]
-
 from models import Finding, FindingCategory, ScanDepth, Severity
 from modules.base import BaseModule
+from modules.http_client import HttpRequestException
 
 # Signatures: (pattern_in_body_or_header, tech_name, optional CPE)
 _BODY_SIGNATURES: list[tuple[str, str, str]] = [
@@ -87,18 +86,18 @@ class TechStackModule(BaseModule):
             url = f"{scheme}://{target}/"
             self._rate_limit()
             try:
-                resp = requests.get(
+                resp = self.http.get(
                     url,
                     timeout=self.config.timeout,
                     allow_redirects=True,
                     verify=False,
-                    headers={"User-Agent": "Inquisition/0.1 SecurityScanner"},
+                    use_cache=True,
                 )
                 body = resp.text[:100_000]  # cap body size
                 headers = dict(resp.headers)
                 base_url = f"{scheme}://{target}"
                 break
-            except requests.RequestException:
+            except HttpRequestException:
                 continue
 
         # --- Body-based signatures ---
@@ -135,14 +134,13 @@ class TechStackModule(BaseModule):
                 url = f"{base_url}{path}"
                 self._rate_limit()
                 try:
-                    resp = requests.get(
+                    resp = self.http.get(
                         url,
                         timeout=self.config.timeout,
                         allow_redirects=False,
                         verify=False,
-                        headers={"User-Agent": "Inquisition/0.1 SecurityScanner"},
                     )
-                except requests.RequestException:
+                except HttpRequestException:
                     continue
 
                 if resp.status_code == 200:
