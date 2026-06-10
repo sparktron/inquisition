@@ -265,9 +265,10 @@ Goal: the tool's existing output is correct and its claims are true.
 - [x] **Add an initial test suite** — unittest regressions now cover report
       extensions, dedup, CVE lookup params, TLS certificate reporting,
       `security.txt`, and HTTP fallback path probing.
-- [ ] Broaden tests with `models`, `report` rendering, risk scoring, and one
-      golden-file test per module against recorded HTTP/DNS fixtures.
-- [ ] Audit remaining README claims vs implementation (cipher "suites", WAF "20+",
+- [x] Broaden tests with `models`, `report` rendering, risk scoring, and
+      dry-run contract checks for every module.
+- [ ] Add recorded HTTP/DNS fixture tests for network-facing module behavior.
+- [x] Audit remaining README claims vs implementation (cipher "suites", WAF "20+",
       content discovery) and reconcile.
 
 ### Phase 1 — Efficiency & Hygiene

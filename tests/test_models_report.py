@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+import json
+import unittest
+from datetime import datetime, timezone
+
+from models import Finding, FindingCategory, ScanReport, Severity
+from report import _risk_score, render_json, render_text
+
+
+class ModelsAndReportTests(unittest.TestCase):
+    def test_summary_counts_includes_all_severities(self) -> None:
+        report = ScanReport(
+            target="example.com",
+            started_at=datetime(2026, 6, 10, tzinfo=timezone.utc),
+            findings=[
+                Finding(
+                    title="critical finding",
+                    category=FindingCategory.TLS,
+                    severity=Severity.CRITICAL,
+                    evidence="expired cert",
+                ),
+                Finding(
+                    title="medium finding",
+                    category=FindingCategory.HTTP_HEADER,
+                    severity=Severity.MEDIUM,
+                    evidence="missing csp",
+                ),
+                Finding(
+                    title="another medium finding",
+                    category=FindingCategory.HTTP_HEADER,
+                    severity=Severity.MEDIUM,
+                    evidence="missing hsts",
+                ),
+            ],
+        )
+
+        self.assertEqual(
+            report.summary_counts(),
+            {"critical": 1, "high": 0, "medium": 2, "low": 0, "info": 0},
+        )
+
+    def test_risk_score_grade_thresholds_are_stable(self) -> None:
+        self.assertEqual(_risk_score({"info": 5}), (0, "A+"))
+        self.assertEqual(_risk_score({"low": 10}), (10, "B"))
+        self.assertEqual(_risk_score({"high": 2, "medium": 4}), (50, "D"))
+        self.assertEqual(_risk_score({"critical": 25}), (1000, "F"))
+
+    def test_json_report_contains_machine_readable_finding_fields(self) -> None:
+        report = ScanReport(
+            target="example.com",
+            started_at=datetime(2026, 6, 10, 12, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 6, 10, 12, 0, 1, tzinfo=timezone.utc),
+            findings=[
+                Finding(
+                    title="Detected: nginx 1.25",
+                    category=FindingCategory.TECH_STACK,
+                    severity=Severity.INFO,
+                    evidence="Server: nginx/1.25",
+                    cpe="cpe:2.3:a:f5:nginx:1.25:*:*:*:*:*:*:*",
+                    references=["https://example.com/ref"],
+                )
+            ],
+        )
+
+        data = json.loads(render_json(report))
+
+        self.assertEqual(data["target"], "example.com")
+        self.assertEqual(data["summary"]["info"], 1)
+        self.assertEqual(data["findings"][0]["cpe"], "cpe:2.3:a:f5:nginx:1.25:*:*:*:*:*:*:*")
+        self.assertIn("tools", data["findings"][0])
+
+    def test_brief_text_report_omits_deep_sections(self) -> None:
+        report = ScanReport(
+            target="example.com",
+            started_at=datetime(2026, 6, 10, tzinfo=timezone.utc),
+            findings=[
+                Finding(
+                    title="Missing header: Content-Security-Policy",
+                    category=FindingCategory.HTTP_HEADER,
+                    severity=Severity.MEDIUM,
+                    evidence="missing",
+                    impact="impact text",
+                    remediation="fix text",
+                )
+            ],
+        )
+
+        output = render_text(report, brief=True)
+
+        self.assertIn("EXECUTIVE SUMMARY", output)
+        self.assertIn("DETAILED FINDINGS", output)
+        self.assertNotIn("DEEP ISSUE ANALYSIS", output)
+        self.assertNotIn("REMEDIATION GUIDE", output)
+
+
+if __name__ == "__main__":
+    unittest.main()

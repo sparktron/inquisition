@@ -13,8 +13,8 @@ Inquisition probes your target across DNS, network, TLS, HTTP, application layer
 ### Reconnaissance & Fingerprinting
 - **DNS reconnaissance** — A/AAAA resolution, reverse DNS, subdomain enumeration, MX/NS/TXT records, SPF/DMARC checks, **DNS zone transfer (AXFR) detection**
 - **Port scanning** — TCP connect-scan with banner grabbing; enhanced service detection for Telnet, SMB, VNC, Redis, Elasticsearch, MongoDB, MySQL, PostgreSQL, RDP
-- **TLS/SSL analysis** — protocol versions, cipher suites, certificate validity/expiration, self-signed detection, hostname mismatch
-- **WAF/CDN detection** — Identifies Cloudflare, AWS CloudFront, Akamai, Fastly, Imperva, Sucuri, and 20+ other protective layers
+- **TLS/SSL analysis** — negotiated protocol/cipher, certificate validity/expiration, self-signed detection, hostname mismatch
+- **WAF/CDN detection** — Signature-based detection for common protective layers including Cloudflare, AWS CloudFront, Akamai, Fastly, Imperva, and Sucuri
 - **Technology stack detection** — WordPress, Joomla, Drupal, Laravel, Django, PHP, nginx, Apache, IIS, Node.js, and more via body/header signatures and path probing
 
 ### Security Headers & Application Layer
@@ -369,9 +369,9 @@ Inquisition runs 8 specialised modules concurrently, each with a specific focus:
 **Checks:**
 - A/AAAA resolution and IP discovery
 - Reverse DNS lookups
-- Subdomain enumeration (16 common prefixes: www, mail, dev, staging, api, admin, etc.)
+- Subdomain enumeration using a curated list of common prefixes (`www`, `mail`, `dev`, `staging`, `api`, `admin`, etc.)
 - MX/NS/TXT record queries
-- SPF record validation
+- SPF record presence check
 - DMARC record detection
 - **DNS zone transfer (AXFR) attempts** — reveals entire zone if unrestricted
 - **Subdomain takeover detection** — identifies dangling CNAME records on 24+ third-party services
@@ -381,15 +381,15 @@ Inquisition runs 8 specialised modules concurrently, each with a specific focus:
 ---
 
 ### 2. Port Scanning (`port_scan`)
-**What it does:** TCP connection scanning with banner grabbing and service-specific risk analysis.
+**What it does:** TCP connection scanning with passive banner collection and service-specific risk analysis.
 
 **Checks:**
 - TCP connect-scan on configurable port ranges
-- Banner grabbing (sends `\r\n`, reads response)
+- Passive banner reads for common text protocols that advertise first
 - Service identification
 - Enhanced risk flagging for:
   - **Telnet (port 23)** → HIGH — cleartext credentials
-  - **SMB (port 445)** → CRITICAL — EternalBlue/WannaCry risk, MS17-010
+  - **SMB (port 445)** → HIGH — EternalBlue/WannaCry risk, MS17-010
   - **FTP (port 21)** → MEDIUM — cleartext auth, anonymous access
   - **VNC (port 5900)** → HIGH — weak auth risk
   - **Redis (port 6379)** → HIGH — unauthenticated access
@@ -399,7 +399,7 @@ Inquisition runs 8 specialised modules concurrently, each with a specific focus:
   - **PostgreSQL (port 5432)** → MEDIUM — misconfigured pg_hba.conf
   - **RDP (port 3389)** → MEDIUM — BlueKeep risk
 
-**Severity:** Depends on port; Telnet/SMB are HIGH/CRITICAL
+**Severity:** Depends on port; Telnet/SMB are HIGH
 
 ---
 
@@ -408,12 +408,12 @@ Inquisition runs 8 specialised modules concurrently, each with a specific focus:
 
 **Checks:**
 - Protocol version detection (flags SSLv2, SSLv3, TLSv1.0, TLSv1.1)
-- Cipher suite analysis (flags RC4, DES, NULL, EXPORT, anonymous ciphers)
+- Negotiated cipher analysis (flags RC4, DES, NULL, EXPORT, anonymous ciphers if negotiated)
 - Certificate fingerprint (SHA-256)
 - Self-signed certificate detection
 - Certificate expiry and validity period
 - Hostname mismatch in Subject Alternative Names (SAN)
-- Certificate chain validation
+- Certificate parsing for subject, issuer, expiry, and SAN fields
 
 **Severity:** CRITICAL for expired certs; HIGH for legacy protocols/weak ciphers
 
@@ -482,7 +482,7 @@ Inquisition runs 8 specialised modules concurrently, each with a specific focus:
 ### 7. WAF/CDN Detection (`waf_detection`)
 **What it does:** Identifies protective layers in front of the target.
 
-**Detects (30+ products):**
+**Detects common products and edge layers via signatures:**
 - **CDNs:** Cloudflare, AWS CloudFront, Akamai, Fastly, Vercel, Netlify
 - **WAFs:** Imperva Incapsula, Sucuri, Cloudflare WAF
 - **Cache layers:** Varnish, Akamai
@@ -514,7 +514,7 @@ Inquisition runs 8 specialised modules concurrently, each with a specific focus:
 
 ## Misconfiguration Rules
 
-The misconfiguration engine derives higher-level findings from raw module output (30+ patterns):
+The misconfiguration engine derives higher-level findings from raw module output using a curated rule set:
 
 ### TLS/Certificate
 - ✗ Expired TLS certificate (CRITICAL)
