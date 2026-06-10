@@ -267,7 +267,8 @@ Goal: the tool's existing output is correct and its claims are true.
       `security.txt`, and HTTP fallback path probing.
 - [x] Broaden tests with `models`, `report` rendering, risk scoring, and
       dry-run contract checks for every module.
-- [ ] Add recorded HTTP/DNS fixture tests for network-facing module behavior.
+- [x] Add recorded HTTP/DNS/socket fixture tests for network-facing module
+      behavior.
 - [x] Audit remaining README claims vs implementation (cipher "suites", WAF "20+",
       content discovery) and reconcile.
 

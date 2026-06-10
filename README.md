@@ -743,6 +743,20 @@ MIT
 
 Contributions are welcome. Please open an issue or pull request at the repository.
 
+### Development validation
+
+Run the local checks before opening a pull request:
+
+```bash
+python -m unittest discover -s tests -v
+python -m compileall -q .
+python -m mypy .
+python inquisition.py example.com --dry-run --format json --output /tmp/inquisition-dry-run.json
+```
+
+The test suite includes deterministic recorded HTTP/DNS/socket fixtures for
+network-facing modules; tests should not require live external targets.
+
 For bug reports or feature requests, provide:
 - Description of the issue
 - Steps to reproduce (if applicable)
