@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from urllib.parse import quote
 from typing import Any
 
 from models import Finding, FindingCategory, Severity
@@ -46,6 +47,7 @@ _SECURITY_HEADERS: dict[str, dict[str, Any]] = {
 _LEAKY_HEADERS = ("Server", "X-Powered-By", "X-AspNet-Version", "X-AspNetMvc-Version")
 
 _MIN_HSTS_MAX_AGE = 31_536_000
+_HSTS_PRELOAD_STATUS_URL = "https://hstspreload.org/api/v2/status?domain={domain}"
 _SAFE_REFERRER_POLICIES = {
     "no-referrer",
     "same-origin",
@@ -79,6 +81,13 @@ def _parse_directives(value: str) -> dict[str, str]:
             name, _, directive_value = part.partition(" ")
         directives[name.lower()] = directive_value.strip()
     return directives
+
+
+def _parse_hsts_max_age(value: str) -> int:
+    try:
+        return int(value)
+    except ValueError:
+        return -1
 
 
 class HttpHeaderModule(BaseModule):
@@ -139,6 +148,11 @@ class HttpHeaderModule(BaseModule):
                     ))
                 else:
                     self._check_header_quality(url, header_name, _header_value(headers, header_name), findings)
+
+            if scheme == "https":
+                hsts_value = _header_value(headers, "Strict-Transport-Security")
+                if hsts_value:
+                    self._check_hsts_preload_status(target, hsts_value, findings)
 
             # Check for leaky headers
             for header_name in _LEAKY_HEADERS:
@@ -306,6 +320,79 @@ class HttpHeaderModule(BaseModule):
                 impact="Subdomains may remain vulnerable to HTTPS downgrade attacks",
                 remediation="Add includeSubDomains once every subdomain supports HTTPS",
             ))
+        if max_age >= _MIN_HSTS_MAX_AGE and "includesubdomains" in directives and "preload" not in directives:
+            findings.append(Finding(
+                title="HSTS preload directive missing",
+                category=FindingCategory.HTTP_HEADER,
+                severity=Severity.LOW,
+                evidence=f"{url} returns Strict-Transport-Security: {value}",
+                impact="First-time visitors remain exposed to HTTPS downgrade attacks until their browser sees HSTS",
+                remediation="After validating HTTPS on all subdomains, add the preload directive and submit to hstspreload.org",
+            ))
+
+    def _check_hsts_preload_status(self, target: str, hsts_value: str, findings: list[Finding]) -> None:
+        status_url = _HSTS_PRELOAD_STATUS_URL.format(domain=quote(target, safe=""))
+        try:
+            response = self.http.get(
+                status_url,
+                timeout=self.config.timeout,
+                allow_redirects=True,
+                verify=True,
+            )
+            payload = response.json()
+        except (HttpRequestException, ValueError) as exc:
+            findings.append(Finding(
+                title="HSTS preload status check failed",
+                category=FindingCategory.HTTP_HEADER,
+                severity=Severity.INFO,
+                evidence=f"{status_url}: {exc}",
+            ))
+            return
+
+        if not isinstance(payload, dict):
+            findings.append(Finding(
+                title="HSTS preload status check failed",
+                category=FindingCategory.HTTP_HEADER,
+                severity=Severity.INFO,
+                evidence=f"{status_url}: unexpected response payload",
+            ))
+            return
+
+        status = str(payload.get("status", "unknown")).lower()
+        if status == "preloaded":
+            preloaded_domain = str(payload.get("preloadedDomain") or target)
+            findings.append(Finding(
+                title="HSTS preload active",
+                category=FindingCategory.HTTP_HEADER,
+                severity=Severity.INFO,
+                evidence=f"{target} is preloaded via {preloaded_domain}",
+            ))
+            return
+        if status == "pending":
+            findings.append(Finding(
+                title="HSTS preload pending",
+                category=FindingCategory.HTTP_HEADER,
+                severity=Severity.INFO,
+                evidence=f"{target} is pending inclusion in the HSTS preload list",
+            ))
+            return
+
+        directives = _parse_directives(hsts_value)
+        preload_ready = (
+            _parse_hsts_max_age(directives.get("max-age", "")) >= _MIN_HSTS_MAX_AGE
+            and "includesubdomains" in directives
+            and "preload" in directives
+        )
+        if preload_ready:
+            findings.append(Finding(
+                title="HSTS preload not active",
+                category=FindingCategory.HTTP_HEADER,
+                severity=Severity.LOW,
+                evidence=f"{target} has a preload-ready HSTS header but preload status is {status}",
+                impact="First-time visitors may still make an initial insecure HTTP request before HSTS is learned",
+                remediation="Submit the domain at https://hstspreload.org/ and monitor until status is preloaded",
+            ))
+
 
     def _check_csp_quality(self, url: str, value: str, findings: list[Finding]) -> None:
         directives = _parse_directives(value)

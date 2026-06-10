@@ -23,13 +23,14 @@ class RecordedResponse:
     url: str = ""
     content: bytes = b""
     cookies: list[Any] = field(default_factory=list)
+    json_data: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.content:
             self.content = self.text.encode()
 
     def json(self) -> dict[str, Any]:
-        return {}
+        return self.json_data
 
 
 class RecordedTextRecord:
@@ -167,6 +168,9 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
                 headers=headers,
                 url="https://example.test/",
             ),
+            "https://hstspreload.org/api/v2/status?domain=example.test": RecordedResponse(
+                json_data={"status": "unknown"},
+            ),
         }
 
         def fake_get(url: str, **_: object) -> RecordedResponse:
@@ -193,6 +197,35 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
         self.assertIn("__Host- prefix requires Secure flag", insecure_cookie.evidence)
         self.assertIn("__Host- prefix forbids Domain attribute", insecure_cookie.evidence)
         self.assertIn("__Host- prefix requires Path=/", insecure_cookie.evidence)
+
+    def test_http_header_fixture_reports_hsts_preload_status(self) -> None:
+        headers = {
+            "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
+            "Content-Security-Policy": "default-src 'self'; object-src 'none'; frame-ancestors 'none'",
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "strict-origin-when-cross-origin",
+            "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        }
+        responses = {
+            "https://example.test/": RecordedResponse(status_code=200, headers=headers, url="https://example.test/"),
+            "http://example.test/": RecordedResponse(status_code=301, headers={}, url="https://example.test/"),
+            "https://hstspreload.org/api/v2/status?domain=example.test": RecordedResponse(
+                json_data={"status": "unknown"},
+            ),
+        }
+
+        def fake_get(url: str, **_: object) -> RecordedResponse:
+            return responses[url]
+
+        findings = HttpHeaderModule(
+            ScanConfig(target="example.test", rate_limit=0),
+            http_client=cast(Any, RecordedHttpClient(get=fake_get)),
+        ).run()
+
+        titles = {finding.title for finding in findings}
+        self.assertIn("HSTS preload not active", titles)
+        self.assertNotIn("HSTS preload directive missing", titles)
 
     def test_waf_fixture_detects_cloudflare_header(self) -> None:
         response = RecordedResponse(

@@ -216,7 +216,7 @@ but stop short of "absolute most secure." Gaps, grouped:
 - [x] CSP analyzed for `unsafe-inline`/`unsafe-eval`/wildcard sources, not just
   presence.
 - [x] HSTS `max-age` threshold + `includeSubDomains` checks.
-- HSTS **preload list** membership.
+- [x] HSTS **preload list** membership/status.
 - [x] DMARC **policy strength** (`p=none` vs `quarantine`/`reject`) and SPF
   `~all`/`?all`/`+all` vs `-all`.
 - [x] **DKIM** presence via common-selector probe (positive-only; absence is not
@@ -289,7 +289,7 @@ Goal: the tool's existing output is correct and its claims are true.
 ### Phase 2 — Depth of Analysis ("most secure" core)
 - [x] **Header and control quality grading** — CSP/HSTS/header-value/cookie-prefix
       grading, SPF/DMARC policy strength, and DKIM presence are implemented.
-      Remaining: HSTS preload-list membership, mixed-content, and SRI.
+      Remaining: mixed-content and SRI.
 - [ ] **TLS depth** — full protocol/cipher enumeration, HSTS preload check,
       OCSP/CT, chain validation.
 - [ ] **Crawler** — discover links from homepage + sitemap.xml + robots.txt and

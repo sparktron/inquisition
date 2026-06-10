@@ -18,7 +18,7 @@ Inquisition probes your target across DNS, network, TLS, HTTP, application layer
 - **Technology stack detection** — WordPress, Joomla, Drupal, Laravel, Django, PHP, nginx, Apache, IIS, Node.js, and more via body/header signatures and path probing
 
 ### Security Headers & Application Layer
-- **HTTP header audit** — HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, **SameSite cookie validation**, information disclosure headers
+- **HTTP header audit** — HSTS policy and preload status, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, **SameSite cookie validation**, information disclosure headers
 - **Application checks** — CORS misconfiguration, XSS-Protection disabled, **GraphQL introspection**, **HTTP method Allow-header inspection**, debug endpoints, exposed API docs
 - **Content discovery** — **security.txt validation (RFC 9116)**, **robots.txt path leakage**, admin panels (Kibana, Grafana, Jenkins, Jupyter, Portainer, etc.), backup files, sensitive configs (`.env`, `docker-compose.yml`, `.htpasswd`)
 
@@ -431,7 +431,8 @@ Inquisition runs 8 specialised modules concurrently, each with a specific focus:
 - Permissions-Policy
 - Information disclosure headers (Server, X-Powered-By, X-AspNet-Version)
 - Cookie flags: **Secure**, **HttpOnly**, **SameSite** (Strict/Lax/None)
-- Header quality checks for weak HSTS max-age, permissive CSP sources, invalid
+- Header quality checks for weak HSTS max-age, missing `includeSubDomains` /
+  `preload`, inactive HSTS preload status, permissive CSP sources, invalid
   defensive header values, broad Permissions-Policy, and cookie prefix rules
 - HTTP-to-HTTPS redirect
 
