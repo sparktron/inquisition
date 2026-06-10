@@ -56,6 +56,73 @@ def _decode_cert_der(cert_der: bytes) -> dict[str, Any]:
                 pass
 
 
+# Protocols to actively probe. SSLv2/SSLv3 are omitted because modern OpenSSL
+# builds refuse to even attempt them, which would make a negative result
+# meaningless rather than informative.
+_PROBE_PROTOCOLS: list[tuple[str, ssl.TLSVersion]] = [
+    ("TLSv1", ssl.TLSVersion.TLSv1),
+    ("TLSv1.1", ssl.TLSVersion.TLSv1_1),
+    ("TLSv1.2", ssl.TLSVersion.TLSv1_2),
+    ("TLSv1.3", ssl.TLSVersion.TLSv1_3),
+]
+
+_DEPRECATED_PROTOCOLS = {"TLSv1", "TLSv1.1"}
+
+# OpenSSL cipher-selection strings for known-weak families. The scanner's own
+# OpenSSL may refuse to offer some of these (set_ciphers raises) — in that case
+# the family simply cannot be tested and nothing is reported for it.
+_WEAK_CIPHER_PROBES: list[tuple[str, str]] = [
+    ("RC4", "RC4"),
+    ("3DES/DES", "3DES:DES"),
+    ("NULL", "NULL"),
+    ("EXPORT", "EXPORT"),
+]
+
+
+def _supports_protocol(host: str, port: int, version: ssl.TLSVersion, timeout: float) -> bool:
+    """Return True if the server completes a handshake pinned to ``version``."""
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            ctx.minimum_version = version
+            ctx.maximum_version = version
+    except (ValueError, OSError):
+        # This OpenSSL build cannot pin that version — treat as untestable.
+        return False
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as raw:
+            with ctx.wrap_socket(raw, server_hostname=host):
+                return True
+    except (ssl.SSLError, OSError):
+        return False
+
+
+def _accepts_cipher(host: str, port: int, openssl_cipher: str, timeout: float) -> bool:
+    """Return True if the server completes a handshake using ``openssl_cipher``."""
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        # Weak ciphers exist only in TLS 1.2 and earlier.
+        ctx.maximum_version = ssl.TLSVersion.TLSv1_2
+    except (ValueError, OSError):
+        pass
+    try:
+        ctx.set_ciphers(openssl_cipher)
+    except ssl.SSLError:
+        # The scanner's OpenSSL won't offer this family — cannot test it.
+        return False
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as raw:
+            with ctx.wrap_socket(raw, server_hostname=host):
+                return True
+    except (ssl.SSLError, OSError):
+        return False
+
+
 class TlsAnalysisModule(BaseModule):
     name = "tls_analysis"
 
@@ -238,4 +305,73 @@ class TlsAnalysisModule(BaseModule):
                 remediation="Inspect the certificate manually with: openssl s_client -connect host:443 | openssl x509 -noout -text",
             ))
 
+        # --- Active protocol & weak-cipher enumeration ---
+        # The handshake above reports only the single negotiated protocol/cipher.
+        # These probes actively test what the server is *willing* to accept.
+        self._enumerate_protocols(target, findings)
+        self._probe_weak_ciphers(target, findings)
+
         return findings
+
+    def _enumerate_protocols(self, target: str, findings: list[Finding]) -> None:
+        """Actively probe which TLS protocol versions the server accepts."""
+        supported: list[str] = []
+        for label, version in _PROBE_PROTOCOLS:
+            self._rate_limit()
+            if _supports_protocol(target, 443, version, self.config.timeout):
+                supported.append(label)
+
+        if not supported:
+            return
+
+        findings.append(Finding(
+            title="TLS protocols supported",
+            category=FindingCategory.TLS,
+            severity=Severity.INFO,
+            evidence=f"Server accepted handshakes for: {', '.join(supported)}",
+        ))
+
+        for label in supported:
+            if label in _DEPRECATED_PROTOCOLS:
+                findings.append(Finding(
+                    title=f"Deprecated TLS protocol enabled: {label}",
+                    category=FindingCategory.TLS,
+                    severity=Severity.HIGH,
+                    evidence=f"Server completed a {label} handshake",
+                    impact="Legacy protocols are vulnerable to POODLE/BEAST and weaken the endpoint for every client",
+                    remediation="Disable TLS 1.0 and 1.1; require TLS 1.2 or higher",
+                ))
+
+        if "TLSv1.2" not in supported:
+            findings.append(Finding(
+                title="TLS 1.2 not supported",
+                category=FindingCategory.TLS,
+                severity=Severity.MEDIUM,
+                evidence="Server did not complete a TLS 1.2 handshake",
+                impact="Clients unable to use TLS 1.3 may be pushed onto deprecated protocols or fail to connect",
+                remediation="Enable TLS 1.2 (and ideally TLS 1.3)",
+            ))
+
+        if "TLSv1.3" not in supported:
+            findings.append(Finding(
+                title="TLS 1.3 not supported",
+                category=FindingCategory.TLS,
+                severity=Severity.LOW,
+                evidence="Server did not complete a TLS 1.3 handshake",
+                impact="Missing the fastest, most secure protocol (forward secrecy by default, fewer downgrade vectors)",
+                remediation="Enable TLS 1.3 in the server or TLS-termination configuration",
+            ))
+
+    def _probe_weak_ciphers(self, target: str, findings: list[Finding]) -> None:
+        """Actively probe whether the server accepts known-weak cipher families."""
+        for label, cipher_str in _WEAK_CIPHER_PROBES:
+            self._rate_limit()
+            if _accepts_cipher(target, 443, cipher_str, self.config.timeout):
+                findings.append(Finding(
+                    title=f"Weak cipher family accepted: {label}",
+                    category=FindingCategory.TLS,
+                    severity=Severity.HIGH,
+                    evidence=f"Server completed a handshake using a {label} cipher",
+                    impact="Weak ciphers can be brute-forced or downgraded, exposing supposedly encrypted traffic",
+                    remediation=f"Disable {label} cipher suites in the server TLS configuration",
+                ))

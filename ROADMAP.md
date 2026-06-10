@@ -293,8 +293,10 @@ Goal: the tool's existing output is correct and its claims are true.
       grading, SPF/DMARC policy strength, and DKIM presence are implemented.
       Mixed-content and SRI checks run against homepage assets; crawler phase
       will broaden coverage across discovered pages.
-- [ ] **TLS depth** — full protocol/cipher enumeration, HSTS preload check,
-      OCSP/CT, chain validation.
+- [x] **TLS depth** — active protocol-version enumeration (flags TLS 1.0/1.1,
+      reports TLS 1.2/1.3 gaps) and weak-cipher-family acceptance probing.
+      Deferred: OCSP stapling, CT-log, and full chain validation (need a
+      `cryptography`/pyOpenSSL dependency — out of scope for the stdlib-only core).
 - [ ] **Crawler** — discover links from homepage + sitemap.xml + robots.txt and
       feed discovered paths into the existing path-based checks.
 
