@@ -297,8 +297,11 @@ Goal: the tool's existing output is correct and its claims are true.
       reports TLS 1.2/1.3 gaps) and weak-cipher-family acceptance probing.
       Deferred: OCSP stapling, CT-log, and full chain validation (need a
       `cryptography`/pyOpenSSL dependency — out of scope for the stdlib-only core).
-- [ ] **Crawler** — discover links from homepage + sitemap.xml + robots.txt and
-      feed discovered paths into the existing path-based checks.
+- [x] **Crawler** — `modules/crawler.py` discovers the internal URL surface from
+      homepage links, robots.txt, and sitemap.xml (with a bounded deep-crawl one
+      level further), same-origin only, and flags sensitive discovered endpoints.
+      Follow-up: feed discovered paths into the other path-based modules via a
+      sequential pre-discovery pass (needs an orchestrator change in `scanner`).
 
 ### Phase 3 — Continuous Assurance (the real product)
 - [ ] **Scan diffing** — persist normalized findings; report deltas

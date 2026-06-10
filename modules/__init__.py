@@ -10,6 +10,7 @@ from modules.tech_stack import TechStackModule
 from modules.app_checks import AppChecksModule
 from modules.waf_detection import WafDetectionModule
 from modules.content_discovery import ContentDiscoveryModule
+from modules.crawler import CrawlerModule
 
 ALL_MODULES: list[type] = [
     DnsReconModule,
@@ -20,6 +21,7 @@ ALL_MODULES: list[type] = [
     AppChecksModule,
     WafDetectionModule,
     ContentDiscoveryModule,
+    CrawlerModule,
 ]
 
 __all__ = [
@@ -31,5 +33,6 @@ __all__ = [
     "AppChecksModule",
     "WafDetectionModule",
     "ContentDiscoveryModule",
+    "CrawlerModule",
     "ALL_MODULES",
 ]
