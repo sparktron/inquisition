@@ -20,6 +20,9 @@ py-modules = ["inquisition", "scanner", "report", "models", "safety", "analysis_
 include = ["modules*"]
 exclude = ["reports", "tests"]
 
+[tool.setuptools.package-data]
+modules = ["data/*.json"]
+
 [project.scripts]
 inquisition = "inquisition:main"
 

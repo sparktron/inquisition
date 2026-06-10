@@ -757,6 +757,10 @@ python inquisition.py example.com --dry-run --format json --output /tmp/inquisit
 The test suite includes deterministic recorded HTTP/DNS/socket fixtures for
 network-facing modules; tests should not require live external targets.
 
+Deep remediation text is stored as structured package data in
+`modules/data/analysis_kb.json` and loaded through `analysis_kb.py`. Keep the
+schema test passing whenever adding or editing knowledge-base entries.
+
 For bug reports or feature requests, provide:
 - Description of the issue
 - Steps to reproduce (if applicable)

@@ -279,8 +279,8 @@ Goal: the tool's existing output is correct and its claims are true.
       dedup-scheme fixes.
 - [x] **B15 / B16** fix scheme-aware tech-stack path probing and stricter
       `security.txt` validation.
-- [ ] Move `analysis_kb.py` content to structured data (YAML), loaded at
-      runtime; add a schema validator test.
+- [x] Move `analysis_kb.py` content to structured data, loaded at runtime;
+      add a schema validator test.
 - [x] **B8** Proper RFC 6125 wildcard SAN matching.
 
 ### Phase 2 — Depth of Analysis ("most secure" core)
