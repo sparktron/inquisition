@@ -30,6 +30,19 @@ class ReportFormat(enum.Enum):
     TEXT = "text"
     JSON = "json"
     HTML = "html"
+    SARIF = "sarif"
+
+
+# Severity ranking, most to least severe. Used for thresholds (--fail-on) and
+# for finding the highest severity present in a report.
+SEVERITY_ORDER: list[Severity] = [
+    Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO,
+]
+
+
+def severity_at_least(value: Severity, threshold: Severity) -> bool:
+    """Return True if ``value`` is at least as severe as ``threshold``."""
+    return SEVERITY_ORDER.index(value) <= SEVERITY_ORDER.index(threshold)
 
 
 class FindingCategory(enum.Enum):
@@ -154,3 +167,11 @@ class ScanReport:
     def summary_counts(self) -> dict[str, int]:
         by_sev = self.findings_by_severity()
         return {s.value: len(fs) for s, fs in by_sev.items()}
+
+    def highest_severity(self) -> Severity | None:
+        """Return the most severe finding severity present, or None if empty."""
+        present = {f.severity for f in self.findings}
+        for sev in SEVERITY_ORDER:
+            if sev in present:
+                return sev
+        return None

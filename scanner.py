@@ -10,6 +10,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from diffing import (
+    DiffResult,
+    default_state_dir,
+    diff_snapshots,
+    load_snapshot,
+    save_snapshot,
+    snapshot_from_report,
+)
 from models import ReportFormat, ScanReport, Severity
 from modules import ALL_MODULES
 from modules.base import BaseModule
@@ -64,6 +72,7 @@ def _default_report_path(report: ScanReport, report_format: ReportFormat) -> Pat
         ReportFormat.TEXT: ".txt",
         ReportFormat.JSON: ".json",
         ReportFormat.HTML: ".html",
+        ReportFormat.SARIF: ".sarif",
     }
     timestamp = report.started_at.strftime("%Y%m%d_%H%M%S")
     safe_target = re.sub(r"[^\w\-]", "_", report.target)
@@ -84,13 +93,39 @@ def _run_module(module: BaseModule) -> tuple[str, list[Finding], list[str]]:
     return module.name, findings, errors
 
 
+def _print_diff(diff: DiffResult) -> None:
+    """Print a one-line-per-category delta vs the previous scan of this target."""
+    if diff.is_baseline:
+        print_info("baseline scan — no previous results to compare against")
+        return
+    if not diff.has_changes():
+        print_info(f"no change since last scan ({diff.unchanged_count} finding(s) stable)")
+        return
+    parts: list[str] = []
+    if diff.new:
+        parts.append(f"{len(diff.new)} new")
+    if diff.regressed:
+        parts.append(f"{len(diff.regressed)} regressed")
+    if diff.fixed:
+        parts.append(f"{len(diff.fixed)} fixed")
+    if diff.improved:
+        parts.append(f"{len(diff.improved)} improved")
+    print_info("vs previous scan: " + ", ".join(parts))
+    for delta in diff.new:
+        print_info(f"  + new [{delta.severity}] {delta.title}")
+    for delta in diff.regressed:
+        print_info(f"  ! regressed [{delta.previous_severity}→{delta.severity}] {delta.title}")
+    for delta in diff.fixed:
+        print_info(f"  - fixed [{delta.severity}] {delta.title}")
+
+
 def run_scan(
     config: ScanConfig,
     *,
     skip_auth: bool = False,
     brief: bool = False,
     output_path: str | None = None,
-) -> None:
+) -> ScanReport:
     """Execute a full scan with the given configuration."""
 
     # --- Validation ---
@@ -166,6 +201,17 @@ def run_scan(
     # --- Finalize ---
     report.finished_at = datetime.now(timezone.utc)
 
+    # --- Scan diffing vs the previous run for this target ---
+    if not config.dry_run:
+        state_dir = default_state_dir()
+        previous = load_snapshot(config.target, state_dir)
+        diff_result = diff_snapshots(previous, snapshot_from_report(report))
+        _print_diff(diff_result)
+        try:
+            save_snapshot(report, state_dir)
+        except OSError as exc:
+            report.errors.append(f"Could not save scan snapshot: {exc}")
+
     # --- Render report ---
     output = render(report, config.report_format, brief=brief)
 
@@ -198,3 +244,5 @@ def run_scan(
         misconfig_count=len(report.misconfigurations),
         output_path=output_path if report_saved else "(not saved)",
     )
+
+    return report

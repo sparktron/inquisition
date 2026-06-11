@@ -304,11 +304,16 @@ Goal: the tool's existing output is correct and its claims are true.
       sequential pre-discovery pass (needs an orchestrator change in `scanner`).
 
 ### Phase 3 — Continuous Assurance (the real product)
-- [ ] **Scan diffing** — persist normalized findings; report deltas
-      (new/regressed/fixed) against the prior scan for the same target.
-- [ ] **CI/CD mode** — `--fail-on <severity>` exit codes; **SARIF** output;
-      example GitHub Action.
+- [x] **Scan diffing** — `diffing.py` persists a normalized snapshot per target
+      (`reports/.state/`) and reports deltas (new/regressed/fixed/improved)
+      against the prior scan, keyed by a stable `(category, title)` fingerprint.
+- [x] **CI/CD mode** — `--fail-on <severity>` exit codes (exit 1 when a finding
+      meets the threshold); **SARIF 2.1.0** output (`--format sarif`) for GitHub
+      code scanning; example workflow at `examples/github-action.yml`.
 - [ ] **Scheduled scanning** + notification on new/regressed CRITICAL/HIGH.
+      The example GitHub Action covers cron scheduling; external notification
+      (Slack/email on regression) is not yet built — the diff already classifies
+      regressions, so this is a delivery/integration follow-up.
 
 ### Phase 4 — Active Testing (optional, authorization-gated)
 - [ ] Integrate Nuclei/ZAP behind an explicit `--active` flag with a separate,

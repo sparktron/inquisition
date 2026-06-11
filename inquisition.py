@@ -46,10 +46,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     parser.add_argument(
         "--format", "-f",
-        choices=["text", "json", "html"],
+        choices=["text", "json", "html", "sarif"],
         default="text",
         dest="report_format",
-        help="Report output format. Default: text",
+        help="Report output format (sarif for CI / GitHub code scanning). Default: text",
+    )
+
+    parser.add_argument(
+        "--fail-on",
+        choices=["critical", "high", "medium", "low"],
+        default=None,
+        dest="fail_on",
+        help=(
+            "Exit non-zero (code 1) if any finding is at or above this severity. "
+            "For CI gating. Default: never fail on findings."
+        ),
     )
 
     parser.add_argument(
@@ -162,7 +173,7 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     try:
-        run_scan(
+        report = run_scan(
             config,
             skip_auth=args.authorized or args.dry_run,
             brief=args.brief,
@@ -172,6 +183,19 @@ def main(argv: list[str] | None = None) -> None:
         from ui import print_interrupted
         print_interrupted()
         sys.exit(130)
+
+    # --- CI gating: exit non-zero when findings meet the --fail-on threshold ---
+    if args.fail_on and not args.dry_run:
+        from models import Severity, severity_at_least
+        threshold = Severity(args.fail_on)
+        highest = report.highest_severity()
+        if highest is not None and severity_at_least(highest, threshold):
+            from ui import print_warning
+            print_warning(
+                f"fail-on: highest finding severity '{highest.value}' "
+                f"meets threshold '{threshold.value}' — exiting 1"
+            )
+            sys.exit(1)
 
 
 if __name__ == "__main__":

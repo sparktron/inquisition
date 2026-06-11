@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html as _html
 import json
+import re
 from datetime import datetime
 from typing import Any
 
@@ -343,6 +344,93 @@ def render_json(report: ScanReport) -> str:
         "errors": report.errors,
     }
     return json.dumps(data, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# SARIF report (for CI / GitHub code scanning)
+# ---------------------------------------------------------------------------
+
+# SARIF result levels: error, warning, note, none.
+_SARIF_LEVEL: dict[Severity, str] = {
+    Severity.CRITICAL: "error",
+    Severity.HIGH: "error",
+    Severity.MEDIUM: "warning",
+    Severity.LOW: "note",
+    Severity.INFO: "note",
+}
+
+# GitHub sorts code-scanning alerts by a 0.0–10.0 numeric band.
+_SARIF_SECURITY_SEVERITY: dict[Severity, str] = {
+    Severity.CRITICAL: "9.5",
+    Severity.HIGH: "8.0",
+    Severity.MEDIUM: "5.5",
+    Severity.LOW: "3.0",
+    Severity.INFO: "1.0",
+}
+
+_TOOL_VERSION = "0.1.0"
+_TOOL_URI = "https://github.com/sparktron/inquisition"
+
+
+def _sarif_rule_id(f: Finding) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", f.title.lower()).strip("-")
+    return f"{f.category.value}/{slug}" if slug else f.category.value
+
+
+def render_sarif(report: ScanReport) -> str:
+    """Produce a SARIF 2.1.0 report for CI ingestion / GitHub code scanning."""
+    rules: dict[str, dict[str, Any]] = {}
+    results: list[dict[str, Any]] = []
+
+    for f in report.findings:
+        rule_id = _sarif_rule_id(f)
+        if rule_id not in rules:
+            rule: dict[str, Any] = {
+                "id": rule_id,
+                "name": f.title,
+                "shortDescription": {"text": f.title},
+                "fullDescription": {"text": f.impact or f.title},
+                "defaultConfiguration": {"level": _SARIF_LEVEL[f.severity]},
+                "properties": {
+                    "category": f.category.value,
+                    "security-severity": _SARIF_SECURITY_SEVERITY[f.severity],
+                },
+            }
+            if f.remediation:
+                rule["help"] = {"text": f.remediation}
+            rules[rule_id] = rule
+
+        message = f.evidence or f.title
+        if f.remediation:
+            message = f"{message}\nRemediation: {f.remediation}"
+        results.append({
+            "ruleId": rule_id,
+            "level": _SARIF_LEVEL[f.severity],
+            "message": {"text": message},
+            "locations": [{
+                "physicalLocation": {
+                    "artifactLocation": {"uri": report.target},
+                }
+            }],
+            "partialFingerprints": {"inquisitionFingerprint": rule_id},
+        })
+
+    sarif: dict[str, Any] = {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "Inquisition",
+                    "informationUri": _TOOL_URI,
+                    "version": _TOOL_VERSION,
+                    "rules": list(rules.values()),
+                }
+            },
+            "results": results,
+        }],
+    }
+    return json.dumps(sarif, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -689,4 +777,6 @@ def render(report: ScanReport, fmt: ReportFormat, *, brief: bool = False) -> str
         return render_json(report)
     if fmt == ReportFormat.HTML:
         return render_html(report)
+    if fmt == ReportFormat.SARIF:
+        return render_sarif(report)
     return render_text(report, brief=brief)

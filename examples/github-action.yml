@@ -1,0 +1,52 @@
+# Example GitHub Actions workflow: run Inquisition on a schedule and on demand,
+# upload results to GitHub code scanning, and fail the job on HIGH+ findings.
+#
+# Copy this file to .github/workflows/inquisition.yml in the repo that owns the
+# target site. Set the TARGET below to a host you are authorized to scan.
+#
+# Notes:
+# - SARIF upload requires the `security-events: write` permission and a public
+#   repo or GitHub Advanced Security on private repos.
+# - `--yes` asserts you are authorized to scan the target (non-interactive CI).
+name: Inquisition security scan
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 6 * * 1"  # every Monday at 06:00 UTC
+
+permissions:
+  contents: read
+  security-events: write  # required to upload SARIF
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    env:
+      TARGET: example.com  # <-- change to a host you are authorized to scan
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Inquisition
+        run: pip install -r requirements.txt
+
+      - name: Run scan (SARIF output, fail on HIGH+)
+        run: |
+          python inquisition.py "$TARGET" \
+            --yes \
+            --depth standard \
+            --format sarif \
+            --output inquisition.sarif \
+            --fail-on high
+
+      # Upload even if the scan step failed the job, so findings are still
+      # visible in the Security tab.
+      - name: Upload SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: inquisition.sarif

@@ -13,3 +13,6 @@ env/
 *.log
 .mypy_cache/
 .pytest_cache/
+
+# Generated scan reports and persisted diff state
+reports/
