@@ -240,6 +240,14 @@ python inquisition.py example.com -o report.txt    # → Text format
 | `--yes`, `--i-am-authorized` | flag | off | Confirm authorization and skip the interactive live-scan prompt |
 | `-v`, `--verbose` | flag | off | Enable debug logging to stderr |
 
+#### Active Testing
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `--active` | flag | off | Enable payload-based active scanning after the explicit active-scan authorization prompt |
+| `--active-engine` | `nuclei` \| `zap` | `nuclei` | Active scanner engine to run when `--active` is set |
+| `--auth-header` | string | empty | Header injected into HTTP modules and active engines, e.g. `Authorization: Bearer <token>` |
+| `--auth-cookie` | string | empty | Cookie header injected into HTTP modules and active engines, e.g. `session=<value>` |
+
 ### Safety
 
 **Inquisition is safe by design:**
@@ -717,7 +725,7 @@ Unauthorized security scanning may violate computer fraud and abuse laws in your
 
 ### Safety by Design
 
-Inquisition is intentionally **read-only active reconnaissance:**
+By default, Inquisition is intentionally **read-only active reconnaissance:**
 
 - ✅ No exploit payloads or weaponized techniques
 - ✅ No authentication bypass attempts
@@ -726,7 +734,10 @@ Inquisition is intentionally **read-only active reconnaissance:**
 - ✅ No extraction of private data
 - ✅ Live scans require interactive authorization or `--yes` / `--i-am-authorized`
 
-It is safe to run against production systems when authorized.
+Optional `--active` mode is different: it shells out to Nuclei or OWASP ZAP and
+may send payload-based vulnerability probes after a second, explicit active-scan
+authorization prompt. Use it only where you have written permission for active
+testing.
 
 ### Responsible Disclosure
 

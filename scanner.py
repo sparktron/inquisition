@@ -184,7 +184,7 @@ def run_scan(
     # --- Active testing phase (opt-in, sends payloads) ---
     if config.active and not config.dry_run:
         if confirm_active_scan(config, assume_yes=skip_auth):
-            print_info("running active scan (nuclei) — this sends payloads")
+            print_info(f"running active scan ({config.active_engine}) — this sends payloads")
             active_findings, active_errors = run_active_scan(config)
             report.findings.extend(active_findings)
             report.errors.extend(active_errors)

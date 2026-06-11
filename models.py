@@ -81,6 +81,7 @@ class ScanConfig:
     # active payloads (via an external engine such as Nuclei). This crosses the
     # read-only boundary and requires explicit authorization.
     active: bool = False
+    active_engine: str = "nuclei"
     # Authenticated scanning — credentials injected into every HTTP request so
     # modules and the active engine see the logged-in surface.
     auth_header: str = ""   # e.g. "Authorization: Bearer <token>"

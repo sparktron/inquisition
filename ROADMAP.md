@@ -324,9 +324,11 @@ Goal: the tool's existing output is correct and its claims are true.
       missing-binary is handled gracefully.
 - [x] Authenticated scanning (session/cookie injection) — `--auth-header` /
       `--auth-cookie` are injected into every HTTP request via the shared client
-      (so all read-only modules see the logged-in surface) and passed to Nuclei.
-- [ ] Optional: ZAP engine as an alternative to Nuclei (not implemented —
-      Nuclei chosen for its templated, JSON-output, daemon-free model).
+      (so all read-only modules see the logged-in surface) and passed to active
+      engines.
+- [x] Optional: ZAP engine as an alternative to Nuclei via `--active-engine zap`;
+      parses ZAP baseline JSON and reports non-informational alerts as active
+      findings. Missing-binary handling mirrors Nuclei.
 
 ---
 

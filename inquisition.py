@@ -164,9 +164,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--active",
         action="store_true",
         help=(
-            "Enable ACTIVE scanning (sends payloads via Nuclei). NOT read-only. "
+            "Enable ACTIVE scanning (sends payloads via the selected active engine). NOT read-only. "
             "Requires authorization; prompts unless --yes is given."
         ),
+    )
+    active_group.add_argument(
+        "--active-engine",
+        choices=["nuclei", "zap"],
+        default="nuclei",
+        dest="active_engine",
+        help="Active scanner engine to run when --active is set (default: nuclei)",
     )
     active_group.add_argument(
         "--auth-header",
@@ -215,6 +222,7 @@ def main(argv: list[str] | None = None) -> None:
         connect_timeout=args.connect_timeout,
         ports=ports,
         active=args.active,
+        active_engine=args.active_engine,
         auth_header=args.auth_header,
         auth_cookie=args.auth_cookie,
     )
