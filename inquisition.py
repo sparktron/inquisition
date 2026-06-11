@@ -64,6 +64,26 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--notify",
+        metavar="URL",
+        default=None,
+        dest="notify_url",
+        help=(
+            "Webhook URL to POST a regression alert to when a new or worsened "
+            "finding appears vs the previous scan. Slack incoming-webhook URLs "
+            "(hooks.slack.com) get a formatted message; any other URL gets JSON."
+        ),
+    )
+
+    parser.add_argument(
+        "--notify-min-severity",
+        choices=["critical", "high", "medium", "low"],
+        default="high",
+        dest="notify_min_severity",
+        help="Only notify for new/regressed findings at or above this severity (default: high)",
+    )
+
+    parser.add_argument(
         "--output", "-o",
         metavar="FILE",
         help="Write report to FILE instead of stdout",
@@ -173,11 +193,14 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     try:
+        from models import Severity
         report = run_scan(
             config,
             skip_auth=args.authorized or args.dry_run,
             brief=args.brief,
             output_path=args.output,
+            notify_url=args.notify_url,
+            notify_min_severity=Severity(args.notify_min_severity),
         )
     except KeyboardInterrupt:
         from ui import print_interrupted

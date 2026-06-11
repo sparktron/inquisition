@@ -310,10 +310,11 @@ Goal: the tool's existing output is correct and its claims are true.
 - [x] **CI/CD mode** — `--fail-on <severity>` exit codes (exit 1 when a finding
       meets the threshold); **SARIF 2.1.0** output (`--format sarif`) for GitHub
       code scanning; example workflow at `examples/github-action.yml`.
-- [ ] **Scheduled scanning** + notification on new/regressed CRITICAL/HIGH.
-      The example GitHub Action covers cron scheduling; external notification
-      (Slack/email on regression) is not yet built — the diff already classifies
-      regressions, so this is a delivery/integration follow-up.
+- [x] **Scheduled scanning** + notification on new/regressed findings. The
+      example GitHub Action covers cron scheduling; `notifications.py` posts a
+      regression alert (`--notify URL`, `--notify-min-severity`) to a Slack
+      incoming webhook (formatted message) or any other URL (structured JSON)
+      when a new or worsened finding appears vs the previous scan.
 
 ### Phase 4 — Active Testing (optional, authorization-gated)
 - [ ] Integrate Nuclei/ZAP behind an explicit `--active` flag with a separate,

@@ -19,6 +19,7 @@ from diffing import (
     snapshot_from_report,
 )
 from models import ReportFormat, ScanReport, Severity
+from notifications import notify
 from modules import ALL_MODULES
 from modules.base import BaseModule
 from modules.http_client import HttpClient
@@ -125,6 +126,8 @@ def run_scan(
     skip_auth: bool = False,
     brief: bool = False,
     output_path: str | None = None,
+    notify_url: str | None = None,
+    notify_min_severity: Severity = Severity.HIGH,
 ) -> ScanReport:
     """Execute a full scan with the given configuration."""
 
@@ -211,6 +214,15 @@ def run_scan(
             save_snapshot(report, state_dir)
         except OSError as exc:
             report.errors.append(f"Could not save scan snapshot: {exc}")
+
+        # --- Regression notification ---
+        if notify_url:
+            try:
+                if notify(notify_url, config.target, diff_result, notify_min_severity):
+                    print_info("regression notification sent")
+            except Exception as exc:
+                report.errors.append(f"Notification failed: {exc}")
+                print_warning(f"regression notification failed: {exc}")
 
     # --- Render report ---
     output = render(report, config.report_format, brief=brief)

@@ -29,3 +29,7 @@ inquisition = "inquisition:main"
 [tool.mypy]
 python_version = "3.10"
 strict = true
+# Third-party stub availability (e.g. types-requests) varies across environments.
+# Keep the `# type: ignore[import-untyped]` comments valid whether or not stubs
+# are installed, instead of failing when an environment happens to have them.
+warn_unused_ignores = false
