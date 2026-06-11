@@ -48,6 +48,31 @@ class HttpClientTests(unittest.TestCase):
         self.assertIsNot(redirected, not_redirected)
         self.assertEqual(len(session.calls), 2)
 
+    def test_auth_credentials_are_injected_into_requests(self) -> None:
+        config = ScanConfig(
+            target="example.test",
+            auth_header="Authorization: Bearer abc123",
+            auth_cookie="session=xyz",
+        )
+        client = HttpClient(config)
+        session = FakeSession()
+        client.session = cast(Any, session)
+
+        client.get("https://example.test/")
+        headers = session.calls[0][2]["headers"]
+        self.assertEqual(headers["Authorization"], "Bearer abc123")
+        self.assertEqual(headers["Cookie"], "session=xyz")
+
+    def test_no_auth_headers_when_unconfigured(self) -> None:
+        client = HttpClient(ScanConfig(target="example.test"))
+        session = FakeSession()
+        client.session = cast(Any, session)
+
+        client.get("https://example.test/")
+        headers = session.calls[0][2]["headers"]
+        self.assertNotIn("Authorization", headers)
+        self.assertNotIn("Cookie", headers)
+
 
 if __name__ == "__main__":
     unittest.main()

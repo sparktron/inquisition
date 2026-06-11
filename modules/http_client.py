@@ -28,6 +28,17 @@ class HttpResponse(Protocol):
 _USER_AGENT = "Inquisition/0.1 SecurityScanner"
 
 
+def _build_auth_headers(config: ScanConfig) -> dict[str, str]:
+    """Build authentication headers (for authenticated scanning) from config."""
+    headers: dict[str, str] = {}
+    if config.auth_header and ":" in config.auth_header:
+        name, _, value = config.auth_header.partition(":")
+        headers[name.strip()] = value.strip()
+    if config.auth_cookie:
+        headers["Cookie"] = config.auth_cookie.strip()
+    return headers
+
+
 class HttpClient:
     """Small wrapper around one requests.Session plus explicit GET caching."""
 
@@ -36,6 +47,7 @@ class HttpClient:
         self.session = requests.Session()
         self._cache: dict[tuple[str, str, bool, bool, tuple[tuple[str, str], ...]], HttpResponse] = {}
         self._lock = threading.Lock()
+        self._auth_headers = _build_auth_headers(config)
 
     def get(
         self,
@@ -91,6 +103,7 @@ class HttpClient:
         use_cache: bool = False,
     ) -> HttpResponse:
         merged_headers = {"User-Agent": _USER_AGENT}
+        merged_headers.update(self._auth_headers)
         if headers:
             merged_headers.update(headers)
 

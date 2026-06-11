@@ -47,6 +47,42 @@ def prompt_authorization(config: ScanConfig) -> bool:
     return answer in ("y", "yes")
 
 
+_ACTIVE_SCAN_BANNER = """\
+================================================================
+  !!  ACTIVE SCAN MODE  !!
+================================================================
+  Target : {target}
+
+  Active mode sends ACTIVE PAYLOADS to the target via an external
+  engine (Nuclei). This is NO LONGER read-only reconnaissance —
+  it actively probes for vulnerabilities.
+
+  Only proceed against systems you OWN or are EXPLICITLY
+  AUTHORIZED in writing to test. Unauthorized active scanning
+  may be illegal.
+================================================================
+"""
+
+
+def confirm_active_scan(config: ScanConfig, *, assume_yes: bool) -> bool:
+    """Show the active-scan warning and confirm intent to send payloads.
+
+    ``assume_yes`` is True when the operator passed an explicit authorization
+    flag (--yes). The warning is always shown; the prompt is skipped only when
+    authorization was pre-asserted.
+    """
+    print(_ACTIVE_SCAN_BANNER.format(target=config.target))
+    if assume_yes:
+        return True
+    try:
+        answer = input(
+            "Type 'I AM AUTHORIZED' to run active payload-based scanning: "
+        ).strip()
+    except EOFError:
+        return False
+    return answer == "I AM AUTHORIZED"
+
+
 def enforce_dry_run(config: ScanConfig) -> bool:
     """Return True when network calls should be suppressed."""
     return config.dry_run

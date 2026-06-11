@@ -159,6 +159,30 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Confirm that you are authorized to scan the target and skip the interactive prompt",
     )
 
+    active_group = parser.add_argument_group("active testing (sends payloads)")
+    active_group.add_argument(
+        "--active",
+        action="store_true",
+        help=(
+            "Enable ACTIVE scanning (sends payloads via Nuclei). NOT read-only. "
+            "Requires authorization; prompts unless --yes is given."
+        ),
+    )
+    active_group.add_argument(
+        "--auth-header",
+        metavar="HEADER",
+        default="",
+        dest="auth_header",
+        help="Authentication header for authenticated scanning, e.g. 'Authorization: Bearer <token>'",
+    )
+    active_group.add_argument(
+        "--auth-cookie",
+        metavar="COOKIE",
+        default="",
+        dest="auth_cookie",
+        help="Cookie header for authenticated scanning, e.g. 'session=<value>'",
+    )
+
     return parser.parse_args(argv)
 
 
@@ -190,6 +214,9 @@ def main(argv: list[str] | None = None) -> None:
         timeout=args.timeout,
         connect_timeout=args.connect_timeout,
         ports=ports,
+        active=args.active,
+        auth_header=args.auth_header,
+        auth_cookie=args.auth_cookie,
     )
 
     try:

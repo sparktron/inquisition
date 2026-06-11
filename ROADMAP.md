@@ -317,10 +317,16 @@ Goal: the tool's existing output is correct and its claims are true.
       when a new or worsened finding appears vs the previous scan.
 
 ### Phase 4 — Active Testing (optional, authorization-gated)
-- [ ] Integrate Nuclei/ZAP behind an explicit `--active` flag with a separate,
-      louder authorization banner. Keep the default read-only.
-- [ ] Authenticated scanning (session/cookie injection) for the logged-in
-      surface.
+- [x] Integrate Nuclei behind an explicit `--active` flag (`active_scan.py`)
+      with a separate, louder authorization banner (`safety.confirm_active_scan`,
+      requires `--yes` or typing the consent phrase). Default stays read-only;
+      DoS/intrusive/fuzz/brute-force templates are excluded. Skipped in dry-run;
+      missing-binary is handled gracefully.
+- [x] Authenticated scanning (session/cookie injection) — `--auth-header` /
+      `--auth-cookie` are injected into every HTTP request via the shared client
+      (so all read-only modules see the logged-in surface) and passed to Nuclei.
+- [ ] Optional: ZAP engine as an alternative to Nuclei (not implemented —
+      Nuclei chosen for its templated, JSON-output, daemon-free model).
 
 ---
 

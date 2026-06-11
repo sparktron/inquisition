@@ -18,13 +18,20 @@ from diffing import (
     save_snapshot,
     snapshot_from_report,
 )
+from active_scan import run_active_scan
 from models import ReportFormat, ScanReport, Severity
 from notifications import notify
 from modules import ALL_MODULES
 from modules.base import BaseModule
 from modules.http_client import HttpClient
 from report import render
-from safety import abort, enforce_dry_run, prompt_authorization, validate_config
+from safety import (
+    abort,
+    confirm_active_scan,
+    enforce_dry_run,
+    prompt_authorization,
+    validate_config,
+)
 from ui import (
     console,
     make_progress,
@@ -173,6 +180,20 @@ def run_scan(
                 progress.advance(task)
                 report.findings.extend(findings)
                 report.errors.extend(errors)
+
+    # --- Active testing phase (opt-in, sends payloads) ---
+    if config.active and not config.dry_run:
+        if confirm_active_scan(config, assume_yes=skip_auth):
+            print_info("running active scan (nuclei) — this sends payloads")
+            active_findings, active_errors = run_active_scan(config)
+            report.findings.extend(active_findings)
+            report.errors.extend(active_errors)
+            print_info(
+                f"active scan complete: {len(active_findings)} finding(s)"
+                + (f", {len(active_errors)} error(s)" if active_errors else "")
+            )
+        else:
+            print_warning("active scan not authorized — skipping active phase")
 
     # --- Vulnerability correlation (CPE -> CVE) ---
     cpe_values = {f.cpe for f in report.findings if f.cpe}

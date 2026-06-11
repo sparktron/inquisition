@@ -77,6 +77,14 @@ class ScanConfig:
         21, 22, 23, 25, 53, 80, 110, 143, 443, 445,
         993, 995, 3306, 3389, 5432, 5900, 6379, 8080, 8443, 9200,
     )
+    # Active testing (Phase 4) — OFF by default. When True, Inquisition may send
+    # active payloads (via an external engine such as Nuclei). This crosses the
+    # read-only boundary and requires explicit authorization.
+    active: bool = False
+    # Authenticated scanning — credentials injected into every HTTP request so
+    # modules and the active engine see the logged-in surface.
+    auth_header: str = ""   # e.g. "Authorization: Bearer <token>"
+    auth_cookie: str = ""   # e.g. "session=<value>; other=<value>"
 
 
 # ---------------------------------------------------------------------------
