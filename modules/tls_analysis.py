@@ -15,7 +15,7 @@ from typing import Any, cast
 
 from models import Finding, FindingCategory, Severity
 from modules.base import BaseModule
-from tls_chain import analyze_scts, check_ocsp, fetch_verified_chain
+from tls_chain import analyze_scts, check_ocsp, fetch_verified_chain, probe_dh_parameters
 
 
 def _get_cert_info(host: str, port: int, timeout: float) -> dict[str, Any] | None:
@@ -315,7 +315,53 @@ class TlsAnalysisModule(BaseModule):
         # --- Chain validation, Certificate Transparency, OCSP revocation ---
         self._check_chain_ct_ocsp(target, cert_der, findings)
 
+        # --- Diffie-Hellman key-exchange parameter strength ---
+        self._check_dh_parameters(target, findings)
+
         return findings
+
+    def _check_dh_parameters(self, target: str, findings: list[Finding]) -> None:
+        """Flag weak finite-field DH groups (Logjam-class) via a forced DHE handshake."""
+        self._rate_limit()
+        dh = probe_dh_parameters(target, 443, self.config.timeout)
+        if not dh.tested or dh.kex_type.upper() != "DH" or dh.bits <= 0:
+            # Untestable, or server uses ECDHE/TLS 1.3 — no finite-field DH weakness.
+            return
+
+        if dh.bits < 1024:
+            findings.append(Finding(
+                title=f"Export-grade DH parameters: {dh.bits}-bit",
+                category=FindingCategory.TLS,
+                severity=Severity.HIGH,
+                evidence=f"Server completed a TLS 1.2 DHE handshake with a {dh.bits}-bit DH group",
+                impact="Sub-1024-bit DH is trivially broken (Logjam); ephemeral keys offer no real protection",
+                remediation="Disable export/weak DHE cipher suites; use 2048-bit+ DH groups or prefer ECDHE",
+            ))
+        elif dh.bits == 1024:
+            findings.append(Finding(
+                title="Weak 1024-bit DH parameters",
+                category=FindingCategory.TLS,
+                severity=Severity.MEDIUM,
+                evidence="Server completed a TLS 1.2 DHE handshake with a 1024-bit DH group",
+                impact="1024-bit DH is within reach of well-resourced attackers (Logjam precomputation)",
+                remediation="Use a 2048-bit+ DH group (or custom dhparam) or prefer ECDHE cipher suites",
+            ))
+        elif dh.bits < 2048:
+            findings.append(Finding(
+                title=f"Undersized DH parameters: {dh.bits}-bit",
+                category=FindingCategory.TLS,
+                severity=Severity.LOW,
+                evidence=f"Server completed a TLS 1.2 DHE handshake with a {dh.bits}-bit DH group",
+                impact="DH groups below 2048 bits fall short of current strength recommendations",
+                remediation="Use a 2048-bit+ DH group or prefer ECDHE cipher suites",
+            ))
+        else:
+            findings.append(Finding(
+                title=f"DH parameters: {dh.bits}-bit",
+                category=FindingCategory.TLS,
+                severity=Severity.INFO,
+                evidence=f"Server offers finite-field DHE with a {dh.bits}-bit group",
+            ))
 
     def _check_chain_ct_ocsp(
         self, target: str, leaf_der: bytes | None, findings: list[Finding]

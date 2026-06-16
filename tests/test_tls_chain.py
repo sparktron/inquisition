@@ -16,7 +16,13 @@ import tls_chain
 from models import Finding, ScanConfig
 from modules import tls_analysis
 from modules.tls_analysis import TlsAnalysisModule
-from tls_chain import ChainResult, OcspResult, SctResult
+from tls_chain import ChainResult, DhResult, OcspResult, SctResult
+
+
+class _FakeProc:
+    def __init__(self, stdout: str = "", stderr: str = "") -> None:
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 def _key() -> rsa.RSAPrivateKey:
@@ -136,6 +142,52 @@ class OcspTests(unittest.TestCase):
         self.assertEqual(result.status, "error")
 
 
+class DhParseTests(unittest.TestCase):
+    def test_parses_finite_field_dh(self) -> None:
+        self.assertEqual(
+            tls_chain.parse_server_temp_key("Server Temp Key: DH, 1024 bits\n"),
+            ("DH", 1024),
+        )
+
+    def test_parses_ecdh(self) -> None:
+        self.assertEqual(
+            tls_chain.parse_server_temp_key("Server Temp Key: ECDH, P-256, 256 bits"),
+            ("ECDH", 256),
+        )
+
+    def test_parses_x25519(self) -> None:
+        self.assertEqual(
+            tls_chain.parse_server_temp_key("    Server Temp Key: X25519, 253 bits"),
+            ("X25519", 253),
+        )
+
+    def test_no_match_returns_none(self) -> None:
+        self.assertIsNone(tls_chain.parse_server_temp_key("handshake failure"))
+
+    def test_probe_reports_dh_bits_via_runner(self) -> None:
+        def fake_runner(cmd: list[str], **_: object) -> _FakeProc:
+            return _FakeProc(stdout="...\nServer Temp Key: DH, 1024 bits\n...")
+
+        result = tls_chain.probe_dh_parameters("example.test", 443, 5.0, runner=fake_runner)
+        self.assertTrue(result.tested)
+        self.assertEqual(result.kex_type, "DH")
+        self.assertEqual(result.bits, 1024)
+
+    def test_probe_with_no_dhe_handshake_is_clean(self) -> None:
+        def fake_runner(cmd: list[str], **_: object) -> _FakeProc:
+            return _FakeProc(stderr="no peer certificate available")
+
+        result = tls_chain.probe_dh_parameters("example.test", 443, 5.0, runner=fake_runner)
+        self.assertTrue(result.tested)
+        self.assertEqual(result.kex_type, "")
+        self.assertEqual(result.bits, 0)
+
+    def test_probe_untestable_when_openssl_missing(self) -> None:
+        with patch("tls_chain.shutil.which", return_value=None):
+            result = tls_chain.probe_dh_parameters("example.test", 443, 5.0)
+        self.assertFalse(result.tested)
+
+
 class ModuleFindingTests(unittest.TestCase):
     def _module(self) -> TlsAnalysisModule:
         return TlsAnalysisModule(ScanConfig(target="example.test", rate_limit=0))
@@ -172,6 +224,36 @@ class ModuleFindingTests(unittest.TestCase):
         with patch.object(tls_analysis, "fetch_verified_chain", return_value=chain):
             self._module()._check_chain_ct_ocsp("example.test", b"leaf", findings)
         self.assertEqual(findings, [])
+
+    def _dh_finding(self, dh: DhResult) -> list[Finding]:
+        findings: list[Finding] = []
+        with patch.object(tls_analysis, "probe_dh_parameters", return_value=dh):
+            self._module()._check_dh_parameters("example.test", findings)
+        return findings
+
+    def test_dh_512_bit_is_high(self) -> None:
+        findings = self._dh_finding(DhResult(tested=True, kex_type="DH", bits=512))
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].severity.name, "HIGH")
+        self.assertIn("Export-grade", findings[0].title)
+
+    def test_dh_1024_bit_is_medium(self) -> None:
+        findings = self._dh_finding(DhResult(tested=True, kex_type="DH", bits=1024))
+        self.assertEqual(findings[0].severity.name, "MEDIUM")
+
+    def test_dh_1536_bit_is_low(self) -> None:
+        findings = self._dh_finding(DhResult(tested=True, kex_type="DH", bits=1536))
+        self.assertEqual(findings[0].severity.name, "LOW")
+
+    def test_dh_2048_bit_is_info(self) -> None:
+        findings = self._dh_finding(DhResult(tested=True, kex_type="DH", bits=2048))
+        self.assertEqual(findings[0].severity.name, "INFO")
+
+    def test_ecdh_emits_nothing(self) -> None:
+        self.assertEqual(self._dh_finding(DhResult(tested=True, kex_type="ECDH", bits=256)), [])
+
+    def test_untested_dh_emits_nothing(self) -> None:
+        self.assertEqual(self._dh_finding(DhResult(tested=False)), [])
 
 
 if __name__ == "__main__":
