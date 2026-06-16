@@ -86,6 +86,9 @@ class ScanConfig:
     # modules and the active engine see the logged-in surface.
     auth_header: str = ""   # e.g. "Authorization: Bearer <token>"
     auth_cookie: str = ""   # e.g. "session=<value>; other=<value>"
+    # Internal scanner handoff: populated after the crawler pre-discovery pass
+    # so path-aware modules can inspect real site URLs, not only fixed lists.
+    discovered_urls: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------

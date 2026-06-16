@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime, timezone
 
 from models import Finding, FindingCategory, ReportFormat, ScanReport, Severity
-from scanner import _deduplicate, _default_report_path
+from scanner import _deduplicate, _default_report_path, _extract_discovered_urls
 
 
 class ScannerTests(unittest.TestCase):
@@ -62,6 +62,19 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(len(deduped), 2)
         self.assertIn("https://", deduped[0].evidence)
         self.assertIn("http://", deduped[1].evidence)
+
+    def test_extract_discovered_urls_uses_crawler_metadata(self) -> None:
+        urls = _extract_discovered_urls([
+            Finding(
+                title="Site URL surface discovered",
+                category=FindingCategory.APPLICATION,
+                severity=Severity.INFO,
+                evidence="sample",
+                metadata={"discovered_urls": ["https://example.com/b", "https://example.com/a", 123]},
+            )
+        ])
+
+        self.assertEqual(urls, ("https://example.com/a", "https://example.com/b"))
 
 
 if __name__ == "__main__":

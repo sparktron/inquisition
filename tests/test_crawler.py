@@ -57,6 +57,8 @@ class CrawlerTests(unittest.TestCase):
         evidence_blob = " ".join(f.evidence for f in findings)
 
         self.assertIn("Site URL surface discovered", titles)
+        summary = next(f for f in findings if f.title == "Site URL surface discovered")
+        self.assertIn("https://example.com/about", summary.metadata["discovered_urls"])
         # External host is excluded from the internal surface.
         self.assertNotIn("external.test", evidence_blob)
         # Sensitive paths from each source are flagged.

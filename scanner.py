@@ -6,6 +6,7 @@ import logging
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -23,6 +24,7 @@ from models import ReportFormat, ScanReport, Severity
 from notifications import notify
 from modules import ALL_MODULES
 from modules.base import BaseModule
+from modules.crawler import CrawlerModule
 from modules.http_client import HttpClient
 from report import render
 from safety import (
@@ -101,6 +103,15 @@ def _run_module(module: BaseModule) -> tuple[str, list[Finding], list[str]]:
     return module.name, findings, errors
 
 
+def _extract_discovered_urls(findings: list[Finding]) -> tuple[str, ...]:
+    for finding in findings:
+        raw_urls = finding.metadata.get("discovered_urls")
+        if isinstance(raw_urls, list):
+            urls = [url for url in raw_urls if isinstance(url, str)]
+            return tuple(sorted(set(urls)))
+    return ()
+
+
 def _print_diff(diff: DiffResult) -> None:
     """Print a one-line-per-category delta vs the previous scan of this target."""
     if diff.is_baseline:
@@ -165,9 +176,23 @@ def run_scan(
         config=config,
     )
 
-    # --- Run fingerprinting modules ---
+    # --- Pre-discover URL surface, then feed it into path-aware modules ---
     http_client = HttpClient(config)
-    modules = [cls(config, http_client=http_client) for cls in ALL_MODULES]
+    crawler = CrawlerModule(config, http_client=http_client)
+    mod_name, crawler_findings, crawler_errors = _run_module(crawler)
+    print_module_result(mod_name, len(crawler_findings), len(crawler_errors))
+    report.findings.extend(crawler_findings)
+    report.errors.extend(crawler_errors)
+
+    discovered_urls = _extract_discovered_urls(crawler_findings)
+    if discovered_urls:
+        print_info(f"feeding {len(discovered_urls)} discovered URL(s) into path-aware modules")
+        config = replace(config, discovered_urls=discovered_urls)
+        report.config = config
+
+    # --- Run fingerprinting modules ---
+    module_classes = [cls for cls in ALL_MODULES if cls is not CrawlerModule]
+    modules = [cls(config, http_client=http_client) for cls in module_classes]
 
     progress = make_progress()
     with progress:

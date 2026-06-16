@@ -119,6 +119,7 @@ class CrawlerModule(BaseModule):
                 f"Sample: {', '.join(sample)}"
                 + (" …" if len(internal) > len(sample) else "")
             ),
+            metadata={"discovered_urls": sorted(internal)},
         ))
 
         # --- Flag sensitive-looking discovered paths ---
