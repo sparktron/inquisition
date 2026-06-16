@@ -11,10 +11,11 @@ dependencies = [
     "requests>=2.31",
     "dnspython>=2.4",
     "rich>=13.0",
+    "cryptography>=42.0",
 ]
 
 [tool.setuptools]
-py-modules = ["inquisition", "scanner", "report", "models", "safety", "analysis_kb", "vuln_correlation", "ui"]
+py-modules = ["inquisition", "scanner", "report", "models", "safety", "analysis_kb", "vuln_correlation", "ui", "diffing", "notifications", "active_scan", "tls_chain"]
 
 [tool.setuptools.packages.find]
 include = ["modules*"]

@@ -15,6 +15,7 @@ from typing import Any, cast
 
 from models import Finding, FindingCategory, Severity
 from modules.base import BaseModule
+from tls_chain import analyze_scts, check_ocsp, fetch_verified_chain
 
 
 def _get_cert_info(host: str, port: int, timeout: float) -> dict[str, Any] | None:
@@ -311,7 +312,96 @@ class TlsAnalysisModule(BaseModule):
         self._enumerate_protocols(target, findings)
         self._probe_weak_ciphers(target, findings)
 
+        # --- Chain validation, Certificate Transparency, OCSP revocation ---
+        self._check_chain_ct_ocsp(target, cert_der, findings)
+
         return findings
+
+    def _check_chain_ct_ocsp(
+        self, target: str, leaf_der: bytes | None, findings: list[Finding]
+    ) -> None:
+        """Validate the full chain against trusted CAs, then check CT and OCSP.
+
+        Uses a separate, trust-store-verified handshake (the primary handshake
+        deliberately disables verification so it can inspect broken certs). The
+        verified chain also supplies the issuer certificate needed for OCSP.
+        """
+        self._rate_limit()
+        chain = fetch_verified_chain(target, 443, self.config.timeout)
+
+        if chain.untested:
+            # Could not perform the verified handshake at all (network error).
+            # The primary handshake already reported connectivity; stay quiet.
+            return
+
+        if chain.verified:
+            findings.append(Finding(
+                title="Certificate chain trusted",
+                category=FindingCategory.TLS,
+                severity=Severity.INFO,
+                evidence=f"Chain of {chain.chain_length} certificate(s) validates against the system trust store",
+            ))
+        else:
+            findings.append(Finding(
+                title="Certificate chain not trusted",
+                category=FindingCategory.TLS,
+                severity=Severity.MEDIUM,
+                evidence=f"Verified handshake failed: {chain.error}",
+                impact="Browsers will warn or block; often an incomplete intermediate chain, expired, or untrusted CA",
+                remediation="Serve the full intermediate chain and use a certificate from a publicly trusted CA",
+            ))
+
+        # Prefer the verified leaf; fall back to the primary handshake's leaf.
+        verified_leaf = chain.chain_der[0] if chain.chain_der else None
+        sct_target = verified_leaf or leaf_der
+        if sct_target is not None:
+            sct = analyze_scts(sct_target)
+            if sct.present:
+                findings.append(Finding(
+                    title="Certificate Transparency SCTs present",
+                    category=FindingCategory.TLS,
+                    severity=Severity.INFO,
+                    evidence=f"Certificate embeds {sct.count} signed certificate timestamp(s)",
+                ))
+            elif not sct.error:
+                findings.append(Finding(
+                    title="No embedded Certificate Transparency SCTs",
+                    category=FindingCategory.TLS,
+                    severity=Severity.LOW,
+                    evidence="Certificate carries no embedded SCT extension",
+                    impact="CT helps detect mis-issued certificates; absence weakens that signal. "
+                           "Note: SCTs may still be delivered via OCSP stapling or a TLS extension, so this is not conclusive",
+                    remediation="Use a CA that embeds SCTs, or confirm SCTs are delivered via stapling/TLS extension",
+                ))
+
+        # OCSP needs both the leaf and its issuer from the verified chain.
+        if len(chain.chain_der) >= 2:
+            ocsp = check_ocsp(chain.chain_der[0], chain.chain_der[1], self.config.timeout)
+            if ocsp.status == "revoked":
+                findings.append(Finding(
+                    title="Certificate REVOKED (OCSP)",
+                    category=FindingCategory.TLS,
+                    severity=Severity.CRITICAL,
+                    evidence=ocsp.detail,
+                    impact="A revoked certificate must not be trusted; the endpoint may be compromised or misissued",
+                    remediation="Replace the certificate immediately and investigate why it was revoked",
+                ))
+            elif ocsp.status == "good":
+                findings.append(Finding(
+                    title="OCSP: certificate not revoked",
+                    category=FindingCategory.TLS,
+                    severity=Severity.INFO,
+                    evidence=ocsp.detail,
+                ))
+            elif ocsp.status == "no_responder":
+                findings.append(Finding(
+                    title="No OCSP responder advertised",
+                    category=FindingCategory.TLS,
+                    severity=Severity.LOW,
+                    evidence=ocsp.detail,
+                    impact="Clients cannot check revocation via OCSP; OCSP stapling cannot be relied upon",
+                    remediation="Use a certificate whose AIA advertises an OCSP responder and enable OCSP stapling",
+                ))
 
     def _enumerate_protocols(self, target: str, findings: list[Finding]) -> None:
         """Actively probe which TLS protocol versions the server accepts."""
