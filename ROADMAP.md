@@ -232,13 +232,13 @@ is captured)
   full chain validation.
 
 **Site coverage**
-- **Crawling/spidering** — detection currently uses fixed path lists only; real
-  coverage needs link discovery from the homepage + sitemap.
-- **Authenticated scanning** — no login-aware crawling, so the authenticated
-  surface (where most risk lives) is invisible.
-- Mixed-content and Subresource-Integrity checks on discovered assets.
-  **Status:** Homepage-level checks implemented 2026-06-10; crawler phase will
-  expand this across discovered pages.
+- [x] **Crawling/spidering** — crawler discovers internal URLs from homepage
+  links, robots.txt, and sitemap.xml, then feeds discovered URLs into path-aware
+  modules.
+- [x] **Authenticated scanning** — optional auth headers/cookies are injected
+  through the shared HTTP client, so read-only modules and active engines can
+  inspect the logged-in surface when authorized.
+- [x] Mixed-content and Subresource-Integrity checks on discovered assets.
 
 **Active testing tier** (optional, breaks read-only positioning — gate behind a
 flag)
@@ -291,8 +291,8 @@ Goal: the tool's existing output is correct and its claims are true.
 ### Phase 2 — Depth of Analysis ("most secure" core)
 - [x] **Header and control quality grading** — CSP/HSTS/header-value/cookie-prefix
       grading, SPF/DMARC policy strength, and DKIM presence are implemented.
-      Mixed-content and SRI checks run against homepage assets; crawler phase
-      will broaden coverage across discovered pages.
+      Mixed-content and SRI checks run against homepage assets and
+      crawler-discovered pages.
 - [x] **TLS depth** — active protocol-version enumeration (flags TLS 1.0/1.1,
       reports TLS 1.2/1.3 gaps) and weak-cipher-family acceptance probing.
       Deferred: OCSP stapling, CT-log, and full chain validation (need a
@@ -300,8 +300,10 @@ Goal: the tool's existing output is correct and its claims are true.
 - [x] **Crawler** — `modules/crawler.py` discovers the internal URL surface from
       homepage links, robots.txt, and sitemap.xml (with a bounded deep-crawl one
       level further), same-origin only, and flags sensitive discovered endpoints.
-      Follow-up: feed discovered paths into the other path-based modules via a
-      sequential pre-discovery pass (needs an orchestrator change in `scanner`).
+- [x] **Crawler-fed module coverage** — `scanner.py` now runs crawler as a
+      sequential pre-discovery pass and feeds discovered URLs into application
+      asset checks, content discovery confirmations, and technology-stack
+      signature checks.
 
 ### Phase 3 — Continuous Assurance (the real product)
 - [x] **Scan diffing** — `diffing.py` persists a normalized snapshot per target
@@ -333,6 +335,6 @@ Goal: the tool's existing output is correct and its claims are true.
 ---
 
 ### Suggested immediate next step
-Finish the remaining trust work by expanding fixture-backed tests and auditing
-README claims that still overstate depth (especially cipher-suite enumeration
-and WAF/product counts), then move to the shared HTTP layer.
+Choose whether to keep the core stdlib-only or add a TLS parsing dependency
+(`cryptography`/pyOpenSSL). Adding that dependency unlocks the remaining TLS
+depth work: OCSP stapling, CT-log evidence, and full chain validation.

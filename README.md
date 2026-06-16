@@ -15,7 +15,8 @@ Inquisition probes your target across DNS, network, TLS, HTTP, application layer
 - **Port scanning** — TCP connect-scan with banner grabbing; enhanced service detection for Telnet, SMB, VNC, Redis, Elasticsearch, MongoDB, MySQL, PostgreSQL, RDP
 - **TLS/SSL analysis** — negotiated protocol/cipher, certificate validity/expiration, self-signed detection, hostname mismatch
 - **WAF/CDN detection** — Signature-based detection for common protective layers including Cloudflare, AWS CloudFront, Akamai, Fastly, Imperva, and Sucuri
-- **Technology stack detection** — WordPress, Joomla, Drupal, Laravel, Django, PHP, nginx, Apache, IIS, Node.js, and more via body/header signatures and path probing
+- **Crawler-fed analysis** — Homepage, robots.txt, and sitemap.xml URL discovery feeds application, content, and technology checks
+- **Technology stack detection** — WordPress, Joomla, Drupal, Laravel, Django, PHP, nginx, Apache, IIS, Node.js, and more via body/header signatures, path probing, and discovered pages
 
 ### Security Headers & Application Layer
 - **HTTP header audit** — HSTS policy and preload status, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, **SameSite cookie validation**, information disclosure headers
@@ -369,7 +370,8 @@ The HTML report is a self-contained single file (no external dependencies). Each
 
 ## Modules Reference
 
-Inquisition runs 8 specialised modules concurrently, each with a specific focus:
+Inquisition runs 9 specialised modules, beginning with crawler pre-discovery
+before the remaining modules run concurrently:
 
 ### 1. DNS Reconnaissance (`dns_recon`)
 **What it does:** Resolves DNS records, enumerates subdomains, checks email security.
@@ -455,6 +457,7 @@ Inquisition runs 8 specialised modules concurrently, each with a specific focus:
 - Body signature matching (regex patterns in HTML)
 - Header signature matching (Server, X-Powered-By, X-Generator)
 - Path probing for known endpoints (wp-login.php, /administrator/, /phpmyadmin/, etc.)
+- Crawler-discovered page signature checks
 
 **Detected technologies:**
 - CMS: WordPress, Joomla, Drupal, Shopify
@@ -476,7 +479,7 @@ Inquisition runs 8 specialised modules concurrently, each with a specific focus:
 - CORS wildcard (`Access-Control-Allow-Origin: *`)
 - X-XSS-Protection disabled
 - CORS preflight testing
-- Mixed-content references on the HTTPS homepage
+- Mixed-content references on the HTTPS homepage and crawler-discovered pages
 - Missing Subresource Integrity on third-party script/stylesheet assets
 - **GraphQL introspection query** — tests if schema is enumerable
 - **HTTP method inspection** — checks the `OPTIONS` `Allow` header for dangerous advertised methods such as TRACE, PUT, DELETE, and PATCH
@@ -520,6 +523,7 @@ Inquisition runs 8 specialised modules concurrently, each with a specific focus:
 *Standard/Deep only:*
 - **Admin panels (30 checked):** Kibana, Grafana, Jenkins, Prometheus, Spring Boot Actuator, Jupyter, Portainer, RabbitMQ, Consul, Vault, pgAdmin, Adminer, MLflow, Celery Flower, Airflow, etc.
 - **Backup files (24 checked):** `.env.bak`, `.env.prod`, `.sql`, `docker-compose.yml`, `backup.zip`, `.htpasswd`, `Dockerfile`, `.npmrc`, `web.config.bak`, etc.
+- Crawler-discovered sensitive files and admin routes are fetched and confirmed when possible
 
 **Severity:** CRITICAL for exposed `.env` and backups; HIGH for admin panels; MEDIUM for docker-compose.yml, Dockerfile; LOW for .DS_Store
 
