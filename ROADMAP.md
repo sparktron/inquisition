@@ -227,9 +227,11 @@ but stop short of "absolute most secure." Gaps, grouped:
 is captured)
 - [x] Certificate parsing that works when the certificate is untrusted, expired, or
   hostname-mismatched.
-- Full protocol + cipher-suite enumeration (per-protocol).
-- TLS 1.3 confirmation, weak DH params, OCSP stapling, CT-log presence,
-  full chain validation.
+- [x] Full protocol enumeration (per-protocol) and weak-cipher-family probing;
+  TLS 1.3 confirmation.
+- [x] Full chain validation, Certificate Transparency (embedded SCT) presence,
+  and OCSP revocation lookup (`tls_chain.py`, cryptography-backed).
+- Remaining: weak DH-parameter detection.
 
 **Site coverage**
 - [x] **Crawling/spidering** — crawler discovers internal URLs from homepage
@@ -295,8 +297,9 @@ Goal: the tool's existing output is correct and its claims are true.
       crawler-discovered pages.
 - [x] **TLS depth** — active protocol-version enumeration (flags TLS 1.0/1.1,
       reports TLS 1.2/1.3 gaps) and weak-cipher-family acceptance probing.
-      Deferred: OCSP stapling, CT-log, and full chain validation (need a
-      `cryptography`/pyOpenSSL dependency — out of scope for the stdlib-only core).
+      Full chain validation, Certificate Transparency (embedded SCT) presence,
+      and OCSP revocation lookup are implemented in `tls_chain.py` (backed by the
+      `cryptography` dependency). Remaining: weak DH-parameter detection.
 - [x] **Crawler** — `modules/crawler.py` discovers the internal URL surface from
       homepage links, robots.txt, and sitemap.xml (with a bounded deep-crawl one
       level further), same-origin only, and flags sensitive discovered endpoints.
@@ -335,6 +338,8 @@ Goal: the tool's existing output is correct and its claims are true.
 ---
 
 ### Suggested immediate next step
-Choose whether to keep the core stdlib-only or add a TLS parsing dependency
-(`cryptography`/pyOpenSSL). Adding that dependency unlocks the remaining TLS
-depth work: OCSP stapling, CT-log evidence, and full chain validation.
+The `cryptography` dependency is now in; chain validation, CT/SCT presence, and
+OCSP revocation lookup ship in `tls_chain.py`. Remaining TLS depth is weak
+DH-parameter detection. Beyond that, the highest-value next step is reducing
+false negatives in detection (quality-graded confidence on signatures) and
+expanding scheduled-scan/notification ergonomics.

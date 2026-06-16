@@ -13,7 +13,7 @@ Inquisition probes your target across DNS, network, TLS, HTTP, application layer
 ### Reconnaissance & Fingerprinting
 - **DNS reconnaissance** — A/AAAA resolution, reverse DNS, subdomain enumeration, MX/NS/TXT records, SPF/DMARC presence and policy-strength checks, **DNS zone transfer (AXFR) detection**
 - **Port scanning** — TCP connect-scan with banner grabbing; enhanced service detection for Telnet, SMB, VNC, Redis, Elasticsearch, MongoDB, MySQL, PostgreSQL, RDP
-- **TLS/SSL analysis** — negotiated protocol/cipher, certificate validity/expiration, self-signed detection, hostname mismatch
+- **TLS/SSL analysis** — negotiated protocol/cipher, active protocol-version and weak-cipher-family enumeration, certificate validity/expiration, self-signed detection, hostname mismatch, full chain validation, Certificate Transparency (embedded SCT) presence, and OCSP revocation lookup
 - **WAF/CDN detection** — Signature-based detection for common protective layers including Cloudflare, AWS CloudFront, Akamai, Fastly, Imperva, and Sucuri
 - **Crawler-fed analysis** — Homepage, robots.txt, and sitemap.xml URL discovery feeds application, content, and technology checks
 - **Technology stack detection** — WordPress, Joomla, Drupal, Laravel, Django, PHP, nginx, Apache, IIS, Node.js, and more via body/header signatures, path probing, and discovered pages
@@ -535,9 +535,13 @@ The misconfiguration engine derives higher-level findings from raw module output
 
 ### TLS/Certificate
 - ✗ Expired TLS certificate (CRITICAL)
+- ✗ Certificate revoked per OCSP (CRITICAL)
 - ✗ Self-signed certificate (MEDIUM)
+- ✗ Certificate chain not trusted — incomplete/untrusted chain (MEDIUM)
 - ✗ Legacy TLS enabled — TLS 1.0/1.1 (HIGH)
 - ✗ Weak cipher suites (HIGH)
+- ✗ No embedded Certificate Transparency SCTs (LOW)
+- ✗ No OCSP responder advertised (LOW)
 - ✗ Certificate date unparseable (MEDIUM)
 
 ### HTTP & Network
