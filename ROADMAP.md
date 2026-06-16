@@ -231,7 +231,8 @@ is captured)
   TLS 1.3 confirmation.
 - [x] Full chain validation, Certificate Transparency (embedded SCT) presence,
   and OCSP revocation lookup (`tls_chain.py`, cryptography-backed).
-- Remaining: weak DH-parameter detection.
+- [x] Weak DH-parameter detection (Logjam-class) — forced TLS 1.2 DHE handshake
+  via `openssl s_client`, grading the negotiated finite-field DH group size.
 
 **Site coverage**
 - [x] **Crawling/spidering** — crawler discovers internal URLs from homepage
@@ -298,8 +299,9 @@ Goal: the tool's existing output is correct and its claims are true.
 - [x] **TLS depth** — active protocol-version enumeration (flags TLS 1.0/1.1,
       reports TLS 1.2/1.3 gaps) and weak-cipher-family acceptance probing.
       Full chain validation, Certificate Transparency (embedded SCT) presence,
-      and OCSP revocation lookup are implemented in `tls_chain.py` (backed by the
-      `cryptography` dependency). Remaining: weak DH-parameter detection.
+      OCSP revocation lookup, and weak DH-parameter detection (Logjam-class) are
+      implemented in `tls_chain.py` (backed by the `cryptography` dependency and
+      an `openssl s_client` probe for the DH group size).
 - [x] **Crawler** — `modules/crawler.py` discovers the internal URL surface from
       homepage links, robots.txt, and sitemap.xml (with a bounded deep-crawl one
       level further), same-origin only, and flags sensitive discovered endpoints.
@@ -338,8 +340,7 @@ Goal: the tool's existing output is correct and its claims are true.
 ---
 
 ### Suggested immediate next step
-The `cryptography` dependency is now in; chain validation, CT/SCT presence, and
-OCSP revocation lookup ship in `tls_chain.py`. Remaining TLS depth is weak
-DH-parameter detection. Beyond that, the highest-value next step is reducing
-false negatives in detection (quality-graded confidence on signatures) and
-expanding scheduled-scan/notification ergonomics.
+TLS depth is now complete (chain validation, CT/SCT presence, OCSP revocation,
+and weak-DH detection all ship in `tls_chain.py`). The highest-value next step
+is reducing false negatives in detection (quality-graded confidence on
+signatures) and expanding scheduled-scan/notification ergonomics.

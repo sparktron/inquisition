@@ -13,7 +13,7 @@ Inquisition probes your target across DNS, network, TLS, HTTP, application layer
 ### Reconnaissance & Fingerprinting
 - **DNS reconnaissance** — A/AAAA resolution, reverse DNS, subdomain enumeration, MX/NS/TXT records, SPF/DMARC presence and policy-strength checks, **DNS zone transfer (AXFR) detection**
 - **Port scanning** — TCP connect-scan with banner grabbing; enhanced service detection for Telnet, SMB, VNC, Redis, Elasticsearch, MongoDB, MySQL, PostgreSQL, RDP
-- **TLS/SSL analysis** — negotiated protocol/cipher, active protocol-version and weak-cipher-family enumeration, certificate validity/expiration, self-signed detection, hostname mismatch, full chain validation, Certificate Transparency (embedded SCT) presence, and OCSP revocation lookup
+- **TLS/SSL analysis** — negotiated protocol/cipher, active protocol-version and weak-cipher-family enumeration, weak Diffie-Hellman (Logjam) parameter detection, certificate validity/expiration, self-signed detection, hostname mismatch, full chain validation, Certificate Transparency (embedded SCT) presence, and OCSP revocation lookup
 - **WAF/CDN detection** — Signature-based detection for common protective layers including Cloudflare, AWS CloudFront, Akamai, Fastly, Imperva, and Sucuri
 - **Crawler-fed analysis** — Homepage, robots.txt, and sitemap.xml URL discovery feeds application, content, and technology checks
 - **Technology stack detection** — WordPress, Joomla, Drupal, Laravel, Django, PHP, nginx, Apache, IIS, Node.js, and more via body/header signatures, path probing, and discovered pages
@@ -418,14 +418,25 @@ before the remaining modules run concurrently:
 
 **Checks:**
 - Protocol version detection (flags SSLv2, SSLv3, TLSv1.0, TLSv1.1)
+- Active protocol-version enumeration and weak-cipher-family probing
 - Negotiated cipher analysis (flags RC4, DES, NULL, EXPORT, anonymous ciphers if negotiated)
+- Weak Diffie-Hellman parameter detection (Logjam-class) — forces a TLS 1.2 DHE
+  handshake and grades the finite-field DH group size
 - Certificate fingerprint (SHA-256)
 - Self-signed certificate detection
 - Certificate expiry and validity period
 - Hostname mismatch in Subject Alternative Names (SAN)
 - Certificate parsing for subject, issuer, expiry, and SAN fields
+- Full chain validation against the system trust store
+- Certificate Transparency (embedded SCT) presence
+- OCSP revocation lookup
 
-**Severity:** CRITICAL for expired certs; HIGH for legacy protocols/weak ciphers
+**Severity:** CRITICAL for expired/revoked certs; HIGH for legacy protocols/weak ciphers/export-grade DH
+
+> **Note:** Chain validation, CT/SCT, and OCSP use the `cryptography` package
+> (installed automatically). Weak-DH detection additionally shells out to the
+> `openssl` CLI when present; if `openssl` is not on `PATH` that single check is
+> skipped silently and the rest of the TLS analysis runs unaffected.
 
 ---
 
@@ -540,6 +551,8 @@ The misconfiguration engine derives higher-level findings from raw module output
 - ✗ Certificate chain not trusted — incomplete/untrusted chain (MEDIUM)
 - ✗ Legacy TLS enabled — TLS 1.0/1.1 (HIGH)
 - ✗ Weak cipher suites (HIGH)
+- ✗ Export-grade DH parameters — <1024-bit, Logjam (HIGH)
+- ✗ Weak 1024-bit DH parameters (MEDIUM)
 - ✗ No embedded Certificate Transparency SCTs (LOW)
 - ✗ No OCSP responder advertised (LOW)
 - ✗ Certificate date unparseable (MEDIUM)
