@@ -8,10 +8,12 @@ from unittest.mock import patch
 
 from models import ScanConfig, ScanDepth, Severity
 from modules.app_checks import AppChecksModule
+from modules.content_discovery import ContentDiscoveryModule
 from modules.dns_recon import DnsReconModule
 from modules.http_headers import HttpHeaderModule
 from modules.http_client import HttpRequestException
 from modules.port_scan import PortScanModule
+from modules.tech_stack import TechStackModule
 from modules.waf_detection import WafDetectionModule
 
 
@@ -308,6 +310,88 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
         self.assertIn("https://cdn.example.net/app.js", sri_finding.evidence)
         self.assertIn("https://cdn.example.net/app.css", sri_finding.evidence)
         self.assertNotIn("favicon.ico", sri_finding.evidence)
+
+    def test_app_checks_fixture_reports_asset_issues_on_discovered_pages(self) -> None:
+        pages = {
+            "https://example.test/": RecordedResponse(status_code=200, text="<html></html>", url="https://example.test/"),
+            "https://example.test/app": RecordedResponse(
+                status_code=200,
+                headers={"Content-Type": "text/html"},
+                text='<script src="https://cdn.example.net/app.js"></script><img src="http://example.test/i.png">',
+                url="https://example.test/app",
+            ),
+        }
+
+        def fake_get(url: str, **_: object) -> RecordedResponse:
+            return pages[url]
+
+        findings = AppChecksModule(
+            ScanConfig(
+                target="example.test",
+                depth=ScanDepth.QUICK,
+                rate_limit=0,
+                discovered_urls=("https://example.test/app",),
+            ),
+            http_client=cast(Any, RecordedHttpClient(get=fake_get)),
+        ).run()
+
+        titles = {finding.title for finding in findings}
+        self.assertIn("Mixed content references found: /app", titles)
+        self.assertIn("Subresource Integrity missing on third-party assets: /app", titles)
+
+    def test_content_discovery_fixture_confirms_discovered_sensitive_file(self) -> None:
+        responses = {
+            "https://example.test/": RecordedResponse(status_code=200, text="<html></html>"),
+            "https://example.test/.well-known/security.txt": RecordedResponse(status_code=404),
+            "https://example.test/security.txt": RecordedResponse(status_code=404),
+            "https://example.test/robots.txt": RecordedResponse(status_code=404),
+            "https://example.test/private/config.yaml": RecordedResponse(
+                status_code=200,
+                text="database_password: secret",
+            ),
+        }
+
+        def fake_get(url: str, **_: object) -> RecordedResponse:
+            return responses.get(url, RecordedResponse(status_code=404))
+
+        findings = ContentDiscoveryModule(
+            ScanConfig(
+                target="example.test",
+                depth=ScanDepth.STANDARD,
+                rate_limit=0,
+                discovered_urls=("https://example.test/private/config.yaml",),
+            ),
+            http_client=cast(Any, RecordedHttpClient(get=fake_get)),
+        ).run()
+
+        exposed = next(f for f in findings if f.title == "Discovered sensitive file exposed: /private/config.yaml")
+        self.assertEqual(exposed.severity, Severity.HIGH)
+        self.assertIn("configuration file", exposed.evidence)
+
+    def test_tech_stack_fixture_detects_signatures_on_discovered_pages(self) -> None:
+        responses = {
+            "https://example.test/": RecordedResponse(status_code=200, text="<html></html>"),
+            "https://example.test/blog": RecordedResponse(
+                status_code=200,
+                text='<link href="/wp-content/themes/site/style.css" rel="stylesheet">',
+            ),
+        }
+
+        def fake_get(url: str, **_: object) -> RecordedResponse:
+            return responses.get(url, RecordedResponse(status_code=404))
+
+        findings = TechStackModule(
+            ScanConfig(
+                target="example.test",
+                depth=ScanDepth.STANDARD,
+                rate_limit=0,
+                discovered_urls=("https://example.test/blog",),
+            ),
+            http_client=cast(Any, RecordedHttpClient(get=fake_get)),
+        ).run()
+
+        wordpress = next(f for f in findings if f.title == "Detected: WordPress")
+        self.assertIn("discovered page https://example.test/blog", wordpress.evidence)
 
     def test_dns_fixture_reports_records_without_global_socket_timeout(self) -> None:
         def fake_resolve(name: str, qtype: str, **_: object) -> list[RecordedTextRecord]:

@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import re
+from urllib.parse import urlparse
 
 from models import Finding, FindingCategory, ScanDepth, Severity
 from modules.base import BaseModule
@@ -110,6 +111,15 @@ _BACKUP_PATHS: list[tuple[str, str, Severity]] = [
     ("/.htaccess",          ".htaccess rules exposed",  Severity.LOW),
 ]
 
+_DISCOVERED_FILE_PATTERNS: tuple[tuple[re.Pattern[str], str, Severity], ...] = (
+    (re.compile(r"/\.env(?:[./_-]|$)", re.IGNORECASE), "environment file", Severity.CRITICAL),
+    (re.compile(r"/\.git/(?:HEAD|config|index)$", re.IGNORECASE), "Git repository metadata", Severity.HIGH),
+    (re.compile(r"\.(?:sql|sqlite|db)(?:$|[?#])", re.IGNORECASE), "database dump", Severity.CRITICAL),
+    (re.compile(r"\.(?:zip|tar|tgz|tar\.gz|7z|bak|old)(?:$|[?#])", re.IGNORECASE), "backup artifact", Severity.HIGH),
+    (re.compile(r"/(?:config|settings)\.(?:ya?ml|json|php|py)(?:$|[?#])", re.IGNORECASE), "configuration file", Severity.HIGH),
+)
+_MAX_DISCOVERED_CONTENT_URLS = 40
+
 
 class ContentDiscoveryModule(BaseModule):
     name = "content_discovery"
@@ -142,6 +152,7 @@ class ContentDiscoveryModule(BaseModule):
         if self.config.depth in (ScanDepth.STANDARD, ScanDepth.DEEP):
             self._check_admin_panels(base_url, findings)
             self._check_backup_files(base_url, findings)
+            self._check_discovered_urls(findings)
 
         return findings
 
@@ -358,3 +369,75 @@ class ContentDiscoveryModule(BaseModule):
                     "Audit git history and logs for prior exposure."
                 ),
             ))
+
+    def _check_discovered_urls(self, findings: list[Finding]) -> None:
+        checked = 0
+        seen: set[str] = set()
+        for url in self.config.discovered_urls:
+            if checked >= _MAX_DISCOVERED_CONTENT_URLS:
+                break
+            if url in seen:
+                continue
+            seen.add(url)
+            parsed_path = urlparse(url).path or "/"
+            file_match = self._discovered_file_match(url)
+            admin_match = self._discovered_admin_match(parsed_path)
+            if file_match is None and admin_match is None:
+                continue
+
+            resp = self._get(url)
+            checked += 1
+            if resp is None or resp.status_code not in (200, 301, 302, 401, 403):
+                continue
+
+            if file_match is not None and resp.status_code == 200 and len(resp.content) >= 10:
+                label, severity = file_match
+                findings.append(Finding(
+                    title=f"Discovered sensitive file exposed: {parsed_path}",
+                    category=FindingCategory.APPLICATION,
+                    severity=severity,
+                    evidence=f"HTTP 200 at {url} ({len(resp.content)} bytes) — discovered {label}",
+                    impact=f"{label} is publicly accessible and may contain secrets or internal data",
+                    remediation=(
+                        "Remove the file from the web root, deny access to backup/config patterns, "
+                        "and rotate any exposed credentials."
+                    ),
+                    metadata={"url": url},
+                ))
+                continue
+
+            if admin_match is not None:
+                label, severity, impact = admin_match
+                actual_sev = severity if resp.status_code == 200 else Severity.MEDIUM
+                status_note = (
+                    "accessible (HTTP 200)" if resp.status_code == 200
+                    else f"present but protected (HTTP {resp.status_code})"
+                )
+                findings.append(Finding(
+                    title=f"Discovered admin route {status_note}: {parsed_path}",
+                    category=FindingCategory.APPLICATION,
+                    severity=actual_sev,
+                    evidence=f"HTTP {resp.status_code} at {url}",
+                    impact=impact,
+                    remediation=(
+                        f"Confirm {label} is intended to be public. Prefer VPN/IP allowlists "
+                        "for management routes and remove them from public sitemaps/robots."
+                    ),
+                    metadata={"url": url},
+                ))
+
+    @staticmethod
+    def _discovered_file_match(url: str) -> tuple[str, Severity] | None:
+        for pattern, label, severity in _DISCOVERED_FILE_PATTERNS:
+            if pattern.search(url):
+                return label, severity
+        return None
+
+    @staticmethod
+    def _discovered_admin_match(path: str) -> tuple[str, Severity, str] | None:
+        normalized = path.rstrip("/") or "/"
+        for admin_path, label, severity, impact in _ADMIN_PANELS:
+            admin_normalized = admin_path.rstrip("/") or "/"
+            if normalized == admin_normalized or normalized.startswith(f"{admin_normalized}/"):
+                return label, severity, impact
+        return None

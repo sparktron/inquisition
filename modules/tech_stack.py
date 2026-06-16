@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urlparse
 
 from models import Finding, FindingCategory, ScanDepth, Severity
 from modules.base import BaseModule
@@ -59,6 +60,8 @@ _PROBE_PATHS: list[tuple[str, str, str]] = [
     ("/server-status", "Apache mod_status", ""),
     ("/server-info", "Apache mod_info", ""),
 ]
+
+_MAX_DISCOVERED_TECH_URLS = 30
 
 
 class TechStackModule(BaseModule):
@@ -178,6 +181,7 @@ class TechStackModule(BaseModule):
                             cpe=cpe,
                             metadata={"scheme": base_url.split(":", 1)[0], "url": url},
                         ))
+            self._check_discovered_urls(detected, findings)
 
         if not findings:
             findings.append(Finding(
@@ -188,3 +192,81 @@ class TechStackModule(BaseModule):
             ))
 
         return findings
+
+    def _check_discovered_urls(self, detected: set[str], findings: list[Finding]) -> None:
+        checked = 0
+        for url in self.config.discovered_urls:
+            if checked >= _MAX_DISCOVERED_TECH_URLS:
+                break
+            parsed = urlparse(url)
+            if parsed.scheme not in ("http", "https"):
+                continue
+            self._rate_limit()
+            try:
+                resp = self.http.get(
+                    url,
+                    timeout=self.config.timeout,
+                    allow_redirects=False,
+                    verify=False,
+                    use_cache=True,
+                )
+            except HttpRequestException:
+                continue
+            if resp.status_code != 200:
+                continue
+            checked += 1
+
+            body = resp.text[:100_000]
+            for pattern, tech, cpe in _BODY_SIGNATURES:
+                if re.search(pattern, body, re.IGNORECASE) and tech not in detected:
+                    detected.add(tech)
+                    findings.append(Finding(
+                        title=f"Detected: {tech}",
+                        category=FindingCategory.TECH_STACK,
+                        severity=Severity.INFO,
+                        evidence=f"Pattern '{pattern}' matched in discovered page {url}",
+                        cpe=cpe,
+                        metadata={"scheme": parsed.scheme, "url": url},
+                    ))
+
+            headers = dict(resp.headers)
+            for header_name, pattern, tech, cpe in _HEADER_SIGNATURES:
+                value = headers.get(header_name, "")
+                match = re.search(pattern, value, re.IGNORECASE)
+                if match and tech not in detected:
+                    detected.add(tech)
+                    version_str = match.group(1) if match.lastindex else ""
+                    findings.append(Finding(
+                        title=f"Detected: {tech}" + (f" {version_str}" if version_str else ""),
+                        category=FindingCategory.TECH_STACK,
+                        severity=Severity.INFO,
+                        evidence=f"{header_name}: {value} on discovered page {url}",
+                        cpe=f"{cpe}:{version_str.replace(':', '_')}:*:*:*:*:*:*:*" if cpe and version_str else cpe,
+                        metadata={"scheme": parsed.scheme, "url": url},
+                    ))
+
+            probe_match = self._probe_path_match(parsed.path)
+            if probe_match is None:
+                continue
+            path, tech, cpe = probe_match
+            label = tech if tech else path
+            if label in detected:
+                continue
+            detected.add(label)
+            findings.append(Finding(
+                title=f"Accessible discovered path: {parsed.path}" if not tech else f"Detected: {tech} ({parsed.path})",
+                category=FindingCategory.TECH_STACK,
+                severity=Severity.INFO if tech else Severity.LOW,
+                evidence=f"HTTP 200 at discovered URL {url}",
+                cpe=cpe,
+                metadata={"scheme": parsed.scheme, "url": url},
+            ))
+
+    @staticmethod
+    def _probe_path_match(path: str) -> tuple[str, str, str] | None:
+        normalized = path.rstrip("/") or "/"
+        for probe_path, tech, cpe in _PROBE_PATHS:
+            probe_normalized = probe_path.rstrip("/") or "/"
+            if normalized == probe_normalized:
+                return probe_path, tech, cpe
+        return None

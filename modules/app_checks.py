@@ -64,6 +64,8 @@ _INFO_PATHS: list[tuple[str, str, list[str]]] = [
     ("/api-docs", "API documentation exposed", ["swagger", "openapi"]),
 ]
 
+_MAX_DISCOVERED_ASSET_PAGES = 25
+
 
 @dataclass(frozen=True)
 class _AssetReference:
@@ -179,7 +181,8 @@ class AppChecksModule(BaseModule):
                     remediation=check["remediation"],
                 ))
 
-        self._check_homepage_assets(base_url, main_resp.text, findings)
+        self._check_page_assets(base_url, main_resp.text, findings, is_homepage=True)
+        self._check_discovered_page_assets(base_url, findings)
 
         # --- CORS preflight check ---
         self._rate_limit()
@@ -276,11 +279,48 @@ class AppChecksModule(BaseModule):
 
     # -----------------------------------------------------------------------
 
-    def _check_homepage_assets(self, base_url: str, html: str, findings: list[Finding]) -> None:
-        if not base_url.startswith("https://") or not html:
+    def _check_discovered_page_assets(self, base_url: str, findings: list[Finding]) -> None:
+        checked = 0
+        home_url = f"{base_url}/"
+        for url in self.config.discovered_urls:
+            if checked >= _MAX_DISCOVERED_ASSET_PAGES:
+                break
+            if url.rstrip("/") == home_url.rstrip("/"):
+                continue
+            parsed = urlparse(url)
+            if parsed.scheme not in ("http", "https"):
+                continue
+            self._rate_limit()
+            try:
+                resp = self.http.get(
+                    url,
+                    timeout=self.config.timeout,
+                    allow_redirects=True,
+                    verify=False,
+                    use_cache=True,
+                )
+            except HttpRequestException:
+                continue
+            if resp.status_code != 200:
+                continue
+            content_type = resp.headers.get("Content-Type", "")
+            if content_type and "html" not in content_type.lower():
+                continue
+            checked += 1
+            self._check_page_assets(url, resp.text, findings, is_homepage=False)
+
+    def _check_page_assets(
+        self,
+        page_url: str,
+        html: str,
+        findings: list[Finding],
+        *,
+        is_homepage: bool,
+    ) -> None:
+        if not page_url.startswith("https://") or not html:
             return
 
-        parser = _AssetParser(f"{base_url}/")
+        parser = _AssetParser(page_url)
         parser.feed(html[:500_000])
         mixed_content = [
             asset.url for asset in parser.assets
@@ -288,29 +328,37 @@ class AppChecksModule(BaseModule):
         ]
         if mixed_content:
             examples = ", ".join(mixed_content[:5])
+            title = "Mixed content references found"
+            if not is_homepage:
+                title = f"Mixed content references found: {urlparse(page_url).path or '/'}"
             findings.append(Finding(
-                title="Mixed content references found",
+                title=title,
                 category=FindingCategory.APPLICATION,
                 severity=Severity.MEDIUM,
-                evidence=f"HTTPS page references insecure assets: {examples}",
+                evidence=f"{page_url} references insecure assets: {examples}",
                 impact="Browsers may block active mixed content or load passive content over an interceptable channel",
                 remediation="Load all page assets over HTTPS and replace hard-coded http:// URLs.",
+                metadata={"url": page_url},
             ))
 
-        page_origin = _origin(base_url)
+        page_origin = _origin(page_url)
         third_party_without_sri = [
             asset.url for asset in parser.assets
             if self._requires_sri(asset) and _origin(asset.url) != page_origin and not asset.integrity
         ]
         if third_party_without_sri:
             examples = ", ".join(third_party_without_sri[:5])
+            title = "Subresource Integrity missing on third-party assets"
+            if not is_homepage:
+                title = f"Subresource Integrity missing on third-party assets: {urlparse(page_url).path or '/'}"
             findings.append(Finding(
-                title="Subresource Integrity missing on third-party assets",
+                title=title,
                 category=FindingCategory.APPLICATION,
                 severity=Severity.LOW,
-                evidence=f"Third-party script/stylesheet without integrity: {examples}",
+                evidence=f"{page_url} loads third-party script/stylesheet without integrity: {examples}",
                 impact="If a third-party CDN or dependency is compromised, modified code may execute in users' browsers",
                 remediation="Add integrity hashes and crossorigin attributes to third-party script and stylesheet tags.",
+                metadata={"url": page_url},
             ))
 
     @staticmethod
