@@ -15,6 +15,7 @@ from models import (
 from report import (
     render,
     render_combined,
+    render_fleet_dashboard,
     render_json_combined,
     render_sarif,
     render_sarif_combined,
@@ -140,6 +141,23 @@ class CombinedReportTests(unittest.TestCase):
         self.assertIn("a.com", text)
         self.assertIn("b.com", text)
         self.assertIn("FLEET REPORT 1/2", text)
+
+    def test_html_combined_is_fleet_dashboard(self) -> None:
+        html = render_combined(self._fleet(), ReportFormat.HTML)
+        self.assertIn("Inquisition Fleet Dashboard", html)
+        self.assertIn("a.com", html)
+        self.assertIn("b.com", html)
+        # one dashboard document, not concatenated per-target reports
+        self.assertEqual(html.count("<!DOCTYPE html>"), 1)
+
+    def test_dashboard_sorts_riskiest_first(self) -> None:
+        # b.com (a MEDIUM) outranks a.com here only if scored; build a clear case
+        high = _report([Finding(title="X", category=FindingCategory.TLS,
+                                severity=Severity.CRITICAL, evidence="e")], target="risky.com")
+        low = _report([Finding(title="Y", category=FindingCategory.DNS,
+                               severity=Severity.LOW, evidence="e")], target="calm.com")
+        html = render_fleet_dashboard([low, high])
+        self.assertLess(html.index("risky.com"), html.index("calm.com"))
 
 
 if __name__ == "__main__":

@@ -902,18 +902,99 @@ def render_sarif_combined(reports: list[ScanReport]) -> str:
     return json.dumps(sarif, indent=2)
 
 
+def render_fleet_dashboard(reports: list[ScanReport]) -> str:
+    """A single self-contained HTML dashboard summarizing every target in a fleet run."""
+    fleet = _fleet_summary(reports)
+    overall_score, overall_grade = _risk_score(fleet["counts"])
+    grade_color = _GRADE_CSS.get(overall_grade, "#dc2626")
+    generated = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    rows = ""
+    for r in sorted(reports, key=lambda x: _risk_score(x.summary_counts())[0], reverse=True):
+        counts = r.summary_counts()
+        _, grade = _risk_score(counts)
+        total = sum(counts.values())
+        highest = r.highest_severity()
+        highest_badge = _badge(highest) if highest else "<span style='color:#94a3b8'>—</span>"
+        spark = _trend_sparkline_html(r) or "<span style='color:#94a3b8;font-size:.8rem'>no history</span>"
+
+        def _cell(sev: Severity) -> str:
+            n = counts.get(sev.value, 0)
+            bg, fg, _ = _SEV_CSS[sev]
+            return f"<span style='color:{fg if n else '#cbd5e1'};font-weight:{600 if n else 400}'>{n}</span>"
+
+        rows += (
+            f"<tr style='border-bottom:1px solid #e2e8f0'>"
+            f"<td style='padding:10px 12px;font-weight:600'>{_e(r.target)}</td>"
+            f"<td style='padding:10px 12px;text-align:center;font-weight:800;color:{_GRADE_CSS.get(grade, '#dc2626')}'>{grade}</td>"
+            f"<td style='padding:10px 12px;text-align:center'>{highest_badge}</td>"
+            f"<td style='padding:10px 12px;text-align:center'>{_cell(Severity.CRITICAL)}</td>"
+            f"<td style='padding:10px 12px;text-align:center'>{_cell(Severity.HIGH)}</td>"
+            f"<td style='padding:10px 12px;text-align:center'>{_cell(Severity.MEDIUM)}</td>"
+            f"<td style='padding:10px 12px;text-align:center'>{_cell(Severity.LOW)}</td>"
+            f"<td style='padding:10px 12px;text-align:center;font-weight:600'>{total}</td>"
+            f"<td style='padding:10px 12px'>{spark}</td>"
+            f"</tr>\n"
+        )
+
+    head = (
+        "<th style='padding:10px 12px;text-align:left'>Target</th>"
+        "<th style='padding:10px 12px'>Grade</th>"
+        "<th style='padding:10px 12px'>Highest</th>"
+        "<th style='padding:10px 12px'>C</th><th style='padding:10px 12px'>H</th>"
+        "<th style='padding:10px 12px'>M</th><th style='padding:10px 12px'>L</th>"
+        "<th style='padding:10px 12px'>Total</th>"
+        "<th style='padding:10px 12px;text-align:left'>Trend</th>"
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inquisition Fleet Dashboard</title>
+</head>
+<body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f8fafc;color:#1e293b">
+<header style="background:#0f172a;color:#fff;padding:24px">
+  <div style="max-width:1100px;margin:0 auto;display:flex;justify-content:space-between;align-items:center">
+    <div>
+      <div style="font-size:1.4rem;font-weight:800">Inquisition Fleet Dashboard</div>
+      <div style="font-size:.85rem;color:#cbd5e1">{fleet['target_count']} target(s) · {fleet['total_findings']} total finding(s) · generated {generated}</div>
+    </div>
+    <div style="text-align:center">
+      <div style="font-size:.7rem;color:#94a3b8;text-transform:uppercase">Fleet grade</div>
+      <div style="font-size:2rem;font-weight:800;color:{grade_color}">{overall_grade}</div>
+    </div>
+  </div>
+</header>
+<main style="max-width:1100px;margin:0 auto;padding:32px 24px">
+  <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
+    <thead style="background:#f1f5f9;font-size:.8rem;color:#475569;text-align:center">
+      <tr>{head}</tr>
+    </thead>
+    <tbody>
+{rows}    </tbody>
+  </table>
+  <p style="margin-top:16px;font-size:.8rem;color:#94a3b8">
+    Sorted by risk score (highest first). Trend sparkline shows total findings across each target's recent scans.
+  </p>
+</main>
+</body>
+</html>"""
+
+
 def render_combined(reports: list[ScanReport], fmt: ReportFormat, *, brief: bool = False) -> str:
     """Render several reports into a single combined artifact.
 
     JSON and SARIF produce structured merges (a fleet object / multi-run SARIF).
-    Text and HTML are concatenated with a per-target separator.
+    HTML produces a fleet dashboard; text is concatenated with a per-target separator.
     """
     if fmt == ReportFormat.JSON:
         return render_json_combined(reports)
     if fmt == ReportFormat.SARIF:
         return render_sarif_combined(reports)
     if fmt == ReportFormat.HTML:
-        return "\n<hr>\n".join(render_html(r) for r in reports)
+        return render_fleet_dashboard(reports)
     banner = "\n\n" + _hr("#") + "\n"
     return banner.join(
         f"  FLEET REPORT {idx}/{len(reports)} — {r.target}\n{render_text(r, brief=brief)}"
