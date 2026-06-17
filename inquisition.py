@@ -29,12 +29,25 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "  inquisition example.com --depth deep --format html --output report.html\n"
             "  inquisition example.com --depth quick --brief\n"
             "  inquisition 192.168.1.10 --ports 22 80 443 8080 --dry-run\n"
+            "  inquisition a.com b.com c.com           # fleet scan (multiple targets)\n"
+            "  inquisition --targets-file hosts.txt --format sarif --output reports/\n"
         ),
     )
 
     parser.add_argument(
         "target",
-        help="Hostname or IP address to scan",
+        nargs="*",
+        help="One or more hostnames or IP addresses to scan (space-separated)",
+    )
+
+    parser.add_argument(
+        "--targets-file",
+        metavar="FILE",
+        dest="targets_file",
+        help=(
+            "Read additional targets from FILE, one per line (blank lines and "
+            "lines starting with # are ignored). Combined with any positional targets."
+        ),
     )
 
     parser.add_argument(
@@ -206,6 +219,44 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _gather_targets(args: argparse.Namespace) -> list[str]:
+    """Merge positional targets with --targets-file, de-duplicated, order-preserving."""
+    targets: list[str] = list(args.target)
+    if args.targets_file:
+        try:
+            with open(args.targets_file, encoding="utf-8") as fh:
+                for line in fh:
+                    host = line.strip()
+                    if host and not host.startswith("#"):
+                        targets.append(host)
+        except OSError as exc:
+            from ui import print_error
+            print_error(f"could not read --targets-file {args.targets_file}", str(exc))
+            sys.exit(2)
+
+    seen: set[str] = set()
+    unique: list[str] = []
+    for host in targets:
+        if host not in seen:
+            seen.add(host)
+            unique.append(host)
+    return unique
+
+
+def _output_path_for(output: str | None, target: str, fmt: ReportFormat, multi: bool) -> str | None:
+    """Per-target output path. For multiple targets, --output is treated as a directory."""
+    if not multi:
+        return output
+    if not output:
+        return None  # run_scan auto-names under reports/
+    ext = {ReportFormat.JSON: "json", ReportFormat.HTML: "html",
+           ReportFormat.SARIF: "sarif"}.get(fmt, "txt")
+    safe = "".join(c if c.isalnum() or c in "-." else "_" for c in target)
+    out_dir = Path(output)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return str(out_dir / f"{safe}.{ext}")
+
+
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
 
@@ -213,7 +264,13 @@ def main(argv: list[str] | None = None) -> None:
     log_level = logging.DEBUG if args.verbose else logging.WARNING
     logging.basicConfig(level=log_level, format="%(levelname)s  %(name)s: %(message)s")
 
-    # Build ScanConfig
+    targets = _gather_targets(args)
+    if not targets:
+        from ui import print_error
+        print_error("no targets given", "pass one or more hostnames, or use --targets-file")
+        sys.exit(2)
+
+    # Build shared ScanConfig fields
     depth = ScanDepth(args.depth)
     report_format = ReportFormat(args.report_format)
 
@@ -223,51 +280,66 @@ def main(argv: list[str] | None = None) -> None:
     )
     ports = tuple(args.ports) if args.ports else default_ports
 
-    config = ScanConfig(
-        target=args.target,
-        depth=depth,
-        report_format=report_format,
-        max_threads=args.threads,
-        safe_mode=True,
-        dry_run=args.dry_run,
-        rate_limit=args.rate_limit,
-        timeout=args.timeout,
-        connect_timeout=args.connect_timeout,
-        ports=ports,
-        active=args.active,
-        active_engine=args.active_engine,
-        auth_header=args.auth_header,
-        auth_cookie=args.auth_cookie,
-    )
+    from models import Severity, severity_at_least
+    multi = len(targets) > 1
+    fleet_rows: list[dict[str, object]] = []
+    fail_triggered = False
+    threshold = Severity(args.fail_on) if args.fail_on else None
 
     try:
-        from models import Severity
-        report = run_scan(
-            config,
-            skip_auth=args.authorized or args.dry_run,
-            brief=args.brief,
-            output_path=args.output,
-            notify_url=args.notify_url,
-            notify_min_severity=Severity(args.notify_min_severity),
-            notify_on=args.notify_on,
-        )
+        for target in targets:
+            config = ScanConfig(
+                target=target,
+                depth=depth,
+                report_format=report_format,
+                max_threads=args.threads,
+                safe_mode=True,
+                dry_run=args.dry_run,
+                rate_limit=args.rate_limit,
+                timeout=args.timeout,
+                connect_timeout=args.connect_timeout,
+                ports=ports,
+                active=args.active,
+                active_engine=args.active_engine,
+                auth_header=args.auth_header,
+                auth_cookie=args.auth_cookie,
+            )
+            report = run_scan(
+                config,
+                skip_auth=args.authorized or args.dry_run,
+                brief=args.brief,
+                output_path=_output_path_for(args.output, target, report_format, multi),
+                notify_url=args.notify_url,
+                notify_min_severity=Severity(args.notify_min_severity),
+                notify_on=args.notify_on,
+            )
+
+            highest = report.highest_severity()
+            fleet_rows.append({
+                "target": target,
+                "counts": report.summary_counts(),
+                "highest": highest.value if highest else None,
+                "report": report.report_path,
+            })
+            if threshold and not args.dry_run and highest is not None and severity_at_least(highest, threshold):
+                fail_triggered = True
     except KeyboardInterrupt:
         from ui import print_interrupted
         print_interrupted()
         sys.exit(130)
 
-    # --- CI gating: exit non-zero when findings meet the --fail-on threshold ---
-    if args.fail_on and not args.dry_run:
-        from models import Severity, severity_at_least
-        threshold = Severity(args.fail_on)
-        highest = report.highest_severity()
-        if highest is not None and severity_at_least(highest, threshold):
-            from ui import print_warning
-            print_warning(
-                f"fail-on: highest finding severity '{highest.value}' "
-                f"meets threshold '{threshold.value}' — exiting 1"
-            )
-            sys.exit(1)
+    # --- Fleet overview (only when more than one target was scanned) ---
+    if multi:
+        from ui import print_fleet_summary
+        print_fleet_summary(fleet_rows)
+
+    # --- CI gating: exit non-zero when any target meets the --fail-on threshold ---
+    if fail_triggered:
+        from ui import print_warning
+        print_warning(
+            f"fail-on: a finding meets threshold '{threshold.value}' — exiting 1"  # type: ignore[union-attr]
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":

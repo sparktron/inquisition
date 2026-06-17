@@ -289,6 +289,7 @@ def run_scan(
         with open(output_path, "w", encoding="utf-8") as fh:
             fh.write(output)
         report_saved = True
+        report.report_path = output_path
     except OSError as exc:
         err_msg = str(exc)
         if "Permission denied" in err_msg:

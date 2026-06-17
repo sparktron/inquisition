@@ -203,6 +203,7 @@ class ScanReport:
     cve_records: list[CVERecord] = field(default_factory=list)
     misconfigurations: list[MisconfigurationCheck] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    report_path: str = ""  # filesystem path the rendered report was written to
 
     # Convenience helpers -----------------------------------------------
 

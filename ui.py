@@ -206,3 +206,49 @@ def print_warning(msg: str) -> None:
 
 def print_interrupted() -> None:
     console.print("\n  [dim]scan interrupted[/dim]")
+
+
+def print_fleet_summary(rows: list[dict[str, object]]) -> None:
+    """Print a one-row-per-target overview at the end of a multi-target scan.
+
+    Each row is {"target", "counts" (dict), "highest" (str|None), "report" (str)}.
+    """
+    table = Table(
+        title="[bold white]Fleet Scan Summary[/bold white]",
+        box=box.ROUNDED,
+        border_style="cyan",
+        padding=(0, 1),
+        title_justify="left",
+    )
+    table.add_column("Target", style="bold")
+    table.add_column("Highest", justify="center")
+    table.add_column("C", justify="right", style="sev.critical")
+    table.add_column("H", justify="right", style="sev.high")
+    table.add_column("M", justify="right", style="sev.medium")
+    table.add_column("L", justify="right", style="sev.low")
+    table.add_column("Report", style="dim")
+
+    _highest_style = {
+        "critical": "sev.critical", "high": "sev.high", "medium": "sev.medium",
+        "low": "sev.low", "info": "sev.info",
+    }
+    for row in rows:
+        counts = row.get("counts", {}) or {}
+        assert isinstance(counts, dict)
+        highest = row.get("highest")
+        highest_text = Text(str(highest) if highest else "—", style=_highest_style.get(str(highest), "sev.none"))
+
+        def _cell(key: str) -> str:
+            n = counts.get(key, 0)
+            return str(n) if n else "·"
+
+        table.add_row(
+            str(row.get("target", "")),
+            highest_text,
+            _cell("critical"), _cell("high"), _cell("medium"), _cell("low"),
+            str(row.get("report", "")),
+        )
+
+    console.print()
+    console.print(table)
+    console.print()
