@@ -8,6 +8,12 @@
 # - SARIF upload requires the `security-events: write` permission and a public
 #   repo or GitHub Advanced Security on private repos.
 # - `--yes` asserts you are authorized to scan the target (non-interactive CI).
+# - Optional notifications: set an INQUISITION_WEBHOOK repo secret (a Slack
+#   incoming-webhook URL or any JSON endpoint). With `--notify-on changes` the
+#   workflow posts whenever a finding is added, fixed, regressed, or improved
+#   vs the previous scheduled run; use `--notify-on always` for a heartbeat or
+#   the default `regression` for bad-news-only. If the secret is unset the flag
+#   is a no-op.
 name: Inquisition security scan
 
 on:
@@ -34,14 +40,18 @@ jobs:
       - name: Install Inquisition
         run: pip install -r requirements.txt
 
-      - name: Run scan (SARIF output, fail on HIGH+)
+      - name: Run scan (SARIF output, fail on HIGH+, notify on change)
+        env:
+          INQUISITION_WEBHOOK: ${{ secrets.INQUISITION_WEBHOOK }}
         run: |
           python inquisition.py "$TARGET" \
             --yes \
             --depth standard \
             --format sarif \
             --output inquisition.sarif \
-            --fail-on high
+            --fail-on high \
+            --notify "$INQUISITION_WEBHOOK" \
+            --notify-on changes
 
       # Upload even if the scan step failed the job, so findings are still
       # visible in the Security tab.

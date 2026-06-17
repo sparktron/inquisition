@@ -249,6 +249,20 @@ python inquisition.py example.com -o report.txt    # → Text format
 | `--auth-header` | string | empty | Header injected into HTTP modules and active engines, e.g. `Authorization: Bearer <token>` |
 | `--auth-cookie` | string | empty | Cookie header injected into HTTP modules and active engines, e.g. `session=<value>` |
 
+#### Continuous Assurance & Notifications
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `--fail-on` | `critical` \| `high` \| `medium` \| `low` | never | Exit non-zero when any finding meets this severity (CI gating) |
+| `--notify` | URL | none | Webhook to POST to. Slack incoming-webhook URLs (`hooks.slack.com`) get a formatted message; any other URL gets structured JSON |
+| `--notify-min-severity` | `critical` \| `high` \| `medium` \| `low` | `high` | For `--notify-on regression`, the minimum severity of a new/worsened finding that triggers a notification |
+| `--notify-on` | `regression` \| `changes` \| `always` | `regression` | When to notify: only new/worsened findings at/above the threshold (`regression`); any new/fixed/regressed/improved finding (`changes`); or every scan, even a clean one, as a heartbeat (`always`) |
+
+Each scan is diffed against the previous run for the same target (state is kept
+under `reports/.state/`). Notification payloads include a severity summary and,
+for `changes`/`always`, the fixed and improved findings as well as regressions.
+See `examples/github-action.yml` for a scheduled (cron) workflow that uploads
+SARIF and notifies a Slack webhook on every change.
+
 ### Safety
 
 **Inquisition is safe by design:**

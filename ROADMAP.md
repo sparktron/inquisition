@@ -318,10 +318,19 @@ Goal: the tool's existing output is correct and its claims are true.
       meets the threshold); **SARIF 2.1.0** output (`--format sarif`) for GitHub
       code scanning; example workflow at `examples/github-action.yml`.
 - [x] **Scheduled scanning** + notification on new/regressed findings. The
-      example GitHub Action covers cron scheduling; `notifications.py` posts a
-      regression alert (`--notify URL`, `--notify-min-severity`) to a Slack
-      incoming webhook (formatted message) or any other URL (structured JSON)
-      when a new or worsened finding appears vs the previous scan.
+      example GitHub Action covers cron scheduling; `notifications.py` posts to a
+      Slack incoming webhook (formatted message) or any other URL (structured
+      JSON). `--notify-on` selects the trigger: `regression` (new/worsened at or
+      above `--notify-min-severity`; default), `changes` (any new/fixed/
+      regressed/improved finding), or `always` (every scan — a heartbeat).
+      Payloads carry a severity summary plus the fixed/improved deltas.
+
+### Detection quality
+- [x] **Graded-confidence signatures** — `models.Confidence`
+      (CONFIRMED/HIGH/MEDIUM/LOW) + `combine_confidence`. `tech_stack` tags each
+      body/header signature with a base confidence and corroborates agreeing
+      signals per technology (`_TechAccumulator`), emitting one graded finding
+      per tech. Confidence is rendered in text/JSON/HTML reports.
 
 ### Phase 4 — Active Testing (optional, authorization-gated)
 - [x] Integrate Nuclei behind an explicit `--active` flag (`active_scan.py`)
@@ -340,7 +349,7 @@ Goal: the tool's existing output is correct and its claims are true.
 ---
 
 ### Suggested immediate next step
-TLS depth is now complete (chain validation, CT/SCT presence, OCSP revocation,
-and weak-DH detection all ship in `tls_chain.py`). The highest-value next step
-is reducing false negatives in detection (quality-graded confidence on
-signatures) and expanding scheduled-scan/notification ergonomics.
+All planned phases plus the follow-on detection-quality and notification work are
+complete. Candidate future directions: extend graded confidence to the WAF and
+content-discovery signatures; weak DH-parameter grading for TLS 1.3 named groups;
+and a multi-target scan/report mode for fleets.
