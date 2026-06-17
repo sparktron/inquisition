@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from models import Confidence, ScanConfig, ScanDepth, combine_confidence
+from modules.content_discovery import ContentDiscoveryModule
 from modules.http_client import HttpRequestException
 from modules.tech_stack import TechStackModule
+from modules.waf_detection import WafDetectionModule
 
 
 @dataclass
@@ -95,6 +97,47 @@ class TechStackConfidenceTests(unittest.TestCase):
             headers={"X-Powered-By": "Express"},
         )
         self.assertEqual(finding.confidence, Confidence.HIGH)
+
+
+@dataclass
+class _WafResp:
+    headers: dict[str, str]
+    text: str = "<html></html>"
+    status_code: int = 200
+    cookies: tuple[Any, ...] = ()
+
+
+class WafConfidenceTests(unittest.TestCase):
+    def _run(self, headers: dict[str, str]) -> Any:
+        resp = _WafResp(headers=headers)
+
+        class FakeHttpClient:
+            def get(self, url: str, **_: object) -> _WafResp:
+                return resp
+
+        config = ScanConfig(target="example.com", rate_limit=0)
+        return WafDetectionModule(config, http_client=cast(Any, FakeHttpClient())).run()
+
+    def test_corroborating_cloudflare_headers_combine_to_high(self) -> None:
+        findings = self._run({"cf-ray": "abc-SJC", "server": "cloudflare"})
+        cf = [f for f in findings if "Cloudflare" in f.title]
+        self.assertEqual(len(cf), 1)  # one aggregated finding, not two
+        self.assertEqual(cf[0].confidence, Confidence.HIGH)
+
+    def test_generic_cache_header_is_low(self) -> None:
+        findings = self._run({"x-cache": "HIT"})
+        cache = next(f for f in findings if "cache layer" in f.title)
+        self.assertEqual(cache.confidence, Confidence.LOW)
+
+
+class ContentDiscoveryConfidenceTests(unittest.TestCase):
+    def test_status_confidence_mapping(self) -> None:
+        sc = ContentDiscoveryModule._status_confidence
+        self.assertEqual(sc(200), Confidence.CONFIRMED)
+        self.assertEqual(sc(403), Confidence.HIGH)
+        self.assertEqual(sc(401), Confidence.HIGH)
+        self.assertEqual(sc(301), Confidence.MEDIUM)
+        self.assertEqual(sc(302), Confidence.MEDIUM)
 
 
 if __name__ == "__main__":

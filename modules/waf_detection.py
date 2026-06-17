@@ -10,69 +10,120 @@ from __future__ import annotations
 
 import re
 
-from models import Finding, FindingCategory, Severity
+from models import Confidence, Finding, FindingCategory, Severity, combine_confidence
 from modules.base import BaseModule
 from modules.http_client import HttpRequestException
 
+_H = Confidence.HIGH
+_M = Confidence.MEDIUM
+_L = Confidence.LOW
 
 # ---------------------------------------------------------------------------
 # Signature tables
 # ---------------------------------------------------------------------------
 
-# (header_name, value_pattern, product_name, category, remediation_hint)
-_HEADER_SIGS: list[tuple[str, str, str, str]] = [
-    ("server",                 r"cloudflare",              "Cloudflare CDN/WAF",        "CDN/WAF"),
-    ("cf-ray",                 r".",                        "Cloudflare CDN/WAF",        "CDN/WAF"),
-    ("x-amz-cf-id",            r".",                        "AWS CloudFront CDN",         "CDN"),
-    ("x-amz-request-id",       r".",                        "AWS S3 / CloudFront",        "CDN"),
-    ("x-cache",                r"cloudfront",              "AWS CloudFront CDN",         "CDN"),
-    ("x-served-by",            r"cache-",                  "Fastly CDN",                 "CDN"),
-    ("fastly-restarts",        r".",                        "Fastly CDN",                 "CDN"),
-    ("x-akamai-transformed",   r".",                        "Akamai CDN/WAF",             "CDN/WAF"),
-    ("x-check-cacheable",      r".",                        "Akamai CDN",                 "CDN"),
-    ("x-sucuri-id",            r".",                        "Sucuri WAF/CDN",             "CDN/WAF"),
-    ("x-fw-hash",              r".",                        "Sucuri Firewall",            "WAF"),
-    ("x-cdn",                  r"incapsula",               "Imperva Incapsula WAF",      "WAF"),
-    ("x-iinfo",                r".",                        "Imperva Incapsula WAF",      "WAF"),
-    ("x-protected-by",         r".",                        "Generic WAF protection",     "WAF"),
-    ("x-waf-score",            r".",                        "Generic WAF (score header)", "WAF"),
-    ("x-datadome",             r".",                        "DataDome Bot Protection",    "WAF"),
-    ("server",                 r"AkamaiGHost",             "Akamai CDN/WAF",             "CDN/WAF"),
-    ("via",                    r"varnish",                 "Varnish Cache",              "Cache"),
-    ("x-varnish",              r".",                        "Varnish Cache",              "Cache"),
-    ("x-cache",                r"HIT|MISS",                "Varnish/CDN cache layer",    "Cache"),
-    ("server",                 r"nginx/.*cloudflare",      "Cloudflare CDN/WAF",         "CDN/WAF"),
-    ("x-powered-by",           r"cloudflare",              "Cloudflare Workers",         "CDN"),
-    ("x-github-request-id",    r".",                        "GitHub Pages / CDN",         "CDN"),
-    ("x-vercel-id",            r".",                        "Vercel Edge Network",        "CDN"),
-    ("server",                 r"Netlify",                 "Netlify CDN",                "CDN"),
-    ("x-nf-request-id",        r".",                        "Netlify CDN",                "CDN"),
-    ("server",                 r"envoy",                   "Envoy Proxy",                "Proxy"),
-    ("server",                 r"traefik",                 "Traefik Reverse Proxy",      "Proxy"),
-    ("x-kong-upstream-latency",r".",                        "Kong API Gateway",           "API Gateway"),
-    ("x-kong-proxy-latency",   r".",                        "Kong API Gateway",           "API Gateway"),
-    ("apigw-requestid",        r".",                        "AWS API Gateway",            "API Gateway"),
+# (header_name, value_pattern, product_name, category, base confidence).
+# Vendor-specific headers are HIGH; generic cache/score/proxy markers are weaker
+# because unrelated infrastructure emits them too.
+_HEADER_SIGS: list[tuple[str, str, str, str, Confidence]] = [
+    ("server",                 r"cloudflare",              "Cloudflare CDN/WAF",        "CDN/WAF",     _H),
+    ("cf-ray",                 r".",                        "Cloudflare CDN/WAF",        "CDN/WAF",     _H),
+    ("x-amz-cf-id",            r".",                        "AWS CloudFront CDN",         "CDN",        _H),
+    ("x-amz-request-id",       r".",                        "AWS S3 / CloudFront",        "CDN",        _M),
+    ("x-cache",                r"cloudfront",              "AWS CloudFront CDN",         "CDN",        _H),
+    ("x-served-by",            r"cache-",                  "Fastly CDN",                 "CDN",        _M),
+    ("fastly-restarts",        r".",                        "Fastly CDN",                 "CDN",        _H),
+    ("x-akamai-transformed",   r".",                        "Akamai CDN/WAF",             "CDN/WAF",    _H),
+    ("x-check-cacheable",      r".",                        "Akamai CDN",                 "CDN",        _M),
+    ("x-sucuri-id",            r".",                        "Sucuri WAF/CDN",             "CDN/WAF",    _H),
+    ("x-fw-hash",              r".",                        "Sucuri Firewall",            "WAF",        _M),
+    ("x-cdn",                  r"incapsula",               "Imperva Incapsula WAF",      "WAF",        _H),
+    ("x-iinfo",                r".",                        "Imperva Incapsula WAF",      "WAF",        _H),
+    ("x-protected-by",         r".",                        "Generic WAF protection",     "WAF",        _M),
+    ("x-waf-score",            r".",                        "Generic WAF (score header)", "WAF",        _M),
+    ("x-datadome",             r".",                        "DataDome Bot Protection",    "WAF",        _H),
+    ("server",                 r"AkamaiGHost",             "Akamai CDN/WAF",             "CDN/WAF",    _H),
+    ("via",                    r"varnish",                 "Varnish Cache",              "Cache",      _H),
+    ("x-varnish",              r".",                        "Varnish Cache",              "Cache",      _H),
+    ("x-cache",                r"HIT|MISS",                "Varnish/CDN cache layer",    "Cache",      _L),
+    ("server",                 r"nginx/.*cloudflare",      "Cloudflare CDN/WAF",         "CDN/WAF",    _H),
+    ("x-powered-by",           r"cloudflare",              "Cloudflare Workers",         "CDN",        _H),
+    ("x-github-request-id",    r".",                        "GitHub Pages / CDN",         "CDN",        _H),
+    ("x-vercel-id",            r".",                        "Vercel Edge Network",        "CDN",        _H),
+    ("server",                 r"Netlify",                 "Netlify CDN",                "CDN",        _H),
+    ("x-nf-request-id",        r".",                        "Netlify CDN",                "CDN",        _H),
+    ("server",                 r"envoy",                   "Envoy Proxy",                "Proxy",      _H),
+    ("server",                 r"traefik",                 "Traefik Reverse Proxy",      "Proxy",      _H),
+    ("x-kong-upstream-latency",r".",                        "Kong API Gateway",           "API Gateway",_H),
+    ("x-kong-proxy-latency",   r".",                        "Kong API Gateway",           "API Gateway",_H),
+    ("apigw-requestid",        r".",                        "AWS API Gateway",            "API Gateway",_M),
 ]
 
-# Cookie name patterns that indicate WAF presence
-_COOKIE_SIGS: list[tuple[str, str]] = [
-    (r"^__cfduid$|^cf_clearance$|^__cf_bm$", "Cloudflare CDN/WAF"),
-    (r"^visid_incap_|^incap_ses_",            "Imperva Incapsula WAF"),
-    (r"^sucuri_cloudproxy_uuid_",             "Sucuri WAF"),
-    (r"^_ddg\d+$",                            "DataDome Bot Protection"),
-    (r"^_abck$",                              "Akamai Bot Manager"),
-    (r"^ak_bmsc$",                            "Akamai Bot Manager"),
+# Cookie name patterns that indicate WAF presence (specific names -> HIGH).
+_COOKIE_SIGS: list[tuple[str, str, Confidence]] = [
+    (r"^__cfduid$|^cf_clearance$|^__cf_bm$", "Cloudflare CDN/WAF",        _H),
+    (r"^visid_incap_|^incap_ses_",            "Imperva Incapsula WAF",     _H),
+    (r"^sucuri_cloudproxy_uuid_",             "Sucuri WAF",                _H),
+    (r"^_ddg\d+$",                            "DataDome Bot Protection",   _H),
+    (r"^_abck$",                              "Akamai Bot Manager",        _H),
+    (r"^ak_bmsc$",                            "Akamai Bot Manager",        _H),
 ]
 
-# Response body markers (after stripping)
-_BODY_SIGS: list[tuple[str, str]] = [
-    (r"cloudflare ray id",             "Cloudflare CDN/WAF"),
-    (r"attention required.*cloudflare","Cloudflare WAF Block Page"),
-    (r"sucuri website firewall",       "Sucuri WAF Block Page"),
-    (r"incapsula incident id",         "Imperva Incapsula WAF Block Page"),
-    (r"powered by akamai",             "Akamai CDN/WAF"),
-    (r"<title>.*403.*forbidden.*akamai","Akamai WAF Block Page"),
+# Response body markers (block pages are highly specific -> HIGH).
+_BODY_SIGS: list[tuple[str, str, Confidence]] = [
+    (r"cloudflare ray id",             "Cloudflare CDN/WAF",                _H),
+    (r"attention required.*cloudflare","Cloudflare WAF Block Page",         _H),
+    (r"sucuri website firewall",       "Sucuri WAF Block Page",             _H),
+    (r"incapsula incident id",         "Imperva Incapsula WAF Block Page",  _H),
+    (r"powered by akamai",             "Akamai CDN/WAF",                    _M),
+    (r"<title>.*403.*forbidden.*akamai","Akamai WAF Block Page",            _H),
 ]
+
+
+class _WafAccumulator:
+    """Collects WAF/CDN signals per product so corroborating hits combine."""
+
+    def __init__(self) -> None:
+        self._signals: dict[str, list[tuple[Confidence, str]]] = {}
+        self._category: dict[str, str] = {}
+
+    def add(self, product: str, category: str, confidence: Confidence, evidence: str) -> None:
+        self._signals.setdefault(product, []).append((confidence, evidence))
+        self._category.setdefault(product, category)
+
+    def __bool__(self) -> bool:
+        return bool(self._signals)
+
+    def emit(self) -> list[Finding]:
+        findings: list[Finding] = []
+        for product, signals in self._signals.items():
+            confidence = combine_confidence([c for c, _ in signals])
+            if confidence == Confidence.CONFIRMED:  # signatures stay heuristic
+                confidence = Confidence.HIGH
+            evidences: list[str] = []
+            for _, evidence in signals:
+                if evidence not in evidences:
+                    evidences.append(evidence)
+            findings.append(_make_finding(product, self._category[product], "; ".join(evidences), confidence))
+        return findings
+
+
+def _make_finding(product: str, category: str, evidence: str, confidence: Confidence) -> Finding:
+    return Finding(
+        title=f"{category} detected: {product}",
+        category=FindingCategory.APPLICATION,
+        severity=Severity.INFO,
+        evidence=evidence,
+        confidence=confidence,
+        impact=(
+            f"Confirms {product} is present. "
+            "Verify WAF rules are actively enforced and not in monitor-only mode."
+        ),
+        remediation=(
+            "Ensure WAF/CDN rules are up to date and set to block (not log-only). "
+            "Review rate-limiting thresholds and geo-blocking policies."
+        ),
+    )
 
 
 class WafDetectionModule(BaseModule):
@@ -81,7 +132,6 @@ class WafDetectionModule(BaseModule):
     def run(self) -> list[Finding]:
         findings: list[Finding] = []
         target = self.config.target
-        detected: set[str] = set()
 
         if self.config.dry_run:
             findings.append(Finding(
@@ -117,28 +167,28 @@ class WafDetectionModule(BaseModule):
 
         headers_lower = {k.lower(): v for k, v in resp.headers.items()}
         body_lower = resp.text[:20_000].lower()
+        acc = _WafAccumulator()
 
         # --- Header-based detection ---
-        for header, pattern, product, category in _HEADER_SIGS:
+        for header, pattern, product, category, confidence in _HEADER_SIGS:
             value = headers_lower.get(header, "")
-            if value and re.search(pattern, value, re.IGNORECASE) and product not in detected:
-                detected.add(product)
-                findings.append(self._make_finding(product, category, f"{header}: {value}"))
+            if value and re.search(pattern, value, re.IGNORECASE):
+                acc.add(product, category, confidence, f"{header}: {value}")
 
         # --- Cookie-based detection ---
         for cookie in resp.cookies:
-            for pattern, product in _COOKIE_SIGS:
-                if re.search(pattern, cookie.name, re.IGNORECASE) and product not in detected:
-                    detected.add(product)
-                    findings.append(self._make_finding(product, "WAF", f"Cookie name: {cookie.name}"))
+            for pattern, product, confidence in _COOKIE_SIGS:
+                if re.search(pattern, cookie.name, re.IGNORECASE):
+                    acc.add(product, "WAF", confidence, f"Cookie name: {cookie.name}")
 
         # --- Body-based detection ---
-        for pattern, product in _BODY_SIGS:
-            if re.search(pattern, body_lower) and product not in detected:
-                detected.add(product)
-                findings.append(self._make_finding(product, "WAF block page", f"Body contains pattern: {pattern}"))
+        for pattern, product, confidence in _BODY_SIGS:
+            if re.search(pattern, body_lower):
+                acc.add(product, "WAF block page", confidence, f"Body contains pattern: {pattern}")
 
-        if not detected:
+        findings.extend(acc.emit())
+
+        if not acc:
             findings.append(Finding(
                 title="No WAF/CDN layer detected",
                 category=FindingCategory.APPLICATION,
@@ -152,20 +202,3 @@ class WafDetectionModule(BaseModule):
             ))
 
         return findings
-
-    @staticmethod
-    def _make_finding(product: str, category: str, evidence: str) -> Finding:
-        return Finding(
-            title=f"{category} detected: {product}",
-            category=FindingCategory.APPLICATION,
-            severity=Severity.INFO,
-            evidence=evidence,
-            impact=(
-                f"Confirms {product} is present. "
-                "Verify WAF rules are actively enforced and not in monitor-only mode."
-            ),
-            remediation=(
-                "Ensure WAF/CDN rules are up to date and set to block (not log-only). "
-                "Review rate-limiting thresholds and geo-blocking policies."
-            ),
-        )

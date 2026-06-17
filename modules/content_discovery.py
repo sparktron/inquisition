@@ -14,7 +14,7 @@ from email.utils import parsedate_to_datetime
 import re
 from urllib.parse import urlparse
 
-from models import Finding, FindingCategory, ScanDepth, Severity
+from models import Confidence, Finding, FindingCategory, ScanDepth, Severity
 from modules.base import BaseModule
 from modules.http_client import HttpRequestException, HttpResponse
 
@@ -320,6 +320,20 @@ class ContentDiscoveryModule(BaseModule):
             remediation=remediation,
         ))
 
+    @staticmethod
+    def _status_confidence(status_code: int) -> Confidence:
+        """How sure we are a resource really exists, given its status code.
+
+        A 200 is a confirmed hit. An auth wall (401/403) strongly implies a real
+        protected resource. A redirect (301/302) is weaker — it can be a generic
+        catch-all rather than the specific resource.
+        """
+        if status_code == 200:
+            return Confidence.CONFIRMED
+        if status_code in (401, 403):
+            return Confidence.HIGH
+        return Confidence.MEDIUM
+
     def _check_admin_panels(self, base_url: str, findings: list[Finding]) -> None:
         seen: set[str] = set()
         for path, label, sev, impact in _ADMIN_PANELS:
@@ -341,6 +355,7 @@ class ContentDiscoveryModule(BaseModule):
                     category=FindingCategory.APPLICATION,
                     severity=actual_sev,
                     evidence=f"HTTP {resp.status_code} at {base_url}{path}",
+                    confidence=self._status_confidence(resp.status_code),
                     impact=impact,
                     remediation=(
                         f"Restrict {label} to trusted IPs or a VPN. "
@@ -418,6 +433,7 @@ class ContentDiscoveryModule(BaseModule):
                     category=FindingCategory.APPLICATION,
                     severity=actual_sev,
                     evidence=f"HTTP {resp.status_code} at {url}",
+                    confidence=self._status_confidence(resp.status_code),
                     impact=impact,
                     remediation=(
                         f"Confirm {label} is intended to be public. Prefer VPN/IP allowlists "
