@@ -222,6 +222,17 @@ class SlaTests(unittest.TestCase):
         self.assertEqual(sla_breaches(_aged_report(9), sla_max_age=0), [])
         self.assertEqual(sla_breaches(None, sla_max_age=3), [])
 
+    def test_per_severity_override_is_stricter(self) -> None:
+        # All findings are HIGH (see _aged_report); global SLA off, high override = 2.
+        report = _aged_report(1, 3, 5)
+        breaches = sla_breaches(report, sla_max_age=0, overrides={"high": 2})
+        self.assertEqual([f.age_scans for f in breaches], [5, 3])
+
+    def test_override_zero_disables_that_severity(self) -> None:
+        report = _aged_report(9, 9)  # HIGH findings
+        # global threshold 3 would breach, but the high override of 0 disables it
+        self.assertEqual(sla_breaches(report, sla_max_age=3, overrides={"high": 0}), [])
+
     def test_notify_fires_on_breach_even_with_quiet_diff(self) -> None:
         sender = RecordingSender()
         diff = DiffResult(unchanged_count=5)  # nothing changed

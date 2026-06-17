@@ -85,11 +85,27 @@ def select_deltas(
     return list(diff.new), list(diff.regressed), list(diff.fixed), list(diff.improved)
 
 
-def sla_breaches(report: ScanReport | None, sla_max_age: int) -> list[Finding]:
-    """Findings open longer than ``sla_max_age`` consecutive scans (sorted worst-first)."""
-    if report is None or sla_max_age <= 0:
+def sla_breaches(
+    report: ScanReport | None,
+    sla_max_age: int,
+    overrides: dict[str, int] | None = None,
+) -> list[Finding]:
+    """Findings open beyond their SLA, sorted worst-first.
+
+    The threshold for a finding is its severity-specific override when present,
+    otherwise the global ``sla_max_age``. A threshold of 0 disables the SLA for
+    that severity. With no overrides and ``sla_max_age <= 0``, nothing breaches.
+    """
+    if report is None:
         return []
-    breached = [f for f in report.findings if f.age_scans > sla_max_age]
+    overrides = overrides or {}
+    if sla_max_age <= 0 and not any(v > 0 for v in overrides.values()):
+        return []
+    breached = []
+    for f in report.findings:
+        threshold = overrides.get(f.severity.value, sla_max_age)
+        if threshold > 0 and f.age_scans > threshold:
+            breached.append(f)
     return sorted(breached, key=lambda f: f.age_scans, reverse=True)
 
 
@@ -226,15 +242,16 @@ def notify(
     policy: str = NOTIFY_REGRESSION,
     report: ScanReport | None = None,
     sla_max_age: int = 0,
+    sla_overrides: dict[str, int] | None = None,
     timeout: float = 10.0,
     sender: Callable[..., Any] | None = None,
 ) -> bool:
     """Send a notification if the diff qualifies under ``policy``, or an SLA breach exists.
 
-    A finding open longer than ``sla_max_age`` scans always triggers a send,
-    even when the diff itself is quiet. ``sender`` defaults to ``requests.post``.
+    A finding open beyond its SLA always triggers a send, even when the diff
+    itself is quiet. ``sender`` defaults to ``requests.post``.
     """
-    breaches = sla_breaches(report, sla_max_age)
+    breaches = sla_breaches(report, sla_max_age, sla_overrides)
     if not should_notify(diff, threshold, policy) and not breaches:
         return False
 

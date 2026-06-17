@@ -125,8 +125,10 @@ class ScanConfig:
     # so path-aware modules can inspect real site URLs, not only fixed lists.
     discovered_urls: tuple[str, ...] = ()
     # SLA alerting: warn/notify when a finding has stayed open beyond this many
-    # consecutive scans (0 = disabled).
+    # consecutive scans (0 = disabled). ``sla_severity_overrides`` sets stricter
+    # per-severity thresholds (e.g. critical=2); the global value is the fallback.
     sla_max_age: int = 0
+    sla_severity_overrides: tuple[tuple[str, int], ...] = ()
 
 
 # ---------------------------------------------------------------------------

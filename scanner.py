@@ -309,12 +309,13 @@ def run_scan(
         except OSError as exc:
             report.errors.append(f"Could not save scan snapshot: {exc}")
 
-        # --- SLA breaches (findings open beyond the age threshold) ---
-        breaches = sla_breaches(report, config.sla_max_age)
+        # --- SLA breaches (findings open beyond their age threshold) ---
+        sla_overrides = dict(config.sla_severity_overrides)
+        breaches = sla_breaches(report, config.sla_max_age, sla_overrides)
         if breaches:
             print_warning(
-                f"SLA: {len(breaches)} finding(s) open beyond {config.sla_max_age} scans — "
-                + ", ".join(f"{f.title} ({f.age_scans})" for f in breaches[:3])
+                f"SLA: {len(breaches)} finding(s) past their age threshold — "
+                + ", ".join(f"{f.title} ({f.severity.value}, {f.age_scans} scans)" for f in breaches[:3])
                 + (" …" if len(breaches) > 3 else "")
             )
 
@@ -329,6 +330,7 @@ def run_scan(
                     policy=notify_on,
                     report=report,
                     sla_max_age=config.sla_max_age,
+                    sla_overrides=sla_overrides,
                 ):
                     if not quiet:
                         print_info(f"scan notification sent ({notify_on})")

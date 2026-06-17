@@ -16,7 +16,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from typing import Callable
 
-from models import ReportFormat, ScanConfig, ScanDepth, ScanReport
+from models import ReportFormat, ScanConfig, ScanDepth, ScanReport, Severity
 from scanner import run_scan
 
 
@@ -173,6 +173,28 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--sla-by-severity",
+        metavar="SPEC",
+        dest="sla_by_severity",
+        help=(
+            "Per-severity SLA overrides as comma-separated severity=scans pairs, "
+            "e.g. 'critical=1,high=3,medium=10'. Falls back to --sla-max-age for "
+            "severities not listed. A value of 0 disables the SLA for that severity."
+        ),
+    )
+
+    parser.add_argument(
+        "--metrics-output",
+        metavar="FILE",
+        dest="metrics_output",
+        help=(
+            "Write Prometheus/OpenMetrics text exposition (findings by severity, "
+            "risk score, CVE/misconfig counts, max finding age, scan duration) for "
+            "all targets to FILE, in addition to the normal report."
+        ),
+    )
+
+    parser.add_argument(
         "--brief",
         action="store_true",
         help="Omit verbose deep-analysis and remediation guide from text/HTML report",
@@ -300,6 +322,30 @@ def _gather_targets(args: argparse.Namespace) -> list[str]:
     return unique
 
 
+def _parse_sla_overrides(spec: str | None) -> tuple[tuple[str, int], ...]:
+    """Parse 'critical=1,high=3' into (('critical',1),('high',3)). Exits on bad input."""
+    if not spec:
+        return ()
+    valid = {s.value for s in Severity}
+    pairs: list[tuple[str, int]] = []
+    for chunk in spec.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        key, sep, value = chunk.partition("=")
+        key = key.strip().lower()
+        if not sep or key not in valid or not value.strip().lstrip("-").isdigit():
+            from ui import print_error
+            print_error(
+                f"invalid --sla-by-severity entry: {chunk!r}",
+                "use severity=scans pairs, e.g. critical=1,high=3 (severities: "
+                + ", ".join(sorted(valid)) + ")",
+            )
+            sys.exit(2)
+        pairs.append((key, int(value.strip())))
+    return tuple(pairs)
+
+
 def _output_path_for(output: str | None, target: str, fmt: ReportFormat, multi: bool) -> str | None:
     """Per-target output path. For multiple targets, --output is treated as a directory."""
     if not multi:
@@ -369,11 +415,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     ports = tuple(args.ports) if args.ports else default_ports
 
-    from models import ScanReport, Severity, severity_at_least
+    from models import severity_at_least
     multi = len(targets) > 1
     combined = bool(args.combined_output)
     concurrent = args.jobs > 1 and multi
     threshold = Severity(args.fail_on) if args.fail_on else None
+    sla_overrides = _parse_sla_overrides(args.sla_by_severity)
 
     def _scan(target: str) -> ScanReport:
         config = ScanConfig(
@@ -392,6 +439,7 @@ def main(argv: list[str] | None = None) -> None:
             auth_header=args.auth_header,
             auth_cookie=args.auth_cookie,
             sla_max_age=args.sla_max_age,
+            sla_severity_overrides=sla_overrides,
         )
         return run_scan(
             config,
@@ -441,6 +489,18 @@ def main(argv: list[str] | None = None) -> None:
             print_info(f"combined {len(reports)} report(s) into {args.combined_output}")
         except OSError as exc:
             print_error(f"could not write combined artifact to {args.combined_output}", str(exc))
+            sys.exit(2)
+
+    # --- Prometheus / OpenMetrics export (all targets, one file) ---
+    if args.metrics_output:
+        from metrics import render_prometheus
+        from ui import print_info, print_error
+        try:
+            with open(args.metrics_output, "w", encoding="utf-8") as fh:
+                fh.write(render_prometheus(reports))
+            print_info(f"wrote metrics for {len(reports)} target(s) to {args.metrics_output}")
+        except OSError as exc:
+            print_error(f"could not write metrics to {args.metrics_output}", str(exc))
             sys.exit(2)
 
     # --- Fleet overview (only when more than one target was scanned) ---

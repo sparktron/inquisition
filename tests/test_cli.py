@@ -9,7 +9,7 @@ import unittest
 
 from datetime import datetime, timezone
 
-from inquisition import _gather_targets, _output_path_for, _run_targets
+from inquisition import _gather_targets, _output_path_for, _parse_sla_overrides, _run_targets
 from models import ReportFormat, ScanReport
 
 
@@ -52,6 +52,26 @@ class OutputPathTests(unittest.TestCase):
             path = _output_path_for(out_dir, "https://a.com", ReportFormat.JSON, multi=True)
             self.assertEqual(path, os.path.join(out_dir, "https___a.com.json"))
             self.assertTrue(os.path.isdir(out_dir))  # directory is created
+
+
+class SlaOverrideParseTests(unittest.TestCase):
+    def test_empty_is_empty(self) -> None:
+        self.assertEqual(_parse_sla_overrides(None), ())
+        self.assertEqual(_parse_sla_overrides(""), ())
+
+    def test_parses_pairs(self) -> None:
+        self.assertEqual(
+            _parse_sla_overrides("critical=1, high=3 ,medium=10"),
+            (("critical", 1), ("high", 3), ("medium", 10)),
+        )
+
+    def test_unknown_severity_exits(self) -> None:
+        with self.assertRaises(SystemExit):
+            _parse_sla_overrides("bogus=2")
+
+    def test_non_numeric_exits(self) -> None:
+        with self.assertRaises(SystemExit):
+            _parse_sla_overrides("high=soon")
 
 
 class RunTargetsTests(unittest.TestCase):
