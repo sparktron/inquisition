@@ -227,8 +227,15 @@ class ModuleFindingTests(unittest.TestCase):
 
     def _dh_finding(self, dh: DhResult) -> list[Finding]:
         findings: list[Finding] = []
-        with patch.object(tls_analysis, "probe_dh_parameters", return_value=dh):
+        with patch.object(tls_analysis, "probe_dh_parameters", return_value=dh), \
+             patch.object(tls_analysis, "probe_tls13_group", return_value=DhResult(tested=True)):
             self._module()._check_dh_parameters("example.test", findings)
+        return findings
+
+    def _tls13_finding(self, group: DhResult) -> list[Finding]:
+        findings: list[Finding] = []
+        with patch.object(tls_analysis, "probe_tls13_group", return_value=group):
+            self._module()._check_tls13_group("example.test", findings)
         return findings
 
     def test_dh_512_bit_is_high(self) -> None:
@@ -254,6 +261,22 @@ class ModuleFindingTests(unittest.TestCase):
 
     def test_untested_dh_emits_nothing(self) -> None:
         self.assertEqual(self._dh_finding(DhResult(tested=False)), [])
+
+    def test_tls13_ffdhe_is_low(self) -> None:
+        findings = self._tls13_finding(DhResult(tested=True, kex_type="DH", bits=2048))
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].severity.name, "LOW")
+        self.assertIn("finite-field", findings[0].title)
+
+    def test_tls13_undersized_ffdhe_is_medium(self) -> None:
+        findings = self._tls13_finding(DhResult(tested=True, kex_type="DH", bits=1024))
+        self.assertEqual(findings[0].severity.name, "MEDIUM")
+
+    def test_tls13_ecdhe_emits_nothing(self) -> None:
+        self.assertEqual(self._tls13_finding(DhResult(tested=True, kex_type="X25519", bits=253)), [])
+
+    def test_tls13_untested_emits_nothing(self) -> None:
+        self.assertEqual(self._tls13_finding(DhResult(tested=False)), [])
 
 
 if __name__ == "__main__":

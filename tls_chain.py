@@ -238,30 +238,23 @@ def parse_server_temp_key(output: str) -> tuple[str, int] | None:
         return None
 
 
-def probe_dh_parameters(
+def _run_openssl_kex(
     host: str,
     port: int,
     timeout: float,
-    *,
-    runner: Callable[..., Any] = subprocess.run,
+    extra_args: list[str],
+    runner: Callable[..., Any],
 ) -> DhResult:
-    """Force a TLS 1.2 finite-field DHE handshake and report the DH group size.
+    """Run ``openssl s_client`` with ``extra_args`` and parse its negotiated key.
 
-    Returns ``tested=False`` when the probe cannot run (openssl missing, or the
-    process failed) so callers can stay silent rather than guess. A server that
-    only offers ECDHE or TLS 1.3 produces no "Server Temp Key: DH" line and is
-    reported with an empty ``kex_type`` — no weakness.
+    Returns ``tested=False`` when the probe cannot run (openssl missing or the
+    process failed). A handshake that completes without a matching "Server Temp
+    Key" line yields ``tested=True`` with an empty ``kex_type``.
     """
     if not is_openssl_available():
         return DhResult(tested=False, error="openssl not found on PATH")
 
-    cmd = [
-        "openssl", "s_client",
-        "-connect", f"{host}:{port}",
-        "-servername", host,
-        "-cipher", "DHE",
-        "-tls1_2",
-    ]
+    cmd = ["openssl", "s_client", "-connect", f"{host}:{port}", "-servername", host, *extra_args]
     try:
         proc = runner(
             cmd,
@@ -276,11 +269,42 @@ def probe_dh_parameters(
     combined = (getattr(proc, "stdout", "") or "") + "\n" + (getattr(proc, "stderr", "") or "")
     parsed = parse_server_temp_key(combined)
     if parsed is None:
-        # No DHE handshake completed (ECDHE-only / TLS 1.3-only server, or no
-        # shared cipher). Nothing to flag.
         return DhResult(tested=True, kex_type="", bits=0)
     kex_type, bits = parsed
     return DhResult(tested=True, kex_type=kex_type, bits=bits)
+
+
+def probe_dh_parameters(
+    host: str,
+    port: int,
+    timeout: float,
+    *,
+    runner: Callable[..., Any] = subprocess.run,
+) -> DhResult:
+    """Force a TLS 1.2 finite-field DHE handshake and report the DH group size.
+
+    A server that only offers ECDHE or TLS 1.3 produces no "Server Temp Key: DH"
+    line and is reported with an empty ``kex_type`` — no weakness.
+    """
+    return _run_openssl_kex(host, port, timeout, ["-cipher", "DHE", "-tls1_2"], runner)
+
+
+def probe_tls13_group(
+    host: str,
+    port: int,
+    timeout: float,
+    *,
+    runner: Callable[..., Any] = subprocess.run,
+) -> DhResult:
+    """Report the key-exchange group a TLS 1.3 handshake negotiates.
+
+    TLS 1.3 removed the weak finite-field groups, so a finite-field result
+    (``kex_type == "DH"``, an ``ffdheN`` group) is at least 2048-bit by spec but
+    still worth noting next to the preferred ECDHE groups (X25519, P-256). When
+    the server does not speak TLS 1.3 the handshake fails and ``kex_type`` is
+    empty.
+    """
+    return _run_openssl_kex(host, port, timeout, ["-tls1_3"], runner)
 
 
 def _short(message: str, limit: int = 200) -> str:

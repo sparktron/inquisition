@@ -15,7 +15,13 @@ from typing import Any, cast
 
 from models import Finding, FindingCategory, Severity
 from modules.base import BaseModule
-from tls_chain import analyze_scts, check_ocsp, fetch_verified_chain, probe_dh_parameters
+from tls_chain import (
+    analyze_scts,
+    check_ocsp,
+    fetch_verified_chain,
+    probe_dh_parameters,
+    probe_tls13_group,
+)
 
 
 def _get_cert_info(host: str, port: int, timeout: float) -> dict[str, Any] | None:
@@ -321,7 +327,39 @@ class TlsAnalysisModule(BaseModule):
         return findings
 
     def _check_dh_parameters(self, target: str, findings: list[Finding]) -> None:
-        """Flag weak finite-field DH groups (Logjam-class) via a forced DHE handshake."""
+        """Grade finite-field DH groups for both TLS 1.2 (Logjam) and TLS 1.3."""
+        self._check_tls12_dh(target, findings)
+        self._check_tls13_group(target, findings)
+
+    def _check_tls13_group(self, target: str, findings: list[Finding]) -> None:
+        """Note TLS 1.3 finite-field key-exchange groups (ECDHE is preferred)."""
+        self._rate_limit()
+        group = probe_tls13_group(target, 443, self.config.timeout)
+        if not group.tested or group.kex_type.upper() != "DH" or group.bits <= 0:
+            # No TLS 1.3, or it negotiated an ECDHE group — the expected good case.
+            return
+
+        if group.bits < 2048:
+            findings.append(Finding(
+                title=f"Undersized TLS 1.3 DH group: {group.bits}-bit",
+                category=FindingCategory.TLS,
+                severity=Severity.MEDIUM,
+                evidence=f"TLS 1.3 negotiated a finite-field group of only {group.bits} bits",
+                impact="TLS 1.3 finite-field groups should be at least 2048-bit (RFC 7919 ffdhe2048+)",
+                remediation="Configure ffdhe2048 or stronger, or prefer ECDHE groups (X25519, secp256r1)",
+            ))
+        else:
+            findings.append(Finding(
+                title=f"TLS 1.3 uses a finite-field DH group: {group.bits}-bit",
+                category=FindingCategory.TLS,
+                severity=Severity.LOW,
+                evidence=f"TLS 1.3 negotiated a {group.bits}-bit finite-field (ffdhe) group",
+                impact="Finite-field groups are slower and less common than elliptic-curve groups",
+                remediation="Prefer ECDHE groups (X25519, secp256r1) for TLS 1.3 key exchange",
+            ))
+
+    def _check_tls12_dh(self, target: str, findings: list[Finding]) -> None:
+        """Flag weak finite-field DH groups (Logjam-class) via a forced TLS 1.2 DHE handshake."""
         self._rate_limit()
         dh = probe_dh_parameters(target, 443, self.config.timeout)
         if not dh.tested or dh.kex_type.upper() != "DH" or dh.bits <= 0:
