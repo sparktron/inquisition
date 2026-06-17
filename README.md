@@ -278,7 +278,9 @@ inquisition --targets-file hosts.txt --format sarif \
 | `--notify` | URL | none | Webhook to POST to. Slack incoming-webhook URLs (`hooks.slack.com`) get a formatted message; any other URL gets structured JSON |
 | `--notify-min-severity` | `critical` \| `high` \| `medium` \| `low` | `high` | For `--notify-on regression`, the minimum severity of a new/worsened finding that triggers a notification |
 | `--notify-on` | `regression` \| `changes` \| `always` | `regression` | When to notify: only new/worsened findings at/above the threshold (`regression`); any new/fixed/regressed/improved finding (`changes`); or every scan, even a clean one, as a heartbeat (`always`) |
+| `--sla-max-age` | int | 0 (off) | Warn and notify when a finding has stayed open beyond N consecutive scans (notifies even if nothing changed) |
 | `--history-size` | int | 10 | Number of past scans retained per target for trend tracking |
+| `--history-max-age-days` | int | 0 (off) | Also drop history entries older than this many days (count cap still applies) |
 
 Each scan is diffed against the previous run for the same target (state is kept
 under `reports/.state/`). Inquisition also keeps a rolling window of the last
@@ -294,6 +296,14 @@ critical+high counts) at the end of each run. Continuous-assurance extras:
   findings across the history window with an improving/worsening/stable label.
 - **History in JSON** — JSON (and the combined fleet JSON) embed the `history`
   window and a `trend` summary for downstream dashboards.
+- **SLA alerting** — `--sla-max-age N` flags findings open beyond N consecutive
+  scans; they print a warning and are pushed to the webhook (with an
+  `sla_breaches` payload section) even when nothing changed.
+- **Fleet HTML dashboard** — a fleet run with `--combined-output report.html`
+  renders one dashboard page ranking every target by risk, with grade, severity
+  counts, and a per-target trend sparkline.
+- **History retention** — `--history-max-age-days` prunes the trend window by
+  age in addition to the `--history-size` count cap.
 
 Notification payloads include a severity summary and, for `changes`/`always`,
 the fixed and improved findings as well as regressions. See

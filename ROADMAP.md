@@ -363,6 +363,14 @@ Goal: the tool's existing output is correct and its claims are true.
       of total findings across the history window with a direction label.
 - [x] **History in JSON/combined artifact** — JSON reports embed the `history`
       window and a `trend` summary (carried through the combined fleet JSON).
+- [x] **SLA / age-based alerting** — `--sla-max-age N` warns and notifies when a
+      finding stays open beyond N consecutive scans (fires even on a quiet diff;
+      adds an `sla_breaches` payload section).
+- [x] **Fleet HTML dashboard** — combined HTML output (`render_fleet_dashboard`)
+      renders one page ranking every target by risk with grade, counts, and a
+      per-target trend sparkline.
+- [x] **Age-based history pruning** — `--history-max-age-days` drops history
+      entries older than the cutoff (applied before the count cap).
 
 ### Phase 4 — Active Testing (optional, authorization-gated)
 - [x] Integrate Nuclei behind an explicit `--active` flag (`active_scan.py`)
@@ -383,7 +391,7 @@ Goal: the tool's existing output is correct and its claims are true.
 ### Suggested immediate next step
 All planned phases and follow-ons are complete (detection-quality, notifications,
 TLS depth, fleet/multi-target, combined artifact, concurrent execution, rolling
-trend history, per-finding age, HTML sparkline, and JSON history export).
-Candidate future directions: SLA/age-based alerting (notify when a finding stays
-open beyond N scans); a fleet-wide HTML dashboard across targets; and pruning
-stale history entries by age rather than only by count.
+trend history, per-finding age, HTML sparkline, JSON history export, SLA
+alerting, fleet dashboard, and age-based history pruning). Candidate future
+directions: configurable SLA thresholds per severity; a fleet dashboard trend
+column comparing scans; and emitting Prometheus/OpenMetrics for scraping.
