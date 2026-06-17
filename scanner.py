@@ -25,7 +25,7 @@ from diffing import (
 )
 from active_scan import run_active_scan
 from models import ReportFormat, ScanReport, Severity
-from notifications import NOTIFY_REGRESSION, notify
+from notifications import NOTIFY_REGRESSION, notify, sla_breaches
 from modules import ALL_MODULES
 from modules.base import BaseModule
 from modules.crawler import CrawlerModule
@@ -166,6 +166,7 @@ def run_scan(
     notify_on: str = NOTIFY_REGRESSION,
     write_report: bool = True,
     history_size: int = 10,
+    history_max_age_days: int = 0,
     quiet: bool = False,
 ) -> ScanReport:
     """Execute a full scan with the given configuration.
@@ -299,12 +300,23 @@ def run_scan(
             _print_diff(diff_result)
         try:
             save_snapshot(report, state_dir)
-            report.history = append_to_history(report, state_dir, max_entries=history_size)
+            report.history = append_to_history(
+                report, state_dir, max_entries=history_size, max_age_days=history_max_age_days
+            )
             trend = compute_trend(report.history)
             if not quiet:
                 _print_trend(trend)
         except OSError as exc:
             report.errors.append(f"Could not save scan snapshot: {exc}")
+
+        # --- SLA breaches (findings open beyond the age threshold) ---
+        breaches = sla_breaches(report, config.sla_max_age)
+        if breaches:
+            print_warning(
+                f"SLA: {len(breaches)} finding(s) open beyond {config.sla_max_age} scans — "
+                + ", ".join(f"{f.title} ({f.age_scans})" for f in breaches[:3])
+                + (" …" if len(breaches) > 3 else "")
+            )
 
         # --- Scan notification ---
         if notify_url:
@@ -316,6 +328,7 @@ def run_scan(
                     notify_min_severity,
                     policy=notify_on,
                     report=report,
+                    sla_max_age=config.sla_max_age,
                 ):
                     if not quiet:
                         print_info(f"scan notification sent ({notify_on})")

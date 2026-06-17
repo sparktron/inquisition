@@ -25,7 +25,7 @@ from __future__ import annotations
 from typing import Any, Callable, Protocol
 
 from diffing import DiffResult, FindingDelta
-from models import ScanReport, Severity, severity_at_least
+from models import Finding, ScanReport, Severity, severity_at_least
 
 # Notification policies (values accepted by --notify-on).
 NOTIFY_REGRESSION = "regression"
@@ -85,6 +85,14 @@ def select_deltas(
     return list(diff.new), list(diff.regressed), list(diff.fixed), list(diff.improved)
 
 
+def sla_breaches(report: ScanReport | None, sla_max_age: int) -> list[Finding]:
+    """Findings open longer than ``sla_max_age`` consecutive scans (sorted worst-first)."""
+    if report is None or sla_max_age <= 0:
+        return []
+    breached = [f for f in report.findings if f.age_scans > sla_max_age]
+    return sorted(breached, key=lambda f: f.age_scans, reverse=True)
+
+
 def build_summary(report: ScanReport) -> dict[str, Any]:
     """A compact severity summary for inclusion in notification payloads."""
     counts = report.summary_counts()
@@ -112,10 +120,12 @@ def build_slack_payload(
     fixed: list[FindingDelta] | None = None,
     improved: list[FindingDelta] | None = None,
     summary: dict[str, Any] | None = None,
+    breaches: list[Finding] | None = None,
 ) -> dict[str, Any]:
     fixed = fixed or []
     improved = improved or []
-    icon = ":rotating_light:" if (new or regressed) else ":white_check_mark:"
+    breaches = breaches or []
+    icon = ":rotating_light:" if (new or regressed or breaches) else ":white_check_mark:"
     lines = [f"{icon} *Inquisition scan: {target}*"]
     if summary:
         lines.append(_summary_line(summary))
@@ -127,7 +137,9 @@ def build_slack_payload(
         lines.append(f"• *IMPROVED* [{d.previous_severity}→{d.severity}] {d.title}")
     for d in fixed:
         lines.append(f"• *FIXED* [{d.severity}] {d.title}")
-    if not (new or regressed or improved or fixed):
+    for f in breaches:
+        lines.append(f"• :alarm_clock: *SLA* [{f.severity.value}] {f.title} — open {f.age_scans} scans")
+    if not (new or regressed or improved or fixed or breaches):
         lines.append("No change since the previous scan.")
     return {"text": "\n".join(lines)}
 
@@ -137,6 +149,16 @@ def _delta_dict(d: FindingDelta, *, with_previous: bool = False) -> dict[str, An
     if with_previous:
         out["previous_severity"] = d.previous_severity or ""
     return out
+
+
+def _breach_dict(f: Finding) -> dict[str, Any]:
+    return {
+        "title": f.title,
+        "category": f.category.value,
+        "severity": f.severity.value,
+        "age_scans": f.age_scans,
+        "first_seen": f.first_seen,
+    }
 
 
 def build_generic_payload(
@@ -149,6 +171,7 @@ def build_generic_payload(
     improved: list[FindingDelta] | None = None,
     summary: dict[str, Any] | None = None,
     policy: str = NOTIFY_REGRESSION,
+    breaches: list[Finding] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "tool": "inquisition",
@@ -163,6 +186,8 @@ def build_generic_payload(
         payload["fixed"] = [_delta_dict(d) for d in fixed]
     if improved:
         payload["improved"] = [_delta_dict(d, with_previous=True) for d in improved]
+    if breaches:
+        payload["sla_breaches"] = [_breach_dict(f) for f in breaches]
     if summary is not None:
         payload["summary"] = summary
     return payload
@@ -179,14 +204,16 @@ def build_payload(
     improved: list[FindingDelta] | None = None,
     summary: dict[str, Any] | None = None,
     policy: str = NOTIFY_REGRESSION,
+    breaches: list[Finding] | None = None,
 ) -> dict[str, Any]:
     if "hooks.slack.com" in url:
         return build_slack_payload(
-            target, new, regressed, fixed=fixed, improved=improved, summary=summary
+            target, new, regressed, fixed=fixed, improved=improved,
+            summary=summary, breaches=breaches,
         )
     return build_generic_payload(
         target, new, regressed, threshold,
-        fixed=fixed, improved=improved, summary=summary, policy=policy,
+        fixed=fixed, improved=improved, summary=summary, policy=policy, breaches=breaches,
     )
 
 
@@ -198,21 +225,24 @@ def notify(
     *,
     policy: str = NOTIFY_REGRESSION,
     report: ScanReport | None = None,
+    sla_max_age: int = 0,
     timeout: float = 10.0,
     sender: Callable[..., Any] | None = None,
 ) -> bool:
-    """Send a notification if the diff qualifies under ``policy``. Returns True if sent.
+    """Send a notification if the diff qualifies under ``policy``, or an SLA breach exists.
 
-    ``sender`` defaults to ``requests.post``; inject a fake in tests.
+    A finding open longer than ``sla_max_age`` scans always triggers a send,
+    even when the diff itself is quiet. ``sender`` defaults to ``requests.post``.
     """
-    if not should_notify(diff, threshold, policy):
+    breaches = sla_breaches(report, sla_max_age)
+    if not should_notify(diff, threshold, policy) and not breaches:
         return False
 
     new, regressed, fixed, improved = select_deltas(diff, threshold, policy)
     summary = build_summary(report) if report is not None else None
     payload = build_payload(
         url, target, new, regressed, threshold,
-        fixed=fixed, improved=improved, summary=summary, policy=policy,
+        fixed=fixed, improved=improved, summary=summary, policy=policy, breaches=breaches,
     )
 
     post = sender

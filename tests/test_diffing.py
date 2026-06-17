@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -189,6 +190,21 @@ class TrendTests(unittest.TestCase):
             self.assertEqual(load_history("example.com", state_dir), history)
             trend = compute_trend(history)
             self.assertEqual(trend.span, 3)
+
+    def test_age_pruning_drops_stale_entries(self) -> None:
+        with TemporaryDirectory() as tmp:
+            state_dir = Path(tmp)
+            # Seed an old entry (2 years ago) and a recent one directly.
+            old = {"taken_at": "2024-01-01T00:00:00+00:00", "total": 9, "counts": {"high": 9}}
+            recent = {"taken_at": datetime.now(timezone.utc).isoformat(), "total": 1, "counts": {"low": 1}}
+            with open(state_dir / "example.com.history.json", "w", encoding="utf-8") as fh:
+                json.dump({"target": "example.com", "entries": [old, recent]}, fh)
+
+            report = _report([_finding("f", Severity.LOW)])
+            history = append_to_history(report, state_dir, max_entries=50, max_age_days=30)
+            # The 2-year-old entry is gone; the recent one and the new append remain.
+            self.assertEqual(len(history), 2)
+            self.assertNotIn("2024-01-01T00:00:00+00:00", [e["taken_at"] for e in history])
 
 
 if __name__ == "__main__":

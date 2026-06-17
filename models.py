@@ -124,6 +124,9 @@ class ScanConfig:
     # Internal scanner handoff: populated after the crawler pre-discovery pass
     # so path-aware modules can inspect real site URLs, not only fixed lists.
     discovered_urls: tuple[str, ...] = ()
+    # SLA alerting: warn/notify when a finding has stayed open beyond this many
+    # consecutive scans (0 = disabled).
+    sla_max_age: int = 0
 
 
 # ---------------------------------------------------------------------------

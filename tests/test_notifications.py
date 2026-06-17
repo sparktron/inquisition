@@ -17,7 +17,21 @@ from notifications import (
     notify,
     select_deltas,
     should_notify,
+    sla_breaches,
 )
+
+
+def _aged_report(*ages: int) -> ScanReport:
+    report = ScanReport(target="example.com", started_at=datetime.now(timezone.utc))
+    for i, age in enumerate(ages):
+        report.findings.append(Finding(
+            title=f"finding-{i}",
+            category=FindingCategory.TLS,
+            severity=Severity.HIGH,
+            evidence="e",
+            age_scans=age,
+        ))
+    return report
 
 
 def _report_with(*severities: Severity) -> ScanReport:
@@ -196,6 +210,43 @@ class SummaryPayloadTests(unittest.TestCase):
         )
         self.assertTrue(sent)
         self.assertEqual(sender.calls[0]["json"]["summary"]["total"], 1)
+
+
+class SlaTests(unittest.TestCase):
+    def test_sla_breaches_filters_and_sorts(self) -> None:
+        report = _aged_report(1, 5, 3, 8)  # threshold 3 -> ages 5 and 8 breach
+        breaches = sla_breaches(report, sla_max_age=3)
+        self.assertEqual([f.age_scans for f in breaches], [8, 5])  # worst-first
+
+    def test_sla_disabled_returns_nothing(self) -> None:
+        self.assertEqual(sla_breaches(_aged_report(9), sla_max_age=0), [])
+        self.assertEqual(sla_breaches(None, sla_max_age=3), [])
+
+    def test_notify_fires_on_breach_even_with_quiet_diff(self) -> None:
+        sender = RecordingSender()
+        diff = DiffResult(unchanged_count=5)  # nothing changed
+        sent = notify(
+            "https://example.test/hook", "example.com", diff, Severity.HIGH,
+            report=_aged_report(7), sla_max_age=3, sender=sender,
+        )
+        self.assertTrue(sent)
+        self.assertEqual(sender.calls[0]["json"]["sla_breaches"][0]["age_scans"], 7)
+
+    def test_no_breach_quiet_diff_does_not_send(self) -> None:
+        sender = RecordingSender()
+        diff = DiffResult(unchanged_count=5)
+        sent = notify(
+            "https://example.test/hook", "example.com", diff, Severity.HIGH,
+            report=_aged_report(2), sla_max_age=3, sender=sender,
+        )
+        self.assertFalse(sent)
+
+    def test_slack_payload_marks_breaches(self) -> None:
+        payload = build_slack_payload(
+            "example.com", [], [], breaches=_aged_report(6).findings
+        )
+        self.assertIn("SLA", payload["text"])
+        self.assertIn("open 6 scans", payload["text"])
 
 
 if __name__ == "__main__":

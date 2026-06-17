@@ -151,6 +151,28 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--history-max-age-days",
+        type=int,
+        default=0,
+        metavar="DAYS",
+        dest="history_max_age_days",
+        help="Also drop history entries older than DAYS (0 = retain by count only)",
+    )
+
+    parser.add_argument(
+        "--sla-max-age",
+        type=int,
+        default=0,
+        metavar="N",
+        dest="sla_max_age",
+        help=(
+            "Warn (and notify, if --notify is set) when a finding has stayed open "
+            "beyond N consecutive scans (0 = disabled). An SLA breach notifies even "
+            "when nothing changed since the previous scan."
+        ),
+    )
+
+    parser.add_argument(
         "--brief",
         action="store_true",
         help="Omit verbose deep-analysis and remediation guide from text/HTML report",
@@ -369,6 +391,7 @@ def main(argv: list[str] | None = None) -> None:
             active_engine=args.active_engine,
             auth_header=args.auth_header,
             auth_cookie=args.auth_cookie,
+            sla_max_age=args.sla_max_age,
         )
         return run_scan(
             config,
@@ -381,6 +404,7 @@ def main(argv: list[str] | None = None) -> None:
             notify_on=args.notify_on,
             write_report=not combined,
             history_size=args.history_size,
+            history_max_age_days=args.history_max_age_days,
             quiet=concurrent,
         )
 

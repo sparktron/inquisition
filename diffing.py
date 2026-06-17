@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -243,18 +243,49 @@ def load_history(target: str, state_dir: Path) -> list[dict[str, Any]]:
     return [e for e in entries if isinstance(e, dict)]
 
 
-def append_to_history(
-    report: ScanReport, state_dir: Path, max_entries: int = _DEFAULT_HISTORY_SIZE
+def _prune_by_age(
+    history: list[dict[str, Any]], max_age_days: int, now: datetime
 ) -> list[dict[str, Any]]:
-    """Append a compact entry for ``report``, cap to ``max_entries``, persist, return it."""
+    """Drop entries older than ``max_age_days`` (0 disables age pruning)."""
+    if max_age_days <= 0:
+        return history
+    cutoff = now - timedelta(days=max_age_days)
+    kept: list[dict[str, Any]] = []
+    for entry in history:
+        raw = str(entry.get("taken_at", ""))
+        try:
+            taken = datetime.fromisoformat(raw)
+        except ValueError:
+            kept.append(entry)  # unparseable timestamps are kept, not silently dropped
+            continue
+        if taken.tzinfo is None:
+            taken = taken.replace(tzinfo=timezone.utc)
+        if taken >= cutoff:
+            kept.append(entry)
+    return kept
+
+
+def append_to_history(
+    report: ScanReport,
+    state_dir: Path,
+    max_entries: int = _DEFAULT_HISTORY_SIZE,
+    max_age_days: int = 0,
+) -> list[dict[str, Any]]:
+    """Append a compact entry for ``report``, prune, persist, and return the window.
+
+    Pruning applies age first (drop entries older than ``max_age_days``, 0 =
+    disabled) then a count cap (keep the most recent ``max_entries``).
+    """
     counts = report.summary_counts()
+    now = report.finished_at or report.started_at or datetime.now(timezone.utc)
     entry = {
-        "taken_at": (report.finished_at or report.started_at or datetime.now(timezone.utc)).isoformat(),
+        "taken_at": now.isoformat(),
         "total": sum(counts.values()),
         "counts": counts,
     }
     history = load_history(report.target, state_dir)
     history.append(entry)
+    history = _prune_by_age(history, max_age_days, now)
     if max_entries > 0:
         history = history[-max_entries:]
 
