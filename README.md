@@ -215,9 +215,17 @@ python inquisition.py example.com -o report.txt    # → Text format
 #### Target & Scope
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `target` | string | *required* | Hostname, IP address, or internal DNS name |
+| `target` | string(s) | *required* | One or more hostnames/IPs (space-separated). Multiple targets run a fleet scan |
+| `--targets-file` | path | none | Read additional targets from a file, one per line (`#` comments and blank lines ignored) |
 | `-d`, `--depth` | `quick` \| `standard` \| `deep` | `standard` | Scan depth: controls ports and path probing |
 | `--ports` | list of ints | 20 well-known | Override default ports (e.g. `--ports 22 80 443 8080`) |
+
+**Fleet scanning:** pass several targets (or `--targets-file`) to scan each in
+turn. A combined overview table prints at the end, each target is diffed and
+notified independently, and `--fail-on` exits non-zero if *any* target meets the
+threshold. With multiple targets, `--output` is treated as a **directory** and a
+per-target report (`<target>.<ext>`) is written into it; with a single target it
+remains a file path.
 
 #### Output & Reporting
 | Option | Type | Default | Description |

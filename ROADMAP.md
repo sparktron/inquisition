@@ -331,6 +331,16 @@ Goal: the tool's existing output is correct and its claims are true.
       body/header signature with a base confidence and corroborates agreeing
       signals per technology (`_TechAccumulator`), emitting one graded finding
       per tech. Confidence is rendered in text/JSON/HTML reports.
+- [x] **Confidence across signature modules** — `waf_detection` grades and
+      aggregates header/cookie/body signals per product (`_WafAccumulator`);
+      `content_discovery` grades admin/route findings by status code
+      (200 = CONFIRMED, 401/403 = HIGH, 301/302 = MEDIUM).
+
+### Fleet & multi-target
+- [x] **Multi-target scan mode** — the CLI accepts several positional targets
+      and/or `--targets-file`; each target is scanned, diffed, and notified
+      independently, a combined overview table prints at the end, `--output` acts
+      as a per-target directory, and `--fail-on` trips if any target qualifies.
 
 ### Phase 4 — Active Testing (optional, authorization-gated)
 - [x] Integrate Nuclei behind an explicit `--active` flag (`active_scan.py`)
@@ -349,7 +359,8 @@ Goal: the tool's existing output is correct and its claims are true.
 ---
 
 ### Suggested immediate next step
-All planned phases plus the follow-on detection-quality and notification work are
-complete. Candidate future directions: extend graded confidence to the WAF and
-content-discovery signatures; weak DH-parameter grading for TLS 1.3 named groups;
-and a multi-target scan/report mode for fleets.
+All planned phases and the detection-quality, notification, TLS-depth, and
+fleet/multi-target follow-ons are complete. Candidate future directions: a single
+combined SARIF/JSON artifact across a fleet run; concurrent multi-target
+execution (currently sequential); and trend history beyond the single prior
+snapshot (e.g. rolling N-scan deltas).
