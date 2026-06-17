@@ -147,6 +147,7 @@ def run_scan(
     notify_url: str | None = None,
     notify_min_severity: Severity = Severity.HIGH,
     notify_on: str = NOTIFY_REGRESSION,
+    write_report: bool = True,
 ) -> ScanReport:
     """Execute a full scan with the given configuration."""
 
@@ -279,27 +280,31 @@ def run_scan(
                 print_warning(f"scan notification failed: {exc}")
 
     # --- Render report ---
-    output = render(report, config.report_format, brief=brief)
-
-    if not output_path:
-        output_path = str(_default_report_path(report, config.report_format))
-
     report_saved = False
-    try:
-        with open(output_path, "w", encoding="utf-8") as fh:
-            fh.write(output)
-        report_saved = True
-        report.report_path = output_path
-    except OSError as exc:
-        err_msg = str(exc)
-        if "Permission denied" in err_msg:
-            hint = "check write permissions on the target directory"
-        elif "No such file" in err_msg:
-            hint = "parent directory does not exist"
-        else:
-            hint = err_msg
-        print_error(f"could not write report to {output_path}", hint)
-        console.print(output)
+    summary_path = "(combined artifact)"
+    if write_report:
+        output = render(report, config.report_format, brief=brief)
+
+        if not output_path:
+            output_path = str(_default_report_path(report, config.report_format))
+
+        try:
+            with open(output_path, "w", encoding="utf-8") as fh:
+                fh.write(output)
+            report_saved = True
+            report.report_path = output_path
+            summary_path = output_path
+        except OSError as exc:
+            err_msg = str(exc)
+            if "Permission denied" in err_msg:
+                hint = "check write permissions on the target directory"
+            elif "No such file" in err_msg:
+                hint = "parent directory does not exist"
+            else:
+                hint = err_msg
+            print_error(f"could not write report to {output_path}", hint)
+            console.print(output)
+            summary_path = "(not saved)"
 
     # --- Summary ---
     counts = report.summary_counts()
@@ -309,7 +314,7 @@ def run_scan(
         counts=counts,
         cve_count=len(report.cve_records),
         misconfig_count=len(report.misconfigurations),
-        output_path=output_path if report_saved else "(not saved)",
+        output_path=summary_path,
     )
 
     return report

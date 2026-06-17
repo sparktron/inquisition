@@ -316,9 +316,9 @@ def _finding_to_dict(f: Finding) -> dict[str, Any]:
     return d
 
 
-def render_json(report: ScanReport) -> str:
-    """Produce a JSON report."""
-    data: dict[str, Any] = {
+def _json_report_dict(report: ScanReport) -> dict[str, Any]:
+    """The per-report JSON body, reused by single and combined renderers."""
+    return {
         "target": report.target,
         "started_at": report.started_at.isoformat(),
         "finished_at": report.finished_at.isoformat() if report.finished_at else None,
@@ -344,9 +344,14 @@ def render_json(report: ScanReport) -> str:
             }
             for m in report.misconfigurations
         ],
-        "tool_reference": {cat.value: tools for cat, tools in TOOL_REFERENCE.items()},
         "errors": report.errors,
     }
+
+
+def render_json(report: ScanReport) -> str:
+    """Produce a JSON report."""
+    data = _json_report_dict(report)
+    data["tool_reference"] = {cat.value: tools for cat, tools in TOOL_REFERENCE.items()}
     return json.dumps(data, indent=2)
 
 
@@ -381,8 +386,8 @@ def _sarif_rule_id(f: Finding) -> str:
     return f"{f.category.value}/{slug}" if slug else f.category.value
 
 
-def render_sarif(report: ScanReport) -> str:
-    """Produce a SARIF 2.1.0 report for CI ingestion / GitHub code scanning."""
+def _sarif_run(report: ScanReport) -> dict[str, Any]:
+    """Build a single SARIF ``run`` for one target's report."""
     rules: dict[str, dict[str, Any]] = {}
     results: list[dict[str, Any]] = []
 
@@ -419,20 +424,25 @@ def render_sarif(report: ScanReport) -> str:
             "partialFingerprints": {"inquisitionFingerprint": rule_id},
         })
 
+    return {
+        "tool": {
+            "driver": {
+                "name": "Inquisition",
+                "informationUri": _TOOL_URI,
+                "version": _TOOL_VERSION,
+                "rules": list(rules.values()),
+            }
+        },
+        "results": results,
+    }
+
+
+def render_sarif(report: ScanReport) -> str:
+    """Produce a SARIF 2.1.0 report for CI ingestion / GitHub code scanning."""
     sarif: dict[str, Any] = {
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
-        "runs": [{
-            "tool": {
-                "driver": {
-                    "name": "Inquisition",
-                    "informationUri": _TOOL_URI,
-                    "version": _TOOL_VERSION,
-                    "rules": list(rules.values()),
-                }
-            },
-            "results": results,
-        }],
+        "runs": [_sarif_run(report)],
     }
     return json.dumps(sarif, indent=2)
 
@@ -786,3 +796,62 @@ def render(report: ScanReport, fmt: ReportFormat, *, brief: bool = False) -> str
     if fmt == ReportFormat.SARIF:
         return render_sarif(report)
     return render_text(report, brief=brief)
+
+
+# ---------------------------------------------------------------------------
+# Combined (fleet) reports — one artifact spanning several targets
+# ---------------------------------------------------------------------------
+
+def _fleet_summary(reports: list[ScanReport]) -> dict[str, Any]:
+    """Aggregate severity counts across every report in a fleet run."""
+    totals: dict[str, int] = {sev.value: 0 for sev in Severity}
+    for report in reports:
+        for sev_value, count in report.summary_counts().items():
+            totals[sev_value] += count
+    return {
+        "targets": [r.target for r in reports],
+        "target_count": len(reports),
+        "total_findings": sum(totals.values()),
+        "counts": totals,
+    }
+
+
+def render_json_combined(reports: list[ScanReport]) -> str:
+    """One JSON document holding every target's report plus a fleet summary."""
+    data: dict[str, Any] = {
+        "tool": "inquisition",
+        "report_type": "fleet",
+        "fleet_summary": _fleet_summary(reports),
+        "reports": [_json_report_dict(r) for r in reports],
+        "tool_reference": {cat.value: tools for cat, tools in TOOL_REFERENCE.items()},
+    }
+    return json.dumps(data, indent=2)
+
+
+def render_sarif_combined(reports: list[ScanReport]) -> str:
+    """One SARIF 2.1.0 document with one run per target (GitHub accepts many runs)."""
+    sarif: dict[str, Any] = {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [_sarif_run(r) for r in reports],
+    }
+    return json.dumps(sarif, indent=2)
+
+
+def render_combined(reports: list[ScanReport], fmt: ReportFormat, *, brief: bool = False) -> str:
+    """Render several reports into a single combined artifact.
+
+    JSON and SARIF produce structured merges (a fleet object / multi-run SARIF).
+    Text and HTML are concatenated with a per-target separator.
+    """
+    if fmt == ReportFormat.JSON:
+        return render_json_combined(reports)
+    if fmt == ReportFormat.SARIF:
+        return render_sarif_combined(reports)
+    if fmt == ReportFormat.HTML:
+        return "\n<hr>\n".join(render_html(r) for r in reports)
+    banner = "\n\n" + _hr("#") + "\n"
+    return banner.join(
+        f"  FLEET REPORT {idx}/{len(reports)} — {r.target}\n{render_text(r, brief=brief)}"
+        for idx, r in enumerate(reports, 1)
+    )

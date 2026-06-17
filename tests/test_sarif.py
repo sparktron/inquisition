@@ -12,12 +12,18 @@ from models import (
     Severity,
     severity_at_least,
 )
-from report import render, render_sarif
+from report import (
+    render,
+    render_combined,
+    render_json_combined,
+    render_sarif,
+    render_sarif_combined,
+)
 
 
-def _report(findings: list[Finding]) -> ScanReport:
+def _report(findings: list[Finding], target: str = "example.com") -> ScanReport:
     return ScanReport(
-        target="example.com",
+        target=target,
         started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         finished_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         findings=findings,
@@ -88,6 +94,52 @@ class FailOnSeverityTests(unittest.TestCase):
         self.assertTrue(severity_at_least(Severity.CRITICAL, Severity.HIGH))
         self.assertTrue(severity_at_least(Severity.HIGH, Severity.HIGH))
         self.assertFalse(severity_at_least(Severity.MEDIUM, Severity.HIGH))
+
+
+class CombinedReportTests(unittest.TestCase):
+    def _fleet(self) -> list[ScanReport]:
+        a = _report(
+            [Finding(title="A", category=FindingCategory.TLS, severity=Severity.HIGH, evidence="e")],
+            target="a.com",
+        )
+        b = _report(
+            [
+                Finding(title="B", category=FindingCategory.DNS, severity=Severity.LOW, evidence="e"),
+                Finding(title="C", category=FindingCategory.DNS, severity=Severity.MEDIUM, evidence="e"),
+            ],
+            target="b.com",
+        )
+        return [a, b]
+
+    def test_sarif_combined_has_one_run_per_target(self) -> None:
+        doc = json.loads(render_sarif_combined(self._fleet()))
+        self.assertEqual(doc["version"], "2.1.0")
+        self.assertEqual(len(doc["runs"]), 2)
+        uris = [
+            run["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+            for run in doc["runs"]
+        ]
+        self.assertEqual(uris, ["a.com", "b.com"])
+
+    def test_json_combined_aggregates_summary(self) -> None:
+        doc = json.loads(render_json_combined(self._fleet()))
+        self.assertEqual(doc["report_type"], "fleet")
+        self.assertEqual(doc["fleet_summary"]["target_count"], 2)
+        self.assertEqual(doc["fleet_summary"]["targets"], ["a.com", "b.com"])
+        self.assertEqual(doc["fleet_summary"]["total_findings"], 3)
+        self.assertEqual(doc["fleet_summary"]["counts"]["high"], 1)
+        self.assertEqual(doc["fleet_summary"]["counts"]["medium"], 1)
+        self.assertEqual(len(doc["reports"]), 2)
+
+    def test_render_combined_dispatches_by_format(self) -> None:
+        fleet = self._fleet()
+        self.assertEqual(
+            json.loads(render_combined(fleet, ReportFormat.SARIF))["version"], "2.1.0"
+        )
+        text = render_combined(fleet, ReportFormat.TEXT)
+        self.assertIn("a.com", text)
+        self.assertIn("b.com", text)
+        self.assertIn("FLEET REPORT 1/2", text)
 
 
 if __name__ == "__main__":

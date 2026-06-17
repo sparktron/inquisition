@@ -116,6 +116,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--combined-output",
+        metavar="FILE",
+        dest="combined_output",
+        help=(
+            "Write a single combined artifact spanning all targets to FILE "
+            "(instead of one report per target). JSON and SARIF are merged "
+            "structurally (a fleet object / multi-run SARIF); text and HTML are "
+            "concatenated. Ideal for uploading one SARIF file from a fleet CI run."
+        ),
+    )
+
+    parser.add_argument(
         "--brief",
         action="store_true",
         help="Omit verbose deep-analysis and remediation guide from text/HTML report",
@@ -282,7 +294,9 @@ def main(argv: list[str] | None = None) -> None:
 
     from models import Severity, severity_at_least
     multi = len(targets) > 1
+    combined = bool(args.combined_output)
     fleet_rows: list[dict[str, object]] = []
+    reports = []
     fail_triggered = False
     threshold = Severity(args.fail_on) if args.fail_on else None
 
@@ -308,11 +322,14 @@ def main(argv: list[str] | None = None) -> None:
                 config,
                 skip_auth=args.authorized or args.dry_run,
                 brief=args.brief,
-                output_path=_output_path_for(args.output, target, report_format, multi),
+                # In combined mode, suppress per-target files; one artifact is written below.
+                output_path=None if combined else _output_path_for(args.output, target, report_format, multi),
                 notify_url=args.notify_url,
                 notify_min_severity=Severity(args.notify_min_severity),
                 notify_on=args.notify_on,
+                write_report=not combined,
             )
+            reports.append(report)
 
             highest = report.highest_severity()
             fleet_rows.append({
@@ -327,6 +344,21 @@ def main(argv: list[str] | None = None) -> None:
         from ui import print_interrupted
         print_interrupted()
         sys.exit(130)
+
+    # --- Combined artifact spanning all targets ---
+    if combined:
+        from report import render_combined
+        from ui import print_info, print_error
+        artifact = render_combined(reports, report_format, brief=args.brief)
+        try:
+            with open(args.combined_output, "w", encoding="utf-8") as fh:
+                fh.write(artifact)
+            for row in fleet_rows:
+                row["report"] = args.combined_output
+            print_info(f"combined {len(reports)} report(s) into {args.combined_output}")
+        except OSError as exc:
+            print_error(f"could not write combined artifact to {args.combined_output}", str(exc))
+            sys.exit(2)
 
     # --- Fleet overview (only when more than one target was scanned) ---
     if multi:
