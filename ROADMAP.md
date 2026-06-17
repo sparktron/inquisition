@@ -371,6 +371,13 @@ Goal: the tool's existing output is correct and its claims are true.
       per-target trend sparkline.
 - [x] **Age-based history pruning** — `--history-max-age-days` drops history
       entries older than the cutoff (applied before the count cap).
+- [x] **Per-severity SLA thresholds** — `--sla-by-severity critical=1,high=3`
+      overrides the global `--sla-max-age` per severity (0 disables a severity).
+- [x] **Dashboard Δ column** — the fleet dashboard shows the change in total
+      findings vs the immediately previous scan, colored up/down.
+- [x] **Prometheus/OpenMetrics export** — `--metrics-output` writes scrape-able
+      gauges (findings by severity, risk score, CVE/misconfig counts, oldest
+      finding age, scan duration) for every target (`metrics.py`).
 
 ### Phase 4 — Active Testing (optional, authorization-gated)
 - [x] Integrate Nuclei behind an explicit `--active` flag (`active_scan.py`)
@@ -389,9 +396,8 @@ Goal: the tool's existing output is correct and its claims are true.
 ---
 
 ### Suggested immediate next step
-All planned phases and follow-ons are complete (detection-quality, notifications,
-TLS depth, fleet/multi-target, combined artifact, concurrent execution, rolling
-trend history, per-finding age, HTML sparkline, JSON history export, SLA
-alerting, fleet dashboard, and age-based history pruning). Candidate future
-directions: configurable SLA thresholds per severity; a fleet dashboard trend
-column comparing scans; and emitting Prometheus/OpenMetrics for scraping.
+All planned phases and follow-ons are complete, including per-severity SLA
+thresholds, the dashboard Δ column, and Prometheus/OpenMetrics export. Candidate
+future directions: a Pushgateway/HTTP metrics push (not just a file); a config
+file for fleet definitions and per-target overrides; and historical metrics
+(emitting the trend series as Prometheus samples with timestamps).

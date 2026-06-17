@@ -279,6 +279,8 @@ inquisition --targets-file hosts.txt --format sarif \
 | `--notify-min-severity` | `critical` \| `high` \| `medium` \| `low` | `high` | For `--notify-on regression`, the minimum severity of a new/worsened finding that triggers a notification |
 | `--notify-on` | `regression` \| `changes` \| `always` | `regression` | When to notify: only new/worsened findings at/above the threshold (`regression`); any new/fixed/regressed/improved finding (`changes`); or every scan, even a clean one, as a heartbeat (`always`) |
 | `--sla-max-age` | int | 0 (off) | Warn and notify when a finding has stayed open beyond N consecutive scans (notifies even if nothing changed) |
+| `--sla-by-severity` | spec | none | Per-severity SLA overrides, e.g. `critical=1,high=3,medium=10` (falls back to `--sla-max-age`; `0` disables a severity) |
+| `--metrics-output` | path | none | Also write Prometheus/OpenMetrics text exposition for all targets to this file |
 | `--history-size` | int | 10 | Number of past scans retained per target for trend tracking |
 | `--history-max-age-days` | int | 0 (off) | Also drop history entries older than this many days (count cap still applies) |
 
@@ -298,10 +300,14 @@ critical+high counts) at the end of each run. Continuous-assurance extras:
   window and a `trend` summary for downstream dashboards.
 - **SLA alerting** — `--sla-max-age N` flags findings open beyond N consecutive
   scans; they print a warning and are pushed to the webhook (with an
-  `sla_breaches` payload section) even when nothing changed.
+  `sla_breaches` payload section) even when nothing changed. `--sla-by-severity`
+  sets stricter per-severity thresholds (e.g. `critical=1,high=3`).
 - **Fleet HTML dashboard** — a fleet run with `--combined-output report.html`
   renders one dashboard page ranking every target by risk, with grade, severity
-  counts, and a per-target trend sparkline.
+  counts, a per-target trend sparkline, and a Δ-vs-last-scan column.
+- **Prometheus/OpenMetrics** — `--metrics-output metrics.prom` writes scrape-able
+  gauges (findings by severity, risk score, CVE/misconfig counts, oldest finding
+  age, scan duration) for every target — one file per fleet run.
 - **History retention** — `--history-max-age-days` prunes the trend window by
   age in addition to the `--history-size` count cap.
 
