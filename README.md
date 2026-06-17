@@ -284,10 +284,21 @@ Each scan is diffed against the previous run for the same target (state is kept
 under `reports/.state/`). Inquisition also keeps a rolling window of the last
 `--history-size` scans per target and reports the **trend** (improving /
 worsening / stable, by a severity-weighted score, plus the change in total and
-critical+high counts) at the end of each run. Notification payloads include a
-severity summary and, for `changes`/`always`, the fixed and improved findings as
-well as regressions. See `examples/github-action.yml` for a scheduled (cron)
-workflow that uploads SARIF and notifies a Slack webhook on every change.
+critical+high counts) at the end of each run. Continuous-assurance extras:
+
+- **Per-finding age** — every finding records when it was *first seen* and how
+  many consecutive scans it has been open ("new this scan" / "open 4 scans since
+  2026-06-01"), shown in the text/HTML reports and the JSON `age_scans` /
+  `first_seen` fields.
+- **Trend sparkline** — the HTML report draws an inline sparkline of total
+  findings across the history window with an improving/worsening/stable label.
+- **History in JSON** — JSON (and the combined fleet JSON) embed the `history`
+  window and a `trend` summary for downstream dashboards.
+
+Notification payloads include a severity summary and, for `changes`/`always`,
+the fixed and improved findings as well as regressions. See
+`examples/github-action.yml` for a scheduled (cron) workflow that uploads SARIF
+and notifies a Slack webhook on every change.
 
 ### Safety
 

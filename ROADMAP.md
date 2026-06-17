@@ -356,6 +356,13 @@ Goal: the tool's existing output is correct and its claims are true.
       scans per target (`<target>.history.json`) and `compute_trend` reports
       direction (improving/worsening/stable by a severity-weighted score) plus
       the change in total and critical+high counts, printed after each scan.
+- [x] **Per-finding age** — `diffing.update_ages` stamps each finding with
+      `first_seen` and `age_scans` (consecutive scans open), persisted in the
+      snapshot and rendered in text/HTML/JSON ("new this scan" / "open N scans").
+- [x] **Trend sparkline in HTML** — `render_html` draws an inline SVG sparkline
+      of total findings across the history window with a direction label.
+- [x] **History in JSON/combined artifact** — JSON reports embed the `history`
+      window and a `trend` summary (carried through the combined fleet JSON).
 
 ### Phase 4 — Active Testing (optional, authorization-gated)
 - [x] Integrate Nuclei behind an explicit `--active` flag (`active_scan.py`)
@@ -375,7 +382,8 @@ Goal: the tool's existing output is correct and its claims are true.
 
 ### Suggested immediate next step
 All planned phases and follow-ons are complete (detection-quality, notifications,
-TLS depth, fleet/multi-target, combined artifact, concurrent execution, and
-rolling trend history). Candidate future directions: a trend sparkline/section in
-the HTML report; per-finding age ("first seen" / "open for N scans"); and
-exporting the history window as part of the JSON/combined artifact.
+TLS depth, fleet/multi-target, combined artifact, concurrent execution, rolling
+trend history, per-finding age, HTML sparkline, and JSON history export).
+Candidate future directions: SLA/age-based alerting (notify when a finding stays
+open beyond N scans); a fleet-wide HTML dashboard across targets; and pruning
+stale history entries by age rather than only by count.
