@@ -346,6 +346,16 @@ Goal: the tool's existing output is correct and its claims are true.
       object with an aggregated summary (`render_json_combined`), a multi-run
       SARIF 2.1.0 file (`render_sarif_combined`), or concatenated text/HTML.
       `run_scan(write_report=False)` suppresses per-target writes in this mode.
+- [x] **Concurrent multi-target execution** — `--jobs N` scans up to N targets
+      in parallel (`_run_targets`). `run_scan(quiet=True)` suppresses the live
+      per-scan UI so output does not interleave; a concise per-target line prints
+      as each finishes and the returned order always matches the input order.
+
+### Trend history
+- [x] **Rolling N-scan trend** — `diffing.py` keeps the last `--history-size`
+      scans per target (`<target>.history.json`) and `compute_trend` reports
+      direction (improving/worsening/stable by a severity-weighted score) plus
+      the change in total and critical+high counts, printed after each scan.
 
 ### Phase 4 — Active Testing (optional, authorization-gated)
 - [x] Integrate Nuclei behind an explicit `--active` flag (`active_scan.py`)
@@ -364,7 +374,8 @@ Goal: the tool's existing output is correct and its claims are true.
 ---
 
 ### Suggested immediate next step
-All planned phases and follow-ons (detection-quality, notifications, TLS depth,
-fleet/multi-target, combined artifact) are complete. Candidate future directions:
-concurrent multi-target execution (currently sequential); and trend history
-beyond the single prior snapshot (e.g. rolling N-scan deltas).
+All planned phases and follow-ons are complete (detection-quality, notifications,
+TLS depth, fleet/multi-target, combined artifact, concurrent execution, and
+rolling trend history). Candidate future directions: a trend sparkline/section in
+the HTML report; per-finding age ("first seen" / "open for N scans"); and
+exporting the history window as part of the JSON/combined artifact.

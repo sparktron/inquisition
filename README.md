@@ -250,6 +250,7 @@ inquisition --targets-file hosts.txt --format sarif \
 #### Concurrency & Timing
 | Option | Type | Default | Description |
 |---|---|---|---|
+| `-j`, `--jobs` | int | 1 | Scan up to N targets concurrently (fleet runs). N>1 runs each scan quiet and prints a per-target line as it finishes |
 | `-t`, `--threads` | int | 10 | Max concurrent threads per module |
 | `--rate-limit` | float (seconds) | 0.1 | Minimum delay between requests within a module |
 | `--timeout` | float (seconds) | 10.0 | Per-request timeout for HTTP, TLS, DNS, and API operations |
@@ -277,12 +278,16 @@ inquisition --targets-file hosts.txt --format sarif \
 | `--notify` | URL | none | Webhook to POST to. Slack incoming-webhook URLs (`hooks.slack.com`) get a formatted message; any other URL gets structured JSON |
 | `--notify-min-severity` | `critical` \| `high` \| `medium` \| `low` | `high` | For `--notify-on regression`, the minimum severity of a new/worsened finding that triggers a notification |
 | `--notify-on` | `regression` \| `changes` \| `always` | `regression` | When to notify: only new/worsened findings at/above the threshold (`regression`); any new/fixed/regressed/improved finding (`changes`); or every scan, even a clean one, as a heartbeat (`always`) |
+| `--history-size` | int | 10 | Number of past scans retained per target for trend tracking |
 
 Each scan is diffed against the previous run for the same target (state is kept
-under `reports/.state/`). Notification payloads include a severity summary and,
-for `changes`/`always`, the fixed and improved findings as well as regressions.
-See `examples/github-action.yml` for a scheduled (cron) workflow that uploads
-SARIF and notifies a Slack webhook on every change.
+under `reports/.state/`). Inquisition also keeps a rolling window of the last
+`--history-size` scans per target and reports the **trend** (improving /
+worsening / stable, by a severity-weighted score, plus the change in total and
+critical+high counts) at the end of each run. Notification payloads include a
+severity summary and, for `changes`/`always`, the fixed and improved findings as
+well as regressions. See `examples/github-action.yml` for a scheduled (cron)
+workflow that uploads SARIF and notifies a Slack webhook on every change.
 
 ### Safety
 
