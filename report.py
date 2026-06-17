@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from models import (
+    Confidence,
     Finding,
     FindingCategory,
     ReportFormat,
@@ -214,6 +215,8 @@ def render_text(report: ScanReport, *, brief: bool = False) -> str:
         for f in group:
             lines.append(f"  [{_SEVERITY_LABEL[f.severity]}] {f.title}")
             lines.append(f"    Category : {f.category.value}")
+            if f.confidence is not Confidence.CONFIRMED:
+                lines.append(f"    Confidence: {f.confidence.value}")
             lines.append(f"    Evidence : {f.evidence}")
             if f.impact:
                 lines.append(f"    Impact   : {f.impact}")
@@ -292,6 +295,7 @@ def _finding_to_dict(f: Finding) -> dict[str, Any]:
         "title": f.title,
         "category": f.category.value,
         "severity": f.severity.value,
+        "confidence": f.confidence.value,
         "evidence": f.evidence,
     }
     if f.impact:
@@ -536,6 +540,8 @@ def render_html(report: ScanReport) -> str:
             tools = tools_for_category(f.category)
 
             rows = f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Category</td><td>{_e(f.category.value)}</td></tr>\n"
+            if f.confidence is not Confidence.CONFIRMED:
+                rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Confidence</td><td>{_e(f.confidence.value)}</td></tr>\n"
             rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Evidence</td><td><code style='font-size:.85rem;background:#f1f5f9;padding:1px 4px;border-radius:3px'>{_e(f.evidence)}</code></td></tr>\n"
             if f.impact:
                 rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Impact</td><td>{_e(f.impact)}</td></tr>\n"

@@ -26,6 +26,20 @@ class ScanDepth(enum.Enum):
     DEEP = "deep"
 
 
+class Confidence(enum.Enum):
+    """How sure the scanner is that a finding is real.
+
+    Deterministic observations (a header is present, a port answered, a cert
+    expired) are CONFIRMED. Heuristic/signature matches carry HIGH/MEDIUM/LOW
+    so the report can communicate certainty instead of overclaiming.
+    """
+
+    CONFIRMED = "confirmed"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
 class ReportFormat(enum.Enum):
     TEXT = "text"
     JSON = "json"
@@ -43,6 +57,27 @@ SEVERITY_ORDER: list[Severity] = [
 def severity_at_least(value: Severity, threshold: Severity) -> bool:
     """Return True if ``value`` is at least as severe as ``threshold``."""
     return SEVERITY_ORDER.index(value) <= SEVERITY_ORDER.index(threshold)
+
+
+# Confidence ranking, most to least certain.
+CONFIDENCE_ORDER: list[Confidence] = [
+    Confidence.CONFIRMED, Confidence.HIGH, Confidence.MEDIUM, Confidence.LOW,
+]
+
+
+def combine_confidence(confidences: list[Confidence]) -> Confidence:
+    """Merge corroborating signals into a single confidence.
+
+    Takes the strongest individual signal, then promotes it one tier when two or
+    more independent signals agree (a single weak hint stays weak; two weak hints
+    that point at the same conclusion are worth more than either alone).
+    """
+    if not confidences:
+        return Confidence.LOW
+    best_index = min(CONFIDENCE_ORDER.index(c) for c in confidences)
+    if len(confidences) >= 2 and best_index > 0:
+        best_index -= 1
+    return CONFIDENCE_ORDER[best_index]
 
 
 class FindingCategory(enum.Enum):
@@ -107,6 +142,7 @@ class Finding:
     remediation: str = ""
     verification: str = ""
     cpe: str = ""
+    confidence: Confidence = Confidence.CONFIRMED
     references: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 

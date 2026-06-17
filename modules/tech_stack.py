@@ -3,48 +3,66 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlparse
 
-from models import Finding, FindingCategory, ScanDepth, Severity
+from models import (
+    Confidence,
+    Finding,
+    FindingCategory,
+    ScanDepth,
+    Severity,
+    combine_confidence,
+)
 from modules.base import BaseModule
 from modules.http_client import HttpRequestException
 
-# Signatures: (pattern_in_body_or_header, tech_name, optional CPE)
-_BODY_SIGNATURES: list[tuple[str, str, str]] = [
-    (r"/wp-content/", "WordPress", "cpe:2.3:a:wordpress:wordpress"),
-    (r"/wp-includes/", "WordPress", "cpe:2.3:a:wordpress:wordpress"),
-    (r"Joomla!", "Joomla", "cpe:2.3:a:joomla:joomla"),
-    (r"/media/jui/", "Joomla", "cpe:2.3:a:joomla:joomla"),
-    (r"Drupal", "Drupal", "cpe:2.3:a:drupal:drupal"),
-    (r"/sites/default/files/", "Drupal", "cpe:2.3:a:drupal:drupal"),
-    (r"shopify\.com", "Shopify", ""),
-    (r"cdn\.shopify\.com", "Shopify", ""),
-    (r"__next", "Next.js", ""),
-    (r"/_next/", "Next.js", ""),
-    (r"__nuxt", "Nuxt.js", ""),
-    (r"react", "React (likely)", ""),
-    (r"vue\.js|vuejs|v-bind|v-on", "Vue.js", ""),
-    (r"angular|ng-version", "Angular", ""),
-    (r"laravel", "Laravel", "cpe:2.3:a:laravel:laravel"),
-    (r"django", "Django", "cpe:2.3:a:djangoproject:django"),
-    (r"rails|ruby on rails", "Ruby on Rails", ""),
-    (r"express", "Express.js (possible)", ""),
-    (r"phpmyadmin", "phpMyAdmin", "cpe:2.3:a:phpmyadmin:phpmyadmin"),
+_H = Confidence.HIGH
+_M = Confidence.MEDIUM
+_L = Confidence.LOW
+
+# Signatures: (pattern_in_body, tech_name, optional CPE, base confidence).
+# Confidence reflects how specific the marker is: a unique path like
+# ``/wp-content/`` is strong evidence; a bare word like ``react`` is weak. When
+# several signals agree on the same tech, confidence is promoted (see
+# ``models.combine_confidence``).
+_BODY_SIGNATURES: list[tuple[str, str, str, Confidence]] = [
+    (r"/wp-content/", "WordPress", "cpe:2.3:a:wordpress:wordpress", _H),
+    (r"/wp-includes/", "WordPress", "cpe:2.3:a:wordpress:wordpress", _H),
+    (r"Joomla!", "Joomla", "cpe:2.3:a:joomla:joomla", _H),
+    (r"/media/jui/", "Joomla", "cpe:2.3:a:joomla:joomla", _H),
+    (r"/sites/default/files/", "Drupal", "cpe:2.3:a:drupal:drupal", _H),
+    (r"Drupal", "Drupal", "cpe:2.3:a:drupal:drupal", _M),
+    (r"cdn\.shopify\.com", "Shopify", "", _H),
+    (r"shopify\.com", "Shopify", "", _M),
+    (r"/_next/", "Next.js", "", _H),
+    (r"__next", "Next.js", "", _M),
+    (r"__nuxt", "Nuxt.js", "", _H),
+    (r"react", "React", "", _L),
+    (r"vue\.js|vuejs|v-bind|v-on", "Vue.js", "", _M),
+    (r"angular|ng-version", "Angular", "", _M),
+    (r"laravel", "Laravel", "cpe:2.3:a:laravel:laravel", _M),
+    (r"django", "Django", "cpe:2.3:a:djangoproject:django", _M),
+    (r"rails|ruby on rails", "Ruby on Rails", "", _M),
+    (r"express", "Express.js", "", _L),
+    (r"phpmyadmin", "phpMyAdmin", "cpe:2.3:a:phpmyadmin:phpmyadmin", _M),
 ]
 
-_HEADER_SIGNATURES: list[tuple[str, str, str, str]] = [
-    # (header_name, pattern, tech_name, CPE)
-    ("X-Powered-By", r"PHP/([\d.]+)", "PHP", "cpe:2.3:a:php:php"),
-    ("X-Powered-By", r"ASP\.NET", "ASP.NET", "cpe:2.3:a:microsoft:asp.net"),
-    ("X-Powered-By", r"Express", "Express.js", ""),
-    ("Server", r"nginx/([\d.]+)", "nginx", "cpe:2.3:a:f5:nginx"),
-    ("Server", r"Apache/([\d.]+)", "Apache HTTP Server", "cpe:2.3:a:apache:http_server"),
-    ("Server", r"Microsoft-IIS/([\d.]+)", "Microsoft IIS", "cpe:2.3:a:microsoft:iis"),
-    ("Server", r"LiteSpeed", "LiteSpeed", ""),
-    ("Server", r"cloudflare", "Cloudflare", ""),
-    ("X-Drupal-Cache", r".", "Drupal", "cpe:2.3:a:drupal:drupal"),
-    ("X-Generator", r"Drupal", "Drupal", "cpe:2.3:a:drupal:drupal"),
-    ("X-Generator", r"WordPress", "WordPress", "cpe:2.3:a:wordpress:wordpress"),
+# (header_name, pattern, tech_name, CPE, base confidence). Server-emitted
+# headers are authoritative, so most are HIGH.
+_HEADER_SIGNATURES: list[tuple[str, str, str, str, Confidence]] = [
+    ("X-Powered-By", r"PHP/([\d.]+)", "PHP", "cpe:2.3:a:php:php", _H),
+    ("X-Powered-By", r"ASP\.NET", "ASP.NET", "cpe:2.3:a:microsoft:asp.net", _H),
+    ("X-Powered-By", r"Express", "Express.js", "", _M),
+    ("Server", r"nginx/([\d.]+)", "nginx", "cpe:2.3:a:f5:nginx", _H),
+    ("Server", r"Apache/([\d.]+)", "Apache HTTP Server", "cpe:2.3:a:apache:http_server", _H),
+    ("Server", r"Microsoft-IIS/([\d.]+)", "Microsoft IIS", "cpe:2.3:a:microsoft:iis", _H),
+    ("Server", r"LiteSpeed", "LiteSpeed", "", _H),
+    ("Server", r"cloudflare", "Cloudflare", "", _H),
+    ("X-Drupal-Cache", r".", "Drupal", "cpe:2.3:a:drupal:drupal", _H),
+    ("X-Generator", r"Drupal", "Drupal", "cpe:2.3:a:drupal:drupal", _H),
+    ("X-Generator", r"WordPress", "WordPress", "cpe:2.3:a:wordpress:wordpress", _H),
 ]
 
 # Well-known paths to probe for CMS / framework detection
@@ -64,13 +82,82 @@ _PROBE_PATHS: list[tuple[str, str, str]] = [
 _MAX_DISCOVERED_TECH_URLS = 30
 
 
+@dataclass
+class _Signal:
+    confidence: Confidence
+    evidence: str
+
+
+class _TechAccumulator:
+    """Collects signature signals per technology so corroborating hits combine.
+
+    Multiple weak signals that agree on the same tech raise overall confidence;
+    a lone weak hint stays weak. One ``Detected: <tech>`` finding is emitted per
+    technology rather than one per matched pattern.
+    """
+
+    def __init__(self) -> None:
+        self._signals: dict[str, list[_Signal]] = {}
+        self._cpe: dict[str, str] = {}
+        self._version: dict[str, str] = {}
+        self._metadata: dict[str, dict[str, Any]] = {}
+
+    def add(
+        self,
+        tech: str,
+        confidence: Confidence,
+        evidence: str,
+        *,
+        cpe: str = "",
+        version: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self._signals.setdefault(tech, []).append(_Signal(confidence, evidence))
+        if cpe and tech not in self._cpe:
+            self._cpe[tech] = cpe
+        if version and tech not in self._version:
+            self._version[tech] = version
+        if metadata and tech not in self._metadata:
+            self._metadata[tech] = metadata
+
+    def __contains__(self, tech: str) -> bool:
+        return tech in self._signals
+
+    def emit(self) -> list[Finding]:
+        findings: list[Finding] = []
+        for tech, signals in self._signals.items():
+            confidence = combine_confidence([s.confidence for s in signals])
+            # Signatures are heuristics; reserve CONFIRMED for deterministic facts.
+            if confidence == Confidence.CONFIRMED:
+                confidence = Confidence.HIGH
+            version = self._version.get(tech, "")
+            cpe = self._cpe.get(tech, "")
+            if cpe and version:
+                cpe = f"{cpe}:{version.replace(':', '_')}:*:*:*:*:*:*:*"
+            evidences: list[str] = []
+            for sig in signals:
+                if sig.evidence not in evidences:
+                    evidences.append(sig.evidence)
+            findings.append(Finding(
+                title=f"Detected: {tech}" + (f" {version}" if version else ""),
+                category=FindingCategory.TECH_STACK,
+                severity=Severity.INFO,
+                evidence="; ".join(evidences),
+                confidence=confidence,
+                cpe=cpe,
+                metadata=self._metadata.get(tech, {}),
+            ))
+        return findings
+
+
 class TechStackModule(BaseModule):
     name = "tech_stack"
 
     def run(self) -> list[Finding]:
         findings: list[Finding] = []
         target = self.config.target
-        detected: set[str] = set()
+        acc = _TechAccumulator()
+        detected: set[str] = set()  # techs/paths already reported (path-probe dedup)
 
         if self.config.dry_run:
             findings.append(Finding(
@@ -103,85 +190,17 @@ class TechStackModule(BaseModule):
             except HttpRequestException:
                 continue
 
-        # --- Body-based signatures ---
-        for pattern, tech, cpe in _BODY_SIGNATURES:
-            if re.search(pattern, body, re.IGNORECASE) and tech not in detected:
-                detected.add(tech)
-                findings.append(Finding(
-                    title=f"Detected: {tech}",
-                    category=FindingCategory.TECH_STACK,
-                    severity=Severity.INFO,
-                    evidence=f"Pattern '{pattern}' matched in page body",
-                    cpe=cpe,
-                ))
-
-        # --- Header-based signatures ---
-        for header_name, pattern, tech, cpe in _HEADER_SIGNATURES:
-            value = headers.get(header_name, "")
-            match = re.search(pattern, value, re.IGNORECASE)
-            if match and tech not in detected:
-                detected.add(tech)
-                version_str = match.group(1) if match.lastindex else ""
-                evidence = f"{header_name}: {value}"
-                findings.append(Finding(
-                    title=f"Detected: {tech}" + (f" {version_str}" if version_str else ""),
-                    category=FindingCategory.TECH_STACK,
-                    severity=Severity.INFO,
-                    evidence=evidence,
-                    cpe=f"{cpe}:{version_str.replace(':', '_')}:*:*:*:*:*:*:*" if cpe and version_str else cpe,
-                ))
+        # --- Signature matching (body + headers) ---
+        self._scan_body(body, "page body", acc, detected)
+        self._scan_headers(headers, "", acc, detected)
 
         # --- Path probing (standard/deep) ---
         if base_url and self.config.depth in (ScanDepth.STANDARD, ScanDepth.DEEP):
-            for path, tech, cpe in _PROBE_PATHS:
-                url = f"{base_url}{path}"
-                self._rate_limit()
-                try:
-                    resp = self.http.get(
-                        url,
-                        timeout=self.config.timeout,
-                        allow_redirects=False,
-                        verify=False,
-                    )
-                except HttpRequestException:
-                    continue
+            self._probe_paths(base_url, findings, detected)
+            self._check_discovered_urls(acc, detected, findings)
 
-                if resp.status_code == 200:
-                    sev = Severity.INFO
-                    impact = ""
-                    remediation = ""
-
-                    if path == "/.env":
-                        sev = Severity.CRITICAL
-                        impact = "Environment file may contain credentials and secrets"
-                        remediation = "Block public access to .env files via web server config"
-                    elif path == "/.git/HEAD":
-                        sev = Severity.HIGH
-                        impact = "Source code repository exposed — may leak secrets"
-                        remediation = "Block public access to .git/ directory"
-                    elif path in ("/server-status", "/server-info"):
-                        sev = Severity.MEDIUM
-                        impact = "Server internals exposed to the public"
-                        remediation = "Restrict access to server status endpoints"
-                    elif path == "/phpmyadmin/":
-                        sev = Severity.HIGH
-                        impact = "Database administration interface exposed"
-                        remediation = "Restrict phpMyAdmin access to trusted IPs"
-
-                    label = tech if tech else path
-                    if label not in detected:
-                        detected.add(label)
-                        findings.append(Finding(
-                            title=f"Accessible path: {path}" if not tech else f"Detected: {tech} ({path})",
-                            category=FindingCategory.TECH_STACK,
-                            severity=sev,
-                            evidence=f"HTTP 200 at {url}",
-                            impact=impact,
-                            remediation=remediation,
-                            cpe=cpe,
-                            metadata={"scheme": base_url.split(":", 1)[0], "url": url},
-                        ))
-            self._check_discovered_urls(detected, findings)
+        # --- Emit one finding per corroborated technology ---
+        findings.extend(acc.emit())
 
         if not findings:
             findings.append(Finding(
@@ -193,7 +212,120 @@ class TechStackModule(BaseModule):
 
         return findings
 
-    def _check_discovered_urls(self, detected: set[str], findings: list[Finding]) -> None:
+    # -----------------------------------------------------------------------
+
+    def _scan_body(
+        self,
+        body: str,
+        source: str,
+        acc: _TechAccumulator,
+        detected: set[str],
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if not body:
+            return
+        for pattern, tech, cpe, confidence in _BODY_SIGNATURES:
+            if re.search(pattern, body, re.IGNORECASE):
+                acc.add(
+                    tech,
+                    confidence,
+                    f"Pattern '{pattern}' matched in {source}",
+                    cpe=cpe,
+                    metadata=metadata,
+                )
+                detected.add(tech)
+
+    def _scan_headers(
+        self,
+        headers: dict[str, str],
+        source_suffix: str,
+        acc: _TechAccumulator,
+        detected: set[str],
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        for header_name, pattern, tech, cpe, confidence in _HEADER_SIGNATURES:
+            value = headers.get(header_name, "")
+            match = re.search(pattern, value, re.IGNORECASE)
+            if not match:
+                continue
+            version_str = match.group(1) if match.lastindex else ""
+            evidence = f"{header_name}: {value}" + (f" on {source_suffix}" if source_suffix else "")
+            acc.add(
+                tech,
+                confidence,
+                evidence,
+                cpe=cpe,
+                version=version_str,
+                metadata=metadata,
+            )
+            detected.add(tech)
+
+    def _probe_paths(self, base_url: str, findings: list[Finding], detected: set[str]) -> None:
+        for path, tech, cpe in _PROBE_PATHS:
+            url = f"{base_url}{path}"
+            self._rate_limit()
+            try:
+                resp = self.http.get(
+                    url,
+                    timeout=self.config.timeout,
+                    allow_redirects=False,
+                    verify=False,
+                )
+            except HttpRequestException:
+                continue
+
+            if resp.status_code != 200:
+                continue
+
+            sev, impact, remediation = self._path_risk(path)
+            label = tech if tech else path
+            if label in detected:
+                continue
+            detected.add(label)
+            findings.append(Finding(
+                title=f"Accessible path: {path}" if not tech else f"Detected: {tech} ({path})",
+                category=FindingCategory.TECH_STACK,
+                severity=sev,
+                evidence=f"HTTP 200 at {url}",
+                impact=impact,
+                remediation=remediation,
+                cpe=cpe,
+                metadata={"scheme": base_url.split(":", 1)[0], "url": url},
+            ))
+
+    @staticmethod
+    def _path_risk(path: str) -> tuple[Severity, str, str]:
+        if path == "/.env":
+            return (
+                Severity.CRITICAL,
+                "Environment file may contain credentials and secrets",
+                "Block public access to .env files via web server config",
+            )
+        if path == "/.git/HEAD":
+            return (
+                Severity.HIGH,
+                "Source code repository exposed — may leak secrets",
+                "Block public access to .git/ directory",
+            )
+        if path in ("/server-status", "/server-info"):
+            return (
+                Severity.MEDIUM,
+                "Server internals exposed to the public",
+                "Restrict access to server status endpoints",
+            )
+        if path == "/phpmyadmin/":
+            return (
+                Severity.HIGH,
+                "Database administration interface exposed",
+                "Restrict phpMyAdmin access to trusted IPs",
+            )
+        return Severity.INFO, "", ""
+
+    def _check_discovered_urls(
+        self, acc: _TechAccumulator, detected: set[str], findings: list[Finding]
+    ) -> None:
         checked = 0
         for url in self.config.discovered_urls:
             if checked >= _MAX_DISCOVERED_TECH_URLS:
@@ -216,34 +348,9 @@ class TechStackModule(BaseModule):
                 continue
             checked += 1
 
-            body = resp.text[:100_000]
-            for pattern, tech, cpe in _BODY_SIGNATURES:
-                if re.search(pattern, body, re.IGNORECASE) and tech not in detected:
-                    detected.add(tech)
-                    findings.append(Finding(
-                        title=f"Detected: {tech}",
-                        category=FindingCategory.TECH_STACK,
-                        severity=Severity.INFO,
-                        evidence=f"Pattern '{pattern}' matched in discovered page {url}",
-                        cpe=cpe,
-                        metadata={"scheme": parsed.scheme, "url": url},
-                    ))
-
-            headers = dict(resp.headers)
-            for header_name, pattern, tech, cpe in _HEADER_SIGNATURES:
-                value = headers.get(header_name, "")
-                match = re.search(pattern, value, re.IGNORECASE)
-                if match and tech not in detected:
-                    detected.add(tech)
-                    version_str = match.group(1) if match.lastindex else ""
-                    findings.append(Finding(
-                        title=f"Detected: {tech}" + (f" {version_str}" if version_str else ""),
-                        category=FindingCategory.TECH_STACK,
-                        severity=Severity.INFO,
-                        evidence=f"{header_name}: {value} on discovered page {url}",
-                        cpe=f"{cpe}:{version_str.replace(':', '_')}:*:*:*:*:*:*:*" if cpe and version_str else cpe,
-                        metadata={"scheme": parsed.scheme, "url": url},
-                    ))
+            page_meta = {"scheme": parsed.scheme, "url": url}
+            self._scan_body(resp.text[:100_000], f"discovered page {url}", acc, detected, metadata=page_meta)
+            self._scan_headers(dict(resp.headers), f"discovered page {url}", acc, detected, metadata=page_meta)
 
             probe_match = self._probe_path_match(parsed.path)
             if probe_match is None:
@@ -259,7 +366,7 @@ class TechStackModule(BaseModule):
                 severity=Severity.INFO if tech else Severity.LOW,
                 evidence=f"HTTP 200 at discovered URL {url}",
                 cpe=cpe,
-                metadata={"scheme": parsed.scheme, "url": url},
+                metadata=page_meta,
             ))
 
     @staticmethod
