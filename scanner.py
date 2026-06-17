@@ -21,7 +21,7 @@ from diffing import (
 )
 from active_scan import run_active_scan
 from models import ReportFormat, ScanReport, Severity
-from notifications import notify
+from notifications import NOTIFY_REGRESSION, notify
 from modules import ALL_MODULES
 from modules.base import BaseModule
 from modules.crawler import CrawlerModule
@@ -146,6 +146,7 @@ def run_scan(
     output_path: str | None = None,
     notify_url: str | None = None,
     notify_min_severity: Severity = Severity.HIGH,
+    notify_on: str = NOTIFY_REGRESSION,
 ) -> ScanReport:
     """Execute a full scan with the given configuration."""
 
@@ -261,14 +262,21 @@ def run_scan(
         except OSError as exc:
             report.errors.append(f"Could not save scan snapshot: {exc}")
 
-        # --- Regression notification ---
+        # --- Scan notification ---
         if notify_url:
             try:
-                if notify(notify_url, config.target, diff_result, notify_min_severity):
-                    print_info("regression notification sent")
+                if notify(
+                    notify_url,
+                    config.target,
+                    diff_result,
+                    notify_min_severity,
+                    policy=notify_on,
+                    report=report,
+                ):
+                    print_info(f"scan notification sent ({notify_on})")
             except Exception as exc:
                 report.errors.append(f"Notification failed: {exc}")
-                print_warning(f"regression notification failed: {exc}")
+                print_warning(f"scan notification failed: {exc}")
 
     # --- Render report ---
     output = render(report, config.report_format, brief=brief)

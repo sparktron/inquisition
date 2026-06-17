@@ -3,15 +3,33 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
+from datetime import datetime, timezone
+
 from diffing import DiffResult, FindingDelta
-from models import Severity
+from models import Finding, FindingCategory, ScanReport, Severity
 from notifications import (
+    NOTIFY_ALWAYS,
+    NOTIFY_CHANGES,
     build_generic_payload,
     build_slack_payload,
+    build_summary,
     collect_regressions,
     notify,
+    select_deltas,
     should_notify,
 )
+
+
+def _report_with(*severities: Severity) -> ScanReport:
+    report = ScanReport(target="example.com", started_at=datetime.now(timezone.utc))
+    for i, sev in enumerate(severities):
+        report.findings.append(Finding(
+            title=f"f{i}",
+            category=FindingCategory.HTTP_HEADER,
+            severity=sev,
+            evidence="e",
+        ))
+    return report
 
 
 def _delta(title: str, severity: str, previous: str | None = None) -> FindingDelta:
@@ -108,6 +126,76 @@ class NotifyTests(unittest.TestCase):
         diff = DiffResult(new=[_delta("X", "high")])
         notify("https://example.test/hook", "example.com", diff, Severity.HIGH, sender=sender)
         self.assertEqual(sender.calls[0]["json"]["event"], "security_regression")
+
+
+class PolicyTests(unittest.TestCase):
+    def test_always_notifies_even_on_baseline(self) -> None:
+        diff = DiffResult(is_baseline=True)
+        self.assertTrue(should_notify(diff, Severity.HIGH, NOTIFY_ALWAYS))
+
+    def test_changes_notifies_on_low_severity_change(self) -> None:
+        diff = DiffResult(new=[_delta("X", "low")])
+        # regression policy would skip this; changes policy reports it.
+        self.assertFalse(should_notify(diff, Severity.HIGH))
+        self.assertTrue(should_notify(diff, Severity.HIGH, NOTIFY_CHANGES))
+
+    def test_changes_quiet_when_nothing_moved(self) -> None:
+        diff = DiffResult(unchanged_count=5)
+        self.assertFalse(should_notify(diff, Severity.HIGH, NOTIFY_CHANGES))
+
+    def test_select_deltas_changes_includes_fixed_and_improved(self) -> None:
+        diff = DiffResult(
+            new=[_delta("N", "low")],
+            fixed=[_delta("F", "high")],
+            improved=[_delta("I", "low", previous="high")],
+        )
+        new, regressed, fixed, improved = select_deltas(diff, Severity.HIGH, NOTIFY_CHANGES)
+        self.assertEqual([d.title for d in new], ["N"])  # not threshold-filtered
+        self.assertEqual([d.title for d in fixed], ["F"])
+        self.assertEqual([d.title for d in improved], ["I"])
+
+    def test_select_deltas_regression_drops_below_threshold(self) -> None:
+        diff = DiffResult(new=[_delta("N", "low")], fixed=[_delta("F", "high")])
+        new, regressed, fixed, improved = select_deltas(diff, Severity.HIGH, "regression")
+        self.assertEqual(new, [])
+        self.assertEqual(fixed, [])
+
+
+class SummaryPayloadTests(unittest.TestCase):
+    def test_build_summary_counts_and_highest(self) -> None:
+        summary = build_summary(_report_with(Severity.CRITICAL, Severity.LOW, Severity.LOW))
+        self.assertEqual(summary["total"], 3)
+        self.assertEqual(summary["highest_severity"], "critical")
+        self.assertEqual(summary["counts"]["low"], 2)
+
+    def test_generic_payload_includes_fixed_and_summary(self) -> None:
+        payload = build_generic_payload(
+            "example.com",
+            [_delta("N", "high")],
+            [],
+            Severity.HIGH,
+            fixed=[_delta("F", "medium")],
+            summary={"total": 1, "highest_severity": "high", "counts": {}},
+            policy=NOTIFY_CHANGES,
+        )
+        self.assertEqual(payload["event"], "scan_update")
+        self.assertEqual(payload["fixed"][0]["title"], "F")
+        self.assertEqual(payload["summary"]["highest_severity"], "high")
+
+    def test_slack_clean_run_uses_check_icon(self) -> None:
+        payload = build_slack_payload("example.com", [], [], summary={"counts": {}, "total": 0})
+        self.assertIn(":white_check_mark:", payload["text"])
+        self.assertIn("No change", payload["text"])
+
+    def test_notify_always_sends_with_summary(self) -> None:
+        sender = RecordingSender()
+        diff = DiffResult(is_baseline=True)
+        sent = notify(
+            "https://example.test/hook", "example.com", diff, Severity.HIGH,
+            policy=NOTIFY_ALWAYS, report=_report_with(Severity.LOW), sender=sender,
+        )
+        self.assertTrue(sent)
+        self.assertEqual(sender.calls[0]["json"]["summary"]["total"], 1)
 
 
 if __name__ == "__main__":

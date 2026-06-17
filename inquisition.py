@@ -84,6 +84,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--notify-on",
+        choices=["regression", "changes", "always"],
+        default="regression",
+        dest="notify_on",
+        help=(
+            "When to send a notification: 'regression' (new/worsened finding at or "
+            "above --notify-min-severity; default), 'changes' (any new/fixed/"
+            "regressed/improved finding), or 'always' (every scan, even a clean one "
+            "— a scheduled heartbeat)."
+        ),
+    )
+
+    parser.add_argument(
         "--output", "-o",
         metavar="FILE",
         help="Write report to FILE instead of stdout",
@@ -236,6 +249,7 @@ def main(argv: list[str] | None = None) -> None:
             output_path=args.output,
             notify_url=args.notify_url,
             notify_min_severity=Severity(args.notify_min_severity),
+            notify_on=args.notify_on,
         )
     except KeyboardInterrupt:
         from ui import print_interrupted
