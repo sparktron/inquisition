@@ -902,6 +902,19 @@ def render_sarif_combined(reports: list[ScanReport]) -> str:
     return json.dumps(sarif, indent=2)
 
 
+def _last_scan_delta_html(report: ScanReport) -> str:
+    """Colored cell showing the change in total findings vs the immediately previous scan."""
+    totals = [int(e.get("total", 0)) for e in report.history]
+    if len(totals) < 2:
+        return "<span style='color:#94a3b8'>—</span>"
+    delta = totals[-1] - totals[-2]
+    if delta > 0:
+        return f"<span style='color:#dc2626;font-weight:600'>▲ +{delta}</span>"
+    if delta < 0:
+        return f"<span style='color:#16a34a;font-weight:600'>▼ {delta}</span>"
+    return "<span style='color:#64748b'>0</span>"
+
+
 def render_fleet_dashboard(reports: list[ScanReport]) -> str:
     """A single self-contained HTML dashboard summarizing every target in a fleet run."""
     fleet = _fleet_summary(reports)
@@ -933,6 +946,7 @@ def render_fleet_dashboard(reports: list[ScanReport]) -> str:
             f"<td style='padding:10px 12px;text-align:center'>{_cell(Severity.MEDIUM)}</td>"
             f"<td style='padding:10px 12px;text-align:center'>{_cell(Severity.LOW)}</td>"
             f"<td style='padding:10px 12px;text-align:center;font-weight:600'>{total}</td>"
+            f"<td style='padding:10px 12px;text-align:center'>{_last_scan_delta_html(r)}</td>"
             f"<td style='padding:10px 12px'>{spark}</td>"
             f"</tr>\n"
         )
@@ -944,6 +958,7 @@ def render_fleet_dashboard(reports: list[ScanReport]) -> str:
         "<th style='padding:10px 12px'>C</th><th style='padding:10px 12px'>H</th>"
         "<th style='padding:10px 12px'>M</th><th style='padding:10px 12px'>L</th>"
         "<th style='padding:10px 12px'>Total</th>"
+        "<th style='padding:10px 12px'>&Delta; last</th>"
         "<th style='padding:10px 12px;text-align:left'>Trend</th>"
     )
 

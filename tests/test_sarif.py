@@ -150,6 +150,18 @@ class CombinedReportTests(unittest.TestCase):
         # one dashboard document, not concatenated per-target reports
         self.assertEqual(html.count("<!DOCTYPE html>"), 1)
 
+    def test_dashboard_has_delta_column(self) -> None:
+        r = _report([Finding(title="A", category=FindingCategory.TLS,
+                             severity=Severity.HIGH, evidence="e")], target="a.com")
+        # rising then current: previous total 1, current 3 -> +2 (worse)
+        r.history = [
+            {"taken_at": "2026-06-01T00:00:00+00:00", "total": 1, "counts": {"high": 1}},
+            {"taken_at": "2026-06-02T00:00:00+00:00", "total": 3, "counts": {"high": 3}},
+        ]
+        html = render_fleet_dashboard([r])
+        self.assertIn("&Delta; last", html)   # column header
+        self.assertIn("+2", html)             # rising delta shown
+
     def test_dashboard_sorts_riskiest_first(self) -> None:
         # b.com (a MEDIUM) outranks a.com here only if scored; build a clear case
         high = _report([Finding(title="X", category=FindingCategory.TLS,
