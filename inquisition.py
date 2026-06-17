@@ -14,7 +14,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 import urllib3  # type: ignore[import-untyped]
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-from models import ReportFormat, ScanConfig, ScanDepth
+from typing import Callable
+
+from models import ReportFormat, ScanConfig, ScanDepth, ScanReport
 from scanner import run_scan
 
 
@@ -125,6 +127,27 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "structurally (a fleet object / multi-run SARIF); text and HTML are "
             "concatenated. Ideal for uploading one SARIF file from a fleet CI run."
         ),
+    )
+
+    parser.add_argument(
+        "--jobs", "-j",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "Scan up to N targets concurrently (default: 1 = sequential). With "
+            "more than one target, N>1 suppresses each scan's live UI and prints "
+            "a concise per-target line as it finishes, then the fleet table."
+        ),
+    )
+
+    parser.add_argument(
+        "--history-size",
+        type=int,
+        default=10,
+        metavar="N",
+        dest="history_size",
+        help="Number of past scans to retain per target for trend tracking (default: 10)",
     )
 
     parser.add_argument(
@@ -269,6 +292,38 @@ def _output_path_for(output: str | None, target: str, fmt: ReportFormat, multi: 
     return str(out_dir / f"{safe}.{ext}")
 
 
+def _run_targets(
+    targets: list[str], scan_fn: Callable[[str], ScanReport], *, jobs: int
+) -> list[ScanReport]:
+    """Run scan_fn over targets, returning reports in target order.
+
+    With jobs > 1, targets run concurrently and a concise per-target line is
+    printed as each finishes (the scans themselves run quiet to avoid interleaved
+    output). Order of the returned list always matches the input target order.
+    """
+    if jobs <= 1:
+        return [scan_fn(t) for t in targets]
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from ui import print_info
+
+    results: dict[int, ScanReport] = {}
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = {pool.submit(scan_fn, t): i for i, t in enumerate(targets)}
+        done = 0
+        for fut in as_completed(futures):
+            report = fut.result()
+            results[futures[fut]] = report
+            done += 1
+            highest = report.highest_severity()
+            total = sum(report.summary_counts().values())
+            print_info(
+                f"[{done}/{len(targets)}] {report.target} — "
+                f"{total} finding(s), highest {highest.value if highest else 'none'}"
+            )
+    return [results[i] for i in range(len(targets))]
+
+
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
 
@@ -292,58 +347,62 @@ def main(argv: list[str] | None = None) -> None:
     )
     ports = tuple(args.ports) if args.ports else default_ports
 
-    from models import Severity, severity_at_least
+    from models import ScanReport, Severity, severity_at_least
     multi = len(targets) > 1
     combined = bool(args.combined_output)
-    fleet_rows: list[dict[str, object]] = []
-    reports = []
-    fail_triggered = False
+    concurrent = args.jobs > 1 and multi
     threshold = Severity(args.fail_on) if args.fail_on else None
 
-    try:
-        for target in targets:
-            config = ScanConfig(
-                target=target,
-                depth=depth,
-                report_format=report_format,
-                max_threads=args.threads,
-                safe_mode=True,
-                dry_run=args.dry_run,
-                rate_limit=args.rate_limit,
-                timeout=args.timeout,
-                connect_timeout=args.connect_timeout,
-                ports=ports,
-                active=args.active,
-                active_engine=args.active_engine,
-                auth_header=args.auth_header,
-                auth_cookie=args.auth_cookie,
-            )
-            report = run_scan(
-                config,
-                skip_auth=args.authorized or args.dry_run,
-                brief=args.brief,
-                # In combined mode, suppress per-target files; one artifact is written below.
-                output_path=None if combined else _output_path_for(args.output, target, report_format, multi),
-                notify_url=args.notify_url,
-                notify_min_severity=Severity(args.notify_min_severity),
-                notify_on=args.notify_on,
-                write_report=not combined,
-            )
-            reports.append(report)
+    def _scan(target: str) -> ScanReport:
+        config = ScanConfig(
+            target=target,
+            depth=depth,
+            report_format=report_format,
+            max_threads=args.threads,
+            safe_mode=True,
+            dry_run=args.dry_run,
+            rate_limit=args.rate_limit,
+            timeout=args.timeout,
+            connect_timeout=args.connect_timeout,
+            ports=ports,
+            active=args.active,
+            active_engine=args.active_engine,
+            auth_header=args.auth_header,
+            auth_cookie=args.auth_cookie,
+        )
+        return run_scan(
+            config,
+            skip_auth=args.authorized or args.dry_run,
+            brief=args.brief,
+            # In combined mode, suppress per-target files; one artifact is written below.
+            output_path=None if combined else _output_path_for(args.output, target, report_format, multi),
+            notify_url=args.notify_url,
+            notify_min_severity=Severity(args.notify_min_severity),
+            notify_on=args.notify_on,
+            write_report=not combined,
+            history_size=args.history_size,
+            quiet=concurrent,
+        )
 
-            highest = report.highest_severity()
-            fleet_rows.append({
-                "target": target,
-                "counts": report.summary_counts(),
-                "highest": highest.value if highest else None,
-                "report": report.report_path,
-            })
-            if threshold and not args.dry_run and highest is not None and severity_at_least(highest, threshold):
-                fail_triggered = True
+    try:
+        reports = _run_targets(targets, _scan, jobs=args.jobs if concurrent else 1)
     except KeyboardInterrupt:
         from ui import print_interrupted
         print_interrupted()
         sys.exit(130)
+
+    fleet_rows: list[dict[str, object]] = []
+    fail_triggered = False
+    for report in reports:
+        highest = report.highest_severity()
+        fleet_rows.append({
+            "target": report.target,
+            "counts": report.summary_counts(),
+            "highest": highest.value if highest else None,
+            "report": report.report_path,
+        })
+        if threshold and not args.dry_run and highest is not None and severity_at_least(highest, threshold):
+            fail_triggered = True
 
     # --- Combined artifact spanning all targets ---
     if combined:

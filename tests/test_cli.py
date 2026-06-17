@@ -7,8 +7,10 @@ import os
 import tempfile
 import unittest
 
-from inquisition import _gather_targets, _output_path_for
-from models import ReportFormat
+from datetime import datetime, timezone
+
+from inquisition import _gather_targets, _output_path_for, _run_targets
+from models import ReportFormat, ScanReport
 
 
 def _args(target: list[str], targets_file: str | None = None) -> argparse.Namespace:
@@ -50,6 +52,32 @@ class OutputPathTests(unittest.TestCase):
             path = _output_path_for(out_dir, "https://a.com", ReportFormat.JSON, multi=True)
             self.assertEqual(path, os.path.join(out_dir, "https___a.com.json"))
             self.assertTrue(os.path.isdir(out_dir))  # directory is created
+
+
+class RunTargetsTests(unittest.TestCase):
+    @staticmethod
+    def _scan(target: str) -> ScanReport:
+        return ScanReport(target=target, started_at=datetime.now(timezone.utc))
+
+    def test_sequential_preserves_order(self) -> None:
+        reports = _run_targets(["a", "b", "c"], self._scan, jobs=1)
+        self.assertEqual([r.target for r in reports], ["a", "b", "c"])
+
+    def test_concurrent_preserves_input_order(self) -> None:
+        # Even though completion order may vary, the returned list matches input.
+        targets = [f"host{i}" for i in range(8)]
+        reports = _run_targets(targets, self._scan, jobs=4)
+        self.assertEqual([r.target for r in reports], targets)
+
+    def test_each_target_scanned_once(self) -> None:
+        calls: list[str] = []
+
+        def scan(target: str) -> ScanReport:
+            calls.append(target)
+            return ScanReport(target=target, started_at=datetime.now(timezone.utc))
+
+        _run_targets(["x", "y"], scan, jobs=2)
+        self.assertEqual(sorted(calls), ["x", "y"])
 
 
 if __name__ == "__main__":
