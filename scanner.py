@@ -21,6 +21,7 @@ from diffing import (
     load_snapshot,
     save_snapshot,
     snapshot_from_report,
+    update_ages,
 )
 from active_scan import run_active_scan
 from models import ReportFormat, ScanReport, Severity
@@ -291,12 +292,15 @@ def run_scan(
     if not config.dry_run:
         state_dir = default_state_dir()
         previous = load_snapshot(config.target, state_dir)
+        # Stamp per-finding age before snapshotting so it persists and renders.
+        update_ages(report, previous, report.finished_at or datetime.now(timezone.utc))
         diff_result = diff_snapshots(previous, snapshot_from_report(report))
         if not quiet:
             _print_diff(diff_result)
         try:
             save_snapshot(report, state_dir)
-            trend = compute_trend(append_to_history(report, state_dir, max_entries=history_size))
+            report.history = append_to_history(report, state_dir, max_entries=history_size)
+            trend = compute_trend(report.history)
             if not quiet:
                 _print_trend(trend)
         except OSError as exc:

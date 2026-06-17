@@ -13,6 +13,7 @@ from diffing import (
     load_snapshot,
     save_snapshot,
     snapshot_from_report,
+    update_ages,
 )
 from models import (
     Finding,
@@ -123,6 +124,33 @@ class SnapshotPersistenceTests(unittest.TestCase):
 
 def _entry(total: int, **counts: int) -> dict[str, object]:
     return {"taken_at": "2026-01-01T00:00:00+00:00", "total": total, "counts": counts}
+
+
+class AgeTests(unittest.TestCase):
+    def test_new_finding_starts_at_one(self) -> None:
+        report = _report([_finding("A", Severity.HIGH)])
+        update_ages(report, None, datetime(2026, 6, 1, tzinfo=timezone.utc))
+        self.assertEqual(report.findings[0].age_scans, 1)
+        self.assertTrue(report.findings[0].first_seen.startswith("2026-06-01"))
+
+    def test_returning_finding_carries_first_seen_and_increments(self) -> None:
+        first = _report([_finding("A", Severity.HIGH)])
+        update_ages(first, None, datetime(2026, 6, 1, tzinfo=timezone.utc))
+        prev_snapshot = snapshot_from_report(first)
+
+        second = _report([_finding("A", Severity.HIGH)])
+        update_ages(second, prev_snapshot, datetime(2026, 6, 5, tzinfo=timezone.utc))
+        self.assertEqual(second.findings[0].age_scans, 2)
+        self.assertTrue(second.findings[0].first_seen.startswith("2026-06-01"))  # carried forward
+
+    def test_absent_then_returning_resets(self) -> None:
+        first = _report([_finding("A", Severity.HIGH)])
+        update_ages(first, None, datetime(2026, 6, 1, tzinfo=timezone.utc))
+        # A snapshot that does NOT contain "A"
+        other = snapshot_from_report(_report([_finding("B", Severity.LOW)]))
+        update_ages(first, other, datetime(2026, 6, 9, tzinfo=timezone.utc))
+        self.assertEqual(first.findings[0].age_scans, 1)
+        self.assertTrue(first.findings[0].first_seen.startswith("2026-06-09"))
 
 
 class TrendTests(unittest.TestCase):

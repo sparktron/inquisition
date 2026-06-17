@@ -54,10 +54,39 @@ def snapshot_from_report(report: ScanReport) -> dict[str, Any]:
                 "category": f.category.value,
                 "title": f.title,
                 "severity": f.severity.value,
+                "first_seen": f.first_seen,
+                "scan_count": f.age_scans,
             }
             for f in report.findings
         ],
     }
+
+
+def update_ages(
+    report: ScanReport, previous: dict[str, Any] | None, now: datetime
+) -> None:
+    """Stamp each finding with its first-seen time and consecutive-scan count.
+
+    A finding present in the previous snapshot carries its original ``first_seen``
+    forward and increments its count; a finding not seen before (or returning
+    after an absence) starts fresh at this scan.
+    """
+    prev_by_fp: dict[str, dict[str, Any]] = {}
+    if previous:
+        for entry in previous.get("findings", []):
+            if isinstance(entry, dict) and "fingerprint" in entry:
+                prev_by_fp[entry["fingerprint"]] = entry
+
+    iso = now.isoformat()
+    for finding in report.findings:
+        fp = fingerprint(finding.category.value, finding.title)
+        prev = prev_by_fp.get(fp)
+        if prev and prev.get("first_seen"):
+            finding.first_seen = str(prev["first_seen"])
+            finding.age_scans = int(prev.get("scan_count", 0)) + 1
+        else:
+            finding.first_seen = iso
+            finding.age_scans = 1
 
 
 @dataclass

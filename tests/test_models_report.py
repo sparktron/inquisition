@@ -5,7 +5,15 @@ import unittest
 from datetime import datetime, timezone
 
 from models import Finding, FindingCategory, ScanReport, Severity
-from report import _risk_score, render_json, render_text
+from report import _risk_score, render_html, render_json, render_text
+
+
+def _history(*totals: int) -> list[dict[str, object]]:
+    return [
+        {"taken_at": f"2026-06-{10 + i:02d}T00:00:00+00:00", "total": t,
+         "counts": {"high": t, "info": 0}}
+        for i, t in enumerate(totals)
+    ]
 
 
 class ModelsAndReportTests(unittest.TestCase):
@@ -92,6 +100,54 @@ class ModelsAndReportTests(unittest.TestCase):
         self.assertIn("DETAILED FINDINGS", output)
         self.assertNotIn("DEEP ISSUE ANALYSIS", output)
         self.assertNotIn("REMEDIATION GUIDE", output)
+
+
+class AgeAndTrendRenderTests(unittest.TestCase):
+    def _report(self) -> ScanReport:
+        return ScanReport(
+            target="example.com",
+            started_at=datetime(2026, 6, 14, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 6, 14, tzinfo=timezone.utc),
+            findings=[
+                Finding(
+                    title="Old issue",
+                    category=FindingCategory.TLS,
+                    severity=Severity.HIGH,
+                    evidence="e",
+                    first_seen="2026-06-01T00:00:00+00:00",
+                    age_scans=4,
+                ),
+            ],
+            history=_history(5, 4, 3, 2),  # improving
+        )
+
+    def test_json_includes_age_history_and_trend(self) -> None:
+        data = json.loads(render_json(self._report()))
+        self.assertEqual(data["findings"][0]["age_scans"], 4)
+        self.assertEqual(data["findings"][0]["first_seen"], "2026-06-01T00:00:00+00:00")
+        self.assertEqual(len(data["history"]), 4)
+        self.assertEqual(data["trend"]["direction"], "improving")
+        self.assertEqual(data["trend"]["total_delta"], -3)
+
+    def test_text_report_shows_finding_age(self) -> None:
+        output = render_text(self._report())
+        self.assertIn("open 4 scans (since 2026-06-01)", output)
+
+    def test_html_report_has_sparkline_and_age(self) -> None:
+        html = render_html(self._report())
+        self.assertIn("<polyline", html)        # sparkline drawn
+        self.assertIn("improving", html)        # trend label
+        self.assertIn("open 4 scans", html)     # age row
+
+    def test_html_no_sparkline_without_history(self) -> None:
+        report = self._report()
+        report.history = []
+        self.assertNotIn("<polyline", render_html(report))
+
+    def test_new_finding_reads_as_new(self) -> None:
+        report = self._report()
+        report.findings[0].age_scans = 1
+        self.assertIn("new this scan", render_text(report))
 
 
 if __name__ == "__main__":

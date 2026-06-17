@@ -145,6 +145,9 @@ class Finding:
     confidence: Confidence = Confidence.CONFIRMED
     references: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Cross-scan age, populated from the persisted state on non-dry-run scans.
+    first_seen: str = ""   # ISO timestamp this finding was first observed
+    age_scans: int = 0     # consecutive scans this finding has been present (incl. current)
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +207,9 @@ class ScanReport:
     misconfigurations: list[MisconfigurationCheck] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     report_path: str = ""  # filesystem path the rendered report was written to
+    # Rolling trend window for this target (chronological compact snapshots:
+    # {taken_at, total, counts}). Empty on dry runs / first scan.
+    history: list[dict[str, Any]] = field(default_factory=list)
 
     # Convenience helpers -----------------------------------------------
 

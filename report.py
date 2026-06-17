@@ -18,6 +18,7 @@ from models import (
     TOOL_REFERENCE,
 )
 from vuln_correlation import tools_for_category
+from diffing import compute_trend
 import analysis_kb
 
 _SEV_ORDER = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO]
@@ -67,6 +68,14 @@ def _risk_score(counts: dict[str, int]) -> tuple[int, str]:
 # ---------------------------------------------------------------------------
 # Text report
 # ---------------------------------------------------------------------------
+
+def _age_phrase(f: Finding) -> str:
+    """Human phrase for a finding's cross-scan age, e.g. 'new' or 'open 4 scans since 2026-06-01'."""
+    if f.age_scans <= 1:
+        return "new this scan"
+    day = f.first_seen[:10] if f.first_seen else "?"
+    return f"open {f.age_scans} scans (since {day})"
+
 
 def _hr(char: str = "=", width: int = 72) -> str:
     return char * width
@@ -226,6 +235,8 @@ def render_text(report: ScanReport, *, brief: bool = False) -> str:
                 lines.append(f"    Verify   : {f.verification}")
             if f.cpe:
                 lines.append(f"    CPE      : {f.cpe}")
+            if f.age_scans:
+                lines.append(f"    Age      : {_age_phrase(f)}")
             if f.references:
                 lines.append(f"    Refs     : {', '.join(f.references)}")
             # Tool reference
@@ -306,6 +317,9 @@ def _finding_to_dict(f: Finding) -> dict[str, Any]:
         d["verification"] = f.verification
     if f.cpe:
         d["cpe"] = f.cpe
+    if f.age_scans:
+        d["first_seen"] = f.first_seen
+        d["age_scans"] = f.age_scans
     if f.references:
         d["references"] = f.references
     d["tools"] = tools_for_category(f.category)
@@ -318,7 +332,7 @@ def _finding_to_dict(f: Finding) -> dict[str, Any]:
 
 def _json_report_dict(report: ScanReport) -> dict[str, Any]:
     """The per-report JSON body, reused by single and combined renderers."""
-    return {
+    data: dict[str, Any] = {
         "target": report.target,
         "started_at": report.started_at.isoformat(),
         "finished_at": report.finished_at.isoformat() if report.finished_at else None,
@@ -346,6 +360,16 @@ def _json_report_dict(report: ScanReport) -> dict[str, Any]:
         ],
         "errors": report.errors,
     }
+    if report.history:
+        trend = compute_trend(report.history)
+        data["history"] = report.history
+        data["trend"] = {
+            "direction": trend.direction,
+            "span": trend.span,
+            "total_delta": trend.total_delta,
+            "crit_high_delta": trend.crit_high_delta,
+        }
+    return data
 
 
 def render_json(report: ScanReport) -> str:
@@ -492,6 +516,43 @@ def _nl2br(text: str) -> str:
     return "<br>\n".join(lines)
 
 
+def _trend_sparkline_html(report: ScanReport) -> str:
+    """Inline SVG sparkline of total findings over the rolling history window."""
+    totals = [int(e.get("total", 0)) for e in report.history]
+    if len(totals) < 2:
+        return ""
+
+    trend = compute_trend(report.history)
+    color = {"improving": "#16a34a", "worsening": "#dc2626", "stable": "#64748b"}.get(
+        trend.direction, "#64748b"
+    )
+    arrow = {"improving": "▼", "worsening": "▲", "stable": "▬"}.get(trend.direction, "")
+
+    w, h, pad = 180, 36, 3
+    lo, hi = min(totals), max(totals)
+    span = hi - lo or 1
+    n = len(totals)
+    step = (w - 2 * pad) / (n - 1)
+    pts = [
+        (pad + i * step, h - pad - (t - lo) / span * (h - 2 * pad))
+        for i, t in enumerate(totals)
+    ]
+    poly = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+    last_x, last_y = pts[-1]
+    delta = f"{'+' if trend.total_delta > 0 else ''}{trend.total_delta}"
+    return (
+        f'<div style="margin-top:12px;display:flex;align-items:center;gap:10px">'
+        f'<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" role="img" '
+        f'aria-label="findings trend over last {n} scans">'
+        f'<polyline fill="none" stroke="{color}" stroke-width="2" points="{poly}"/>'
+        f'<circle cx="{last_x:.1f}" cy="{last_y:.1f}" r="2.5" fill="{color}"/></svg>'
+        f'<span style="font-size:.85rem;color:{color};font-weight:600">{arrow} {trend.direction}</span>'
+        f'<span style="font-size:.8rem;color:#64748b">over last {n} scans '
+        f'(total {delta}, crit+high {"+" if trend.crit_high_delta > 0 else ""}{trend.crit_high_delta})</span>'
+        f'</div>'
+    )
+
+
 def render_html(report: ScanReport) -> str:
     """Produce a self-contained HTML security report."""
     counts = report.summary_counts()
@@ -559,6 +620,8 @@ def render_html(report: ScanReport) -> str:
                 rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Quick fix</td><td>{_e(f.remediation)}</td></tr>\n"
             if f.cpe:
                 rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>CPE</td><td><code style='font-size:.85rem'>{_e(f.cpe)}</code></td></tr>\n"
+            if f.age_scans:
+                rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Age</td><td>{_e(_age_phrase(f))}</td></tr>\n"
             if tools:
                 rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Tools</td><td>{_e(', '.join(tools))}</td></tr>\n"
 
@@ -701,6 +764,7 @@ def render_html(report: ScanReport) -> str:
     Misconfigurations: <strong>{len(report.misconfigurations)}</strong> &nbsp;|&nbsp;
     Total findings: <strong>{sum(counts.values())}</strong>
   </div>
+  {_trend_sparkline_html(report)}
   <div style="margin-top:10px;font-size:.85rem;color:#64748b">
     Grade scale: <strong>A+</strong> = clean &nbsp;·&nbsp;
     <strong>A/B</strong> = minor issues &nbsp;·&nbsp;
