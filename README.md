@@ -227,11 +227,24 @@ threshold. With multiple targets, `--output` is treated as a **directory** and a
 per-target report (`<target>.<ext>`) is written into it; with a single target it
 remains a file path.
 
+To collect a whole fleet into **one artifact**, use `--combined-output FILE`
+(it replaces the per-target files). JSON and SARIF are merged structurally — a
+fleet JSON object with an aggregated severity summary, or a single SARIF 2.1.0
+file with one `run` per target (GitHub code scanning accepts multiple runs).
+Text and HTML are concatenated with per-target separators. This is the simplest
+way to upload one SARIF file from a multi-target CI job:
+
+```bash
+inquisition --targets-file hosts.txt --format sarif \
+  --combined-output fleet.sarif --fail-on high --yes
+```
+
 #### Output & Reporting
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `-f`, `--format` | `text` \| `json` \| `html` | `text` | Report output format |
-| `-o`, `--output` | path | stdout | Write report to file (extension infers format) |
+| `-f`, `--format` | `text` \| `json` \| `html` \| `sarif` | `text` | Report output format |
+| `-o`, `--output` | path | stdout | Write report to file (for multiple targets, a per-target directory) |
+| `--combined-output` | path | none | Write a single artifact spanning all targets instead of per-target files |
 | `--brief` | flag | off | Omit deep-dive analysis and remediation sections |
 
 #### Concurrency & Timing

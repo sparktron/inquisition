@@ -341,6 +341,11 @@ Goal: the tool's existing output is correct and its claims are true.
       and/or `--targets-file`; each target is scanned, diffed, and notified
       independently, a combined overview table prints at the end, `--output` acts
       as a per-target directory, and `--fail-on` trips if any target qualifies.
+- [x] **Single combined fleet artifact** — `--combined-output FILE` writes one
+      artifact across all targets instead of per-target files: a fleet JSON
+      object with an aggregated summary (`render_json_combined`), a multi-run
+      SARIF 2.1.0 file (`render_sarif_combined`), or concatenated text/HTML.
+      `run_scan(write_report=False)` suppresses per-target writes in this mode.
 
 ### Phase 4 — Active Testing (optional, authorization-gated)
 - [x] Integrate Nuclei behind an explicit `--active` flag (`active_scan.py`)
@@ -359,8 +364,7 @@ Goal: the tool's existing output is correct and its claims are true.
 ---
 
 ### Suggested immediate next step
-All planned phases and the detection-quality, notification, TLS-depth, and
-fleet/multi-target follow-ons are complete. Candidate future directions: a single
-combined SARIF/JSON artifact across a fleet run; concurrent multi-target
-execution (currently sequential); and trend history beyond the single prior
-snapshot (e.g. rolling N-scan deltas).
+All planned phases and follow-ons (detection-quality, notifications, TLS depth,
+fleet/multi-target, combined artifact) are complete. Candidate future directions:
+concurrent multi-target execution (currently sequential); and trend history
+beyond the single prior snapshot (e.g. rolling N-scan deltas).
