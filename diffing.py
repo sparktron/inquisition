@@ -23,6 +23,15 @@ from typing import Any
 from models import ScanReport, Severity, severity_at_least
 
 _STATE_DIRNAME = ".state"
+_HISTORY_SUFFIX = ".history.json"
+_DEFAULT_HISTORY_SIZE = 10
+
+# Weights used to collapse a severity breakdown into one comparable risk score
+# for trend direction. Higher-severity findings dominate, so fixing a CRITICAL
+# counts for more than adding a handful of INFO notes.
+_SEVERITY_WEIGHT: dict[str, int] = {
+    "critical": 100, "high": 40, "medium": 10, "low": 3, "info": 0,
+}
 
 
 def _safe_target(target: str) -> str:
@@ -158,3 +167,103 @@ def save_snapshot(report: ScanReport, state_dir: Path) -> Path:
 
 def default_state_dir(reports_dir: str = "reports") -> Path:
     return Path(reports_dir) / _STATE_DIRNAME
+
+
+# ---------------------------------------------------------------------------
+# Trend history (rolling window of past scans)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TrendEntry:
+    taken_at: str
+    total: int
+    counts: dict[str, int]
+
+
+@dataclass
+class TrendResult:
+    """Movement across the last N scans of one target."""
+
+    entries: list[TrendEntry] = field(default_factory=list)
+    direction: str = "baseline"   # improving | worsening | stable | baseline
+    total_delta: int = 0          # newest total minus oldest in the window
+    crit_high_delta: int = 0      # newest (critical+high) minus oldest
+    span: int = 0                 # number of scans compared
+
+    def has_history(self) -> bool:
+        return self.span >= 2
+
+
+def _risk_score(counts: dict[str, int]) -> int:
+    return sum(_SEVERITY_WEIGHT.get(sev, 0) * n for sev, n in counts.items())
+
+
+def _history_path(target: str, state_dir: Path) -> Path:
+    return state_dir / f"{_safe_target(target)}{_HISTORY_SUFFIX}"
+
+
+def load_history(target: str, state_dir: Path) -> list[dict[str, Any]]:
+    """Load the saved trend history (chronological) for ``target``, or []."""
+    path = _history_path(target, state_dir)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    entries = data.get("entries", []) if isinstance(data, dict) else []
+    return [e for e in entries if isinstance(e, dict)]
+
+
+def append_to_history(
+    report: ScanReport, state_dir: Path, max_entries: int = _DEFAULT_HISTORY_SIZE
+) -> list[dict[str, Any]]:
+    """Append a compact entry for ``report``, cap to ``max_entries``, persist, return it."""
+    counts = report.summary_counts()
+    entry = {
+        "taken_at": (report.finished_at or report.started_at or datetime.now(timezone.utc)).isoformat(),
+        "total": sum(counts.values()),
+        "counts": counts,
+    }
+    history = load_history(report.target, state_dir)
+    history.append(entry)
+    if max_entries > 0:
+        history = history[-max_entries:]
+
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with open(_history_path(report.target, state_dir), "w", encoding="utf-8") as fh:
+        json.dump({"target": report.target, "entries": history}, fh, indent=2)
+    return history
+
+
+def compute_trend(history: list[dict[str, Any]]) -> TrendResult:
+    """Summarize movement across a chronological list of history entries."""
+    entries = [
+        TrendEntry(
+            taken_at=str(e.get("taken_at", "")),
+            total=int(e.get("total", 0)),
+            counts={str(k): int(v) for k, v in (e.get("counts") or {}).items()},
+        )
+        for e in history
+    ]
+    if len(entries) < 2:
+        return TrendResult(entries=entries, direction="baseline", span=len(entries))
+
+    oldest, newest = entries[0], entries[-1]
+    old_score, new_score = _risk_score(oldest.counts), _risk_score(newest.counts)
+    if new_score < old_score:
+        direction = "improving"
+    elif new_score > old_score:
+        direction = "worsening"
+    else:
+        direction = "stable"
+
+    def crit_high(counts: dict[str, int]) -> int:
+        return counts.get("critical", 0) + counts.get("high", 0)
+
+    return TrendResult(
+        entries=entries,
+        direction=direction,
+        total_delta=newest.total - oldest.total,
+        crit_high_delta=crit_high(newest.counts) - crit_high(oldest.counts),
+        span=len(entries),
+    )

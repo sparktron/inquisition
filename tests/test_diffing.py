@@ -6,7 +6,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from diffing import (
+    append_to_history,
+    compute_trend,
     diff_snapshots,
+    load_history,
     load_snapshot,
     save_snapshot,
     snapshot_from_report,
@@ -116,6 +119,48 @@ class SnapshotPersistenceTests(unittest.TestCase):
 
         self.assertEqual([d.title for d in diff.new], ["Issue B"])
         self.assertEqual(diff.unchanged_count, 1)
+
+
+def _entry(total: int, **counts: int) -> dict[str, object]:
+    return {"taken_at": "2026-01-01T00:00:00+00:00", "total": total, "counts": counts}
+
+
+class TrendTests(unittest.TestCase):
+    def test_single_entry_is_baseline(self) -> None:
+        trend = compute_trend([_entry(3, medium=3)])
+        self.assertEqual(trend.direction, "baseline")
+        self.assertFalse(trend.has_history())
+
+    def test_fewer_critical_is_improving(self) -> None:
+        trend = compute_trend([_entry(5, critical=2, low=3), _entry(4, critical=0, low=4)])
+        self.assertEqual(trend.direction, "improving")
+        self.assertEqual(trend.total_delta, -1)
+        self.assertEqual(trend.crit_high_delta, -2)
+
+    def test_more_high_is_worsening(self) -> None:
+        trend = compute_trend([_entry(2, low=2), _entry(3, high=1, low=2)])
+        self.assertEqual(trend.direction, "worsening")
+        self.assertEqual(trend.crit_high_delta, 1)
+
+    def test_same_risk_score_is_stable(self) -> None:
+        trend = compute_trend([_entry(3, medium=3), _entry(3, medium=3)])
+        self.assertEqual(trend.direction, "stable")
+
+    def test_more_low_findings_still_improving_if_critical_dropped(self) -> None:
+        # one critical removed outweighs several added lows (weighted score)
+        trend = compute_trend([_entry(2, critical=1, low=1), _entry(6, low=6)])
+        self.assertEqual(trend.direction, "improving")
+
+    def test_append_caps_and_round_trips(self) -> None:
+        with TemporaryDirectory() as tmp:
+            state_dir = Path(tmp)
+            for i in range(5):
+                report = _report([_finding(f"f{i}", Severity.LOW)])
+                history = append_to_history(report, state_dir, max_entries=3)
+            self.assertEqual(len(history), 3)  # capped
+            self.assertEqual(load_history("example.com", state_dir), history)
+            trend = compute_trend(history)
+            self.assertEqual(trend.span, 3)
 
 
 if __name__ == "__main__":

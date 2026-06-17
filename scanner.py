@@ -13,6 +13,9 @@ from typing import TYPE_CHECKING
 
 from diffing import (
     DiffResult,
+    TrendResult,
+    append_to_history,
+    compute_trend,
     default_state_dir,
     diff_snapshots,
     load_snapshot,
@@ -138,6 +141,19 @@ def _print_diff(diff: DiffResult) -> None:
         print_info(f"  - fixed [{delta.severity}] {delta.title}")
 
 
+def _print_trend(trend: TrendResult) -> None:
+    """Print a one-line trend across the rolling history window."""
+    if not trend.has_history():
+        return
+    arrow = {"improving": "↓", "worsening": "↑", "stable": "→"}.get(trend.direction, "·")
+    total_sign = "+" if trend.total_delta > 0 else ""
+    ch_sign = "+" if trend.crit_high_delta > 0 else ""
+    print_info(
+        f"trend over last {trend.span} scans: {arrow} {trend.direction} "
+        f"(total {total_sign}{trend.total_delta}, critical+high {ch_sign}{trend.crit_high_delta})"
+    )
+
+
 def run_scan(
     config: ScanConfig,
     *,
@@ -148,8 +164,15 @@ def run_scan(
     notify_min_severity: Severity = Severity.HIGH,
     notify_on: str = NOTIFY_REGRESSION,
     write_report: bool = True,
+    history_size: int = 10,
+    quiet: bool = False,
 ) -> ScanReport:
-    """Execute a full scan with the given configuration."""
+    """Execute a full scan with the given configuration.
+
+    ``quiet`` suppresses the live per-scan UI (header, progress bar, per-module
+    lines, summary panel) so several scans can run concurrently without
+    interleaving output; warnings and errors are still shown.
+    """
 
     # --- Validation ---
     warnings = validate_config(config)
@@ -164,12 +187,13 @@ def run_scan(
             abort("Authorization denied — aborting scan.")
 
     # --- Header ---
-    print_header(
-        target=config.target,
-        depth=config.depth.value,
-        fmt=config.report_format.value,
-        dry_run=config.dry_run,
-    )
+    if not quiet:
+        print_header(
+            target=config.target,
+            depth=config.depth.value,
+            fmt=config.report_format.value,
+            dry_run=config.dry_run,
+        )
 
     # --- Initialize report ---
     report = ScanReport(
@@ -182,13 +206,15 @@ def run_scan(
     http_client = HttpClient(config)
     crawler = CrawlerModule(config, http_client=http_client)
     mod_name, crawler_findings, crawler_errors = _run_module(crawler)
-    print_module_result(mod_name, len(crawler_findings), len(crawler_errors))
+    if not quiet:
+        print_module_result(mod_name, len(crawler_findings), len(crawler_errors))
     report.findings.extend(crawler_findings)
     report.errors.extend(crawler_errors)
 
     discovered_urls = _extract_discovered_urls(crawler_findings)
     if discovered_urls:
-        print_info(f"feeding {len(discovered_urls)} discovered URL(s) into path-aware modules")
+        if not quiet:
+            print_info(f"feeding {len(discovered_urls)} discovered URL(s) into path-aware modules")
         config = replace(config, discovered_urls=discovered_urls)
         report.config = config
 
@@ -196,70 +222,83 @@ def run_scan(
     module_classes = [cls for cls in ALL_MODULES if cls is not CrawlerModule]
     modules = [cls(config, http_client=http_client) for cls in module_classes]
 
-    progress = make_progress()
-    with progress:
+    progress = None if quiet else make_progress()
+    task = None
+    if progress is not None:
+        progress.start()
         task = progress.add_task("scanning", total=len(modules))
-        with ThreadPoolExecutor(max_workers=min(config.max_threads, len(modules))) as pool:
-            futures = {pool.submit(_run_module, m): m.name for m in modules}
-            for future in as_completed(futures):
-                mod_name, findings, errors = future.result()
+    with ThreadPoolExecutor(max_workers=min(config.max_threads, len(modules))) as pool:
+        futures = {pool.submit(_run_module, m): m.name for m in modules}
+        for future in as_completed(futures):
+            mod_name, findings, errors = future.result()
+            if progress is not None and task is not None:
                 print_module_result(mod_name, len(findings), len(errors))
                 progress.advance(task)
-                report.findings.extend(findings)
-                report.errors.extend(errors)
+            report.findings.extend(findings)
+            report.errors.extend(errors)
+    if progress is not None:
+        progress.stop()
 
     # --- Active testing phase (opt-in, sends payloads) ---
     if config.active and not config.dry_run:
         if confirm_active_scan(config, assume_yes=skip_auth):
-            print_info(f"running active scan ({config.active_engine}) — this sends payloads")
+            if not quiet:
+                print_info(f"running active scan ({config.active_engine}) — this sends payloads")
             active_findings, active_errors = run_active_scan(config)
             report.findings.extend(active_findings)
             report.errors.extend(active_errors)
-            print_info(
-                f"active scan complete: {len(active_findings)} finding(s)"
-                + (f", {len(active_errors)} error(s)" if active_errors else "")
-            )
+            if not quiet:
+                print_info(
+                    f"active scan complete: {len(active_findings)} finding(s)"
+                    + (f", {len(active_errors)} error(s)" if active_errors else "")
+                )
         else:
             print_warning("active scan not authorized — skipping active phase")
 
     # --- Vulnerability correlation (CPE -> CVE) ---
     cpe_values = {f.cpe for f in report.findings if f.cpe}
     if cpe_values and not config.dry_run:
-        print_cve_phase(len(cpe_values))
+        if not quiet:
+            print_cve_phase(len(cpe_values))
         for cpe in cpe_values:
             try:
                 cves = lookup_cves_for_cpe(cpe, timeout=config.timeout)
                 report.cve_records.extend(cves)
-                if cves:
+                if cves and not quiet:
                     print_cve_match(cpe, len(cves))
             except Exception as exc:
                 report.errors.append(f"CVE lookup for {cpe}: {exc}")
-                print_cve_error(cpe)
+                if not quiet:
+                    print_cve_error(cpe)
 
     # --- Deduplicate findings ---
     before = len(report.findings)
     report.findings = _deduplicate(report.findings)
     dupes = before - len(report.findings)
-    if dupes:
+    if dupes and not quiet:
         print_info(f"removed {dupes} duplicate finding" + ("s" if dupes != 1 else ""))
 
     # --- Misconfiguration checks ---
     report.misconfigurations = derive_misconfigurations(report.findings)
-    if report.misconfigurations:
+    if report.misconfigurations and not quiet:
         n = len(report.misconfigurations)
         print_info(f"{n} misconfiguration" + ("s" if n != 1 else "") + " detected")
 
     # --- Finalize ---
     report.finished_at = datetime.now(timezone.utc)
 
-    # --- Scan diffing vs the previous run for this target ---
+    # --- Scan diffing + rolling trend vs prior runs for this target ---
     if not config.dry_run:
         state_dir = default_state_dir()
         previous = load_snapshot(config.target, state_dir)
         diff_result = diff_snapshots(previous, snapshot_from_report(report))
-        _print_diff(diff_result)
+        if not quiet:
+            _print_diff(diff_result)
         try:
             save_snapshot(report, state_dir)
+            trend = compute_trend(append_to_history(report, state_dir, max_entries=history_size))
+            if not quiet:
+                _print_trend(trend)
         except OSError as exc:
             report.errors.append(f"Could not save scan snapshot: {exc}")
 
@@ -274,7 +313,8 @@ def run_scan(
                     policy=notify_on,
                     report=report,
                 ):
-                    print_info(f"scan notification sent ({notify_on})")
+                    if not quiet:
+                        print_info(f"scan notification sent ({notify_on})")
             except Exception as exc:
                 report.errors.append(f"Notification failed: {exc}")
                 print_warning(f"scan notification failed: {exc}")
@@ -307,14 +347,15 @@ def run_scan(
             summary_path = "(not saved)"
 
     # --- Summary ---
-    counts = report.summary_counts()
-    print_summary(
-        target=config.target,
-        total=sum(counts.values()),
-        counts=counts,
-        cve_count=len(report.cve_records),
-        misconfig_count=len(report.misconfigurations),
-        output_path=summary_path,
-    )
+    if not quiet:
+        counts = report.summary_counts()
+        print_summary(
+            target=config.target,
+            total=sum(counts.values()),
+            counts=counts,
+            cve_count=len(report.cve_records),
+            misconfig_count=len(report.misconfigurations),
+            output_path=summary_path,
+        )
 
     return report
