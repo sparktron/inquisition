@@ -8,6 +8,9 @@ Pushgateway, or a CI artifact a monitoring job ingests.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from typing import Any, Callable
+
 from models import ScanReport, Severity
 from report import _risk_score
 
@@ -19,15 +22,23 @@ def _escape_label(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
-def _metric(name: str, labels: dict[str, str], value: float) -> str:
+def _metric(name: str, labels: dict[str, str], value: float, ts_ms: int | None = None) -> str:
     label_str = ",".join(f'{k}="{_escape_label(v)}"' for k, v in labels.items())
     # Render integers without a trailing .0 for readability.
     num = int(value) if float(value).is_integer() else value
-    return f"{_PREFIX}_{name}{{{label_str}}} {num}"
+    suffix = f" {ts_ms}" if ts_ms is not None else ""
+    return f"{_PREFIX}_{name}{{{label_str}}} {num}{suffix}"
 
 
-def render_prometheus(reports: list[ScanReport]) -> str:
-    """Render scan results for one or more targets as Prometheus text exposition."""
+def render_prometheus(reports: list[ScanReport], *, include_history: bool = False) -> str:
+    """Render scan results for one or more targets as Prometheus text exposition.
+
+    With ``include_history`` the findings / findings_total families are emitted as
+    one timestamped sample per stored history scan (instead of a single current
+    gauge), so a backfill can ingest the trend. The other gauges stay
+    point-in-time. (Timestamped samples are rejected by the Pushgateway, so this
+    is for file ingestion, not push.)
+    """
     blocks: list[tuple[str, str, str]] = [
         ("findings", "gauge", "Open findings by target and severity"),
         ("findings_total", "gauge", "Total open findings by target"),
@@ -43,8 +54,61 @@ def render_prometheus(reports: list[ScanReport]) -> str:
         lines.append(f"# HELP {_PREFIX}_{name} {help_text}")
         lines.append(f"# TYPE {_PREFIX}_{name} {mtype}")
         for report in reports:
-            lines.extend(_series_for(name, report))
+            if include_history and name in ("findings", "findings_total") and report.history:
+                lines.extend(_history_series(name, report))
+            else:
+                lines.extend(_series_for(name, report))
     return "\n".join(lines) + "\n"
+
+
+def _ts_ms(taken_at: str) -> int | None:
+    try:
+        dt = datetime.fromisoformat(taken_at)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp() * 1000)
+
+
+def _history_series(name: str, report: ScanReport) -> list[str]:
+    """Timestamped samples across the stored history window for findings metrics."""
+    out: list[str] = []
+    target = report.target
+    for entry in report.history:
+        ts = _ts_ms(str(entry.get("taken_at", "")))
+        if ts is None:
+            continue
+        counts = {str(k): int(v) for k, v in (entry.get("counts") or {}).items()}
+        if name == "findings":
+            for sev in Severity:
+                out.append(_metric("findings", {"target": target, "severity": sev.value},
+                                   counts.get(sev.value, 0), ts))
+        else:  # findings_total
+            out.append(_metric("findings_total", {"target": target},
+                               int(entry.get("total", sum(counts.values()))), ts))
+    return out
+
+
+def push_metrics(
+    base_url: str,
+    text: str,
+    *,
+    job: str = "inquisition",
+    timeout: float = 10.0,
+    sender: Callable[..., Any] | None = None,
+) -> None:
+    """Push exposition ``text`` to a Prometheus Pushgateway job (PUT replaces the group).
+
+    ``sender`` defaults to ``requests.put``; inject a fake in tests.
+    """
+    url = f"{base_url.rstrip('/')}/metrics/job/{job}"
+    put = sender
+    if put is None:
+        import requests  # type: ignore[import-untyped]
+        put = requests.put
+    put(url, data=text.encode("utf-8"),
+        headers={"Content-Type": "text/plain; version=0.0.4"}, timeout=timeout)
 
 
 def _series_for(name: str, report: ScanReport) -> list[str]:

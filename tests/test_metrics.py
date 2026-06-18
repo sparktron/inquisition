@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime, timezone
+from typing import Any
 
-from metrics import render_prometheus
+from metrics import push_metrics, render_prometheus
 from models import Finding, FindingCategory, ScanReport, Severity
 
 
@@ -49,6 +50,47 @@ class PrometheusTests(unittest.TestCase):
     def test_label_value_is_escaped(self) -> None:
         out = render_prometheus([_report('ex"ample', _f(Severity.LOW))])
         self.assertIn('target="ex\\"ample"', out)
+
+
+class HistoryMetricsTests(unittest.TestCase):
+    def _report_with_history(self) -> ScanReport:
+        r = _report("example.com", _f(Severity.HIGH))
+        r.history = [
+            {"taken_at": "2026-06-01T00:00:00+00:00", "total": 3, "counts": {"high": 3}},
+            {"taken_at": "2026-06-02T00:00:00+00:00", "total": 1, "counts": {"high": 1}},
+        ]
+        return r
+
+    def test_history_emits_timestamped_samples(self) -> None:
+        out = render_prometheus([self._report_with_history()], include_history=True)
+        ms1 = int(datetime.fromisoformat("2026-06-01T00:00:00+00:00").timestamp() * 1000)
+        ms2 = int(datetime.fromisoformat("2026-06-02T00:00:00+00:00").timestamp() * 1000)
+        self.assertIn(f'inquisition_findings_total{{target="example.com"}} 3 {ms1}', out)
+        self.assertIn(f'inquisition_findings_total{{target="example.com"}} 1 {ms2}', out)
+
+    def test_non_history_metrics_stay_pointintime(self) -> None:
+        out = render_prometheus([self._report_with_history()], include_history=True)
+        # risk_score is a current gauge, no trailing timestamp
+        line = next(l for l in out.splitlines() if l.startswith("inquisition_risk_score{"))
+        self.assertEqual(len(line.split()), 2)  # metric and value only
+
+    def test_default_is_pointintime(self) -> None:
+        out = render_prometheus([self._report_with_history()])
+        line = next(l for l in out.splitlines() if l.startswith("inquisition_findings_total{"))
+        self.assertEqual(len(line.split()), 2)  # no timestamp
+
+
+class PushTests(unittest.TestCase):
+    def test_push_builds_job_url_and_sends_body(self) -> None:
+        calls: list[dict[str, Any]] = []
+
+        def fake_put(url: str, **kwargs: Any) -> None:
+            calls.append({"url": url, **kwargs})
+
+        push_metrics("http://gw:9091/", "metricdata\n", job="inq", sender=fake_put)
+        self.assertEqual(calls[0]["url"], "http://gw:9091/metrics/job/inq")
+        self.assertEqual(calls[0]["data"], b"metricdata\n")
+        self.assertIn("text/plain", calls[0]["headers"]["Content-Type"])
 
 
 if __name__ == "__main__":
