@@ -9,12 +9,20 @@ import unittest
 
 from datetime import datetime, timezone
 
-from inquisition import _gather_targets, _output_path_for, _parse_sla_overrides, _run_targets
-from models import ReportFormat, ScanReport
+from inquisition import (
+    _gather_targets,
+    _jitter_delay,
+    _output_path_for,
+    _parse_sla_overrides,
+    _resolve_targets,
+    _run_targets,
+)
+from models import ReportFormat, ScanConfig, ScanReport
 
 
-def _args(target: list[str], targets_file: str | None = None) -> argparse.Namespace:
-    return argparse.Namespace(target=target, targets_file=targets_file)
+def _args(target: list[str], targets_file: str | None = None,
+          fleet_config: str | None = None) -> argparse.Namespace:
+    return argparse.Namespace(target=target, targets_file=targets_file, fleet_config=fleet_config)
 
 
 class GatherTargetsTests(unittest.TestCase):
@@ -72,6 +80,25 @@ class SlaOverrideParseTests(unittest.TestCase):
     def test_non_numeric_exits(self) -> None:
         with self.assertRaises(SystemExit):
             _parse_sla_overrides("high=soon")
+
+
+class ResolveTargetsTests(unittest.TestCase):
+    def test_non_fleet_builds_config_per_target(self) -> None:
+        base = ScanConfig(target="", sla_max_age=3)
+        targets, by_target = _resolve_targets(_args(["a.com", "b.com"]), base)
+        self.assertEqual(targets, ["a.com", "b.com"])
+        self.assertEqual(by_target["a.com"].target, "a.com")
+        self.assertEqual(by_target["a.com"].sla_max_age, 3)  # inherits base
+
+
+class JitterTests(unittest.TestCase):
+    def test_zero_or_negative_is_zero(self) -> None:
+        self.assertEqual(_jitter_delay(0), 0.0)
+        self.assertEqual(_jitter_delay(-5), 0.0)
+
+    def test_within_range(self) -> None:
+        for _ in range(50):
+            self.assertTrue(0.0 <= _jitter_delay(2.0) <= 2.0)
 
 
 class RunTargetsTests(unittest.TestCase):

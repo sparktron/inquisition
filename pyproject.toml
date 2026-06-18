@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [tool.setuptools]
-py-modules = ["inquisition", "scanner", "report", "models", "safety", "analysis_kb", "vuln_correlation", "ui", "diffing", "notifications", "active_scan", "tls_chain", "metrics", "fleet_config"]
+py-modules = ["inquisition", "scanner", "report", "models", "safety", "analysis_kb", "vuln_correlation", "ui", "diffing", "notifications", "active_scan", "tls_chain", "metrics", "fleet_config", "metrics_server"]
 
 [tool.setuptools.packages.find]
 include = ["modules*"]

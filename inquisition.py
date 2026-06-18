@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import threading
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -243,7 +245,34 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Run continuously: re-scan all targets every SECONDS until interrupted "
             "(Ctrl-C). Pairs with --notify/--metrics-push for monitoring. --fail-on "
-            "only warns in watch mode rather than exiting."
+            "only warns in watch mode rather than exiting. On SIGHUP, a --fleet-config "
+            "is reloaded without restarting."
+        ),
+    )
+
+    parser.add_argument(
+        "--watch-jitter",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        dest="watch_jitter",
+        help=(
+            "In watch mode, stagger each target's scan by a random 0–SECONDS delay "
+            "so they don't all fire at once (spreads load; avoids synchronized "
+            "scrapes across instances)."
+        ),
+    )
+
+    parser.add_argument(
+        "--metrics-serve",
+        type=int,
+        default=0,
+        metavar="PORT",
+        dest="metrics_serve",
+        help=(
+            "Serve the latest metrics for Prometheus to scrape at "
+            "http://HOST:PORT/metrics (refreshed after each scan). The pull-based "
+            "alternative to --metrics-push; most useful with --watch."
         ),
     )
 
@@ -413,6 +442,44 @@ def _output_path_for(output: str | None, target: str, fmt: ReportFormat, multi: 
     return str(out_dir / f"{safe}.{ext}")
 
 
+def _resolve_targets(
+    args: argparse.Namespace, base_config: ScanConfig
+) -> tuple[list[str], dict[str, ScanConfig]]:
+    """Resolve the target list and per-target configs.
+
+    Raises ``fleet_config.FleetConfigError`` on a bad fleet config (so callers can
+    choose to exit on first load but keep running on a failed live reload).
+    """
+    if args.fleet_config:
+        from fleet_config import interpolate_env, load_fleet_config, resolved_configs
+        raw = interpolate_env(load_fleet_config(args.fleet_config))
+        configs = resolved_configs(raw, base_config)
+        config_by_target = {c.target: c for c in configs}
+        return list(config_by_target.keys()), config_by_target
+    targets = _gather_targets(args)
+    return targets, {t: replace(base_config, target=t) for t in targets}
+
+
+def _jitter_delay(jitter: float) -> float:
+    """A random delay in [0, jitter] seconds (0 when jitter is non-positive)."""
+    if jitter <= 0:
+        return 0.0
+    import random
+    return random.uniform(0, jitter)
+
+
+def _install_sighup_reload(
+    args: argparse.Namespace, announce: Callable[[str], None]
+) -> threading.Event:
+    """Return an Event set on SIGHUP, used to trigger a fleet-config reload."""
+    flag = threading.Event()
+    import signal
+    if args.fleet_config and hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, lambda *_: flag.set())
+        announce("watch: send SIGHUP to reload the fleet config without restarting")
+    return flag
+
+
 def _run_targets(
     targets: list[str], scan_fn: Callable[[str], ScanReport], *, jobs: int
 ) -> list[ScanReport]:
@@ -484,61 +551,61 @@ def main(argv: list[str] | None = None) -> None:
         sla_severity_overrides=sla_overrides,
     )
 
-    config_by_target: dict[str, ScanConfig] = {}
-    if args.fleet_config:
-        from fleet_config import (
-            FleetConfigError,
-            interpolate_env,
-            load_fleet_config,
-            resolved_configs,
-        )
-        from ui import print_error
-        try:
-            raw = interpolate_env(load_fleet_config(args.fleet_config))
-            configs = resolved_configs(raw, base_config)
-        except FleetConfigError as exc:
-            print_error(f"fleet config error: {exc}", f"check {args.fleet_config}")
-            sys.exit(2)
-        config_by_target = {c.target: c for c in configs}
-        targets = list(config_by_target.keys())
-    else:
-        targets = _gather_targets(args)
-        config_by_target = {t: replace(base_config, target=t) for t in targets}
+    from fleet_config import FleetConfigError
+    from models import severity_at_least
+    from ui import print_error, print_info, print_interrupted, print_warning
 
+    combined = bool(args.combined_output)
+    threshold = Severity(args.fail_on) if args.fail_on else None
+
+    # Targets and their per-target configs (mutated in place on SIGHUP reload).
+    try:
+        targets, config_by_target = _resolve_targets(args, base_config)
+    except FleetConfigError as exc:
+        print_error(f"fleet config error: {exc}", f"check {args.fleet_config}")
+        sys.exit(2)
     if not targets:
-        from ui import print_error
         print_error("no targets given", "pass hostnames, --targets-file, or --fleet-config")
         sys.exit(2)
 
-    from models import severity_at_least
-    multi = len(targets) > 1
-    combined = bool(args.combined_output)
-    concurrent = args.jobs > 1 and multi
-    threshold = Severity(args.fail_on) if args.fail_on else None
-
-    def _scan(target: str) -> ScanReport:
-        config = config_by_target[target]
-        return run_scan(
-            config,
-            skip_auth=args.authorized or args.dry_run,
-            brief=args.brief,
-            # In combined mode, suppress per-target files; one artifact is written below.
-            output_path=None if combined else _output_path_for(args.output, target, report_format, multi),
-            notify_url=args.notify_url,
-            notify_min_severity=Severity(args.notify_min_severity),
-            notify_on=args.notify_on,
-            write_report=not combined,
-            history_size=args.history_size,
-            history_max_age_days=args.history_max_age_days,
-            quiet=concurrent,
-        )
+    # Optional scrape endpoint, refreshed after every cycle.
+    metrics_holder = None
+    if args.metrics_serve:
+        from metrics_server import MetricsHolder, start_metrics_server
+        metrics_holder = MetricsHolder()
+        try:
+            start_metrics_server(args.metrics_serve, metrics_holder)
+            print_info(f"serving metrics at http://0.0.0.0:{args.metrics_serve}/metrics")
+        except OSError as exc:
+            print_error(f"could not start metrics server on :{args.metrics_serve}", str(exc))
+            sys.exit(2)
 
     def _cycle() -> bool:
-        """Run one full pass over all targets. Returns whether --fail-on was met."""
+        """Run one full pass over the current targets. Returns whether --fail-on was met."""
+        multi = len(targets) > 1
+        concurrent = args.jobs > 1 and multi
+
+        def _scan(target: str) -> ScanReport:
+            if args.watch > 0 and args.watch_jitter > 0:
+                time.sleep(_jitter_delay(args.watch_jitter))
+            return run_scan(
+                config_by_target[target],
+                skip_auth=args.authorized or args.dry_run,
+                brief=args.brief,
+                # In combined mode, suppress per-target files; one artifact is written below.
+                output_path=None if combined else _output_path_for(args.output, target, report_format, multi),
+                notify_url=args.notify_url,
+                notify_min_severity=Severity(args.notify_min_severity),
+                notify_on=args.notify_on,
+                write_report=not combined,
+                history_size=args.history_size,
+                history_max_age_days=args.history_max_age_days,
+                quiet=concurrent,
+            )
+
         try:
             reports = _run_targets(targets, _scan, jobs=args.jobs if concurrent else 1)
         except KeyboardInterrupt:
-            from ui import print_interrupted
             print_interrupted()
             sys.exit(130)
 
@@ -558,7 +625,6 @@ def main(argv: list[str] | None = None) -> None:
         # --- Combined artifact spanning all targets ---
         if combined:
             from report import render_combined
-            from ui import print_info, print_error
             artifact = render_combined(reports, report_format, brief=args.brief)
             try:
                 with open(args.combined_output, "w", encoding="utf-8") as fh:
@@ -570,10 +636,9 @@ def main(argv: list[str] | None = None) -> None:
                 print_error(f"could not write combined artifact to {args.combined_output}", str(exc))
                 sys.exit(2)
 
-        # --- Prometheus / OpenMetrics export (all targets) ---
-        if args.metrics_output or args.metrics_push:
+        # --- Prometheus / OpenMetrics export (file / push / scrape) ---
+        if args.metrics_output or args.metrics_push or metrics_holder is not None:
             from metrics import push_metrics, render_prometheus
-            from ui import print_info, print_error
             if args.metrics_output:
                 try:
                     with open(args.metrics_output, "w", encoding="utf-8") as fh:
@@ -582,6 +647,8 @@ def main(argv: list[str] | None = None) -> None:
                 except OSError as exc:
                     print_error(f"could not write metrics to {args.metrics_output}", str(exc))
                     sys.exit(2)
+            if metrics_holder is not None:
+                metrics_holder.set(render_prometheus(reports))
             if args.metrics_push:
                 # Pushgateway rejects timestamped samples, so push current gauges only.
                 try:
@@ -592,19 +659,28 @@ def main(argv: list[str] | None = None) -> None:
                     sys.exit(2)
 
         # --- Fleet overview (only when more than one target was scanned) ---
-        if multi:
+        if len(targets) > 1:
             from ui import print_fleet_summary
             print_fleet_summary(fleet_rows)
 
         return fail_triggered
 
-    # --- Watch mode: loop on an interval until interrupted ---
+    # --- Watch mode: loop on an interval until interrupted (SIGHUP reloads config) ---
     if args.watch > 0:
-        import time
-        from ui import print_info, print_warning
+        reload_flag = _install_sighup_reload(args, print_info)
         cycle = 0
         try:
             while True:
+                if reload_flag.is_set():
+                    reload_flag.clear()
+                    try:
+                        new_targets, new_cfg = _resolve_targets(args, base_config)
+                        targets[:] = new_targets
+                        config_by_target.clear()
+                        config_by_target.update(new_cfg)
+                        print_info(f"watch: reloaded fleet config — {len(targets)} target(s)")
+                    except FleetConfigError as exc:
+                        print_warning(f"watch: fleet reload failed, keeping previous config: {exc}")
                 cycle += 1
                 print_info(f"watch: scan cycle {cycle} ({len(targets)} target(s))")
                 if _cycle() and threshold:
@@ -615,13 +691,21 @@ def main(argv: list[str] | None = None) -> None:
                 print_info(f"watch: sleeping {args.watch}s — Ctrl-C to stop")
                 time.sleep(args.watch)
         except KeyboardInterrupt:
-            from ui import print_interrupted
             print_interrupted()
             sys.exit(130)
 
-    # --- Single run: CI gating exits non-zero when --fail-on is met ---
-    if _cycle() and threshold:
-        from ui import print_warning
+    # --- Single run ---
+    failed = _cycle()
+    if metrics_holder is not None:
+        # Keep serving the single result for scraping until interrupted.
+        print_info(f"serving metrics on :{args.metrics_serve} — Ctrl-C to stop")
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            print_interrupted()
+            sys.exit(130)
+    if failed and threshold:
         print_warning(f"fail-on: a finding meets threshold '{threshold.value}' — exiting 1")
         sys.exit(1)
 
