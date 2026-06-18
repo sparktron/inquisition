@@ -392,6 +392,14 @@ Goal: the tool's existing output is correct and its claims are true.
       JSON (same schema).
 - [x] **Watch / daemon mode** — `--watch SECONDS` re-scans all targets on an
       interval until interrupted; `--fail-on` only warns in this mode.
+- [x] **/metrics scrape endpoint** — `--metrics-serve PORT` serves the latest
+      exposition at `/metrics` (`metrics_server.py`), refreshed each cycle — the
+      pull-based alternative to `--metrics-push`.
+- [x] **Per-target watch jitter** — `--watch-jitter SECONDS` staggers each
+      target's scan by a random delay to spread load / desync instances.
+- [x] **SIGHUP fleet reload** — in watch mode, SIGHUP reloads the fleet config
+      in place (targets and per-target settings) without restarting; a failed
+      reload keeps the previous config.
 
 ### Phase 4 — Active Testing (optional, authorization-gated)
 - [x] Integrate Nuclei behind an explicit `--active` flag (`active_scan.py`)
@@ -410,8 +418,8 @@ Goal: the tool's existing output is correct and its claims are true.
 ---
 
 ### Suggested immediate next step
-All planned phases and follow-ons are complete, now including env-var
-interpolation, YAML fleet configs, and watch/daemon mode. Candidate future
-directions: a `/metrics` HTTP endpoint served in watch mode (scrape instead of
-push); jittered/staggered scheduling per target in watch mode; and a SIGHUP
-reload of the fleet config without restarting the daemon.
+All planned phases and follow-ons are complete, now including the `/metrics`
+scrape endpoint, watch jitter, and SIGHUP fleet reload. Candidate future
+directions: a `/healthz` readiness/liveness endpoint alongside `/metrics`;
+graceful drain on SIGTERM (finish the in-flight cycle); and a structured JSONL
+event/audit log of each scan cycle for ingestion.
