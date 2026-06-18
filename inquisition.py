@@ -228,9 +228,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="FILE",
         dest="fleet_config",
         help=(
-            "JSON file defining targets and per-target scan overrides (depth, "
-            "ports, auth, SLA, …). Supplies the target list; positional targets "
-            "and --targets-file are not used with it."
+            "JSON or YAML file defining targets and per-target scan overrides "
+            "(depth, ports, auth, SLA, …). ${VAR} references are filled from the "
+            "environment. Supplies the target list; positional targets and "
+            "--targets-file are not used with it."
+        ),
+    )
+
+    parser.add_argument(
+        "--watch",
+        type=int,
+        default=0,
+        metavar="SECONDS",
+        help=(
+            "Run continuously: re-scan all targets every SECONDS until interrupted "
+            "(Ctrl-C). Pairs with --notify/--metrics-push for monitoring. --fail-on "
+            "only warns in watch mode rather than exiting."
         ),
     )
 
@@ -473,10 +486,16 @@ def main(argv: list[str] | None = None) -> None:
 
     config_by_target: dict[str, ScanConfig] = {}
     if args.fleet_config:
-        from fleet_config import FleetConfigError, load_fleet_config, resolved_configs
+        from fleet_config import (
+            FleetConfigError,
+            interpolate_env,
+            load_fleet_config,
+            resolved_configs,
+        )
         from ui import print_error
         try:
-            configs = resolved_configs(load_fleet_config(args.fleet_config), base_config)
+            raw = interpolate_env(load_fleet_config(args.fleet_config))
+            configs = resolved_configs(raw, base_config)
         except FleetConfigError as exc:
             print_error(f"fleet config error: {exc}", f"check {args.fleet_config}")
             sys.exit(2)
@@ -514,73 +533,96 @@ def main(argv: list[str] | None = None) -> None:
             quiet=concurrent,
         )
 
-    try:
-        reports = _run_targets(targets, _scan, jobs=args.jobs if concurrent else 1)
-    except KeyboardInterrupt:
-        from ui import print_interrupted
-        print_interrupted()
-        sys.exit(130)
-
-    fleet_rows: list[dict[str, object]] = []
-    fail_triggered = False
-    for report in reports:
-        highest = report.highest_severity()
-        fleet_rows.append({
-            "target": report.target,
-            "counts": report.summary_counts(),
-            "highest": highest.value if highest else None,
-            "report": report.report_path,
-        })
-        if threshold and not args.dry_run and highest is not None and severity_at_least(highest, threshold):
-            fail_triggered = True
-
-    # --- Combined artifact spanning all targets ---
-    if combined:
-        from report import render_combined
-        from ui import print_info, print_error
-        artifact = render_combined(reports, report_format, brief=args.brief)
+    def _cycle() -> bool:
+        """Run one full pass over all targets. Returns whether --fail-on was met."""
         try:
-            with open(args.combined_output, "w", encoding="utf-8") as fh:
-                fh.write(artifact)
-            for row in fleet_rows:
-                row["report"] = args.combined_output
-            print_info(f"combined {len(reports)} report(s) into {args.combined_output}")
-        except OSError as exc:
-            print_error(f"could not write combined artifact to {args.combined_output}", str(exc))
-            sys.exit(2)
+            reports = _run_targets(targets, _scan, jobs=args.jobs if concurrent else 1)
+        except KeyboardInterrupt:
+            from ui import print_interrupted
+            print_interrupted()
+            sys.exit(130)
 
-    # --- Prometheus / OpenMetrics export (all targets) ---
-    if args.metrics_output or args.metrics_push:
-        from metrics import push_metrics, render_prometheus
-        from ui import print_info, print_error
-        if args.metrics_output:
+        fleet_rows: list[dict[str, object]] = []
+        fail_triggered = False
+        for report in reports:
+            highest = report.highest_severity()
+            fleet_rows.append({
+                "target": report.target,
+                "counts": report.summary_counts(),
+                "highest": highest.value if highest else None,
+                "report": report.report_path,
+            })
+            if threshold and not args.dry_run and highest is not None and severity_at_least(highest, threshold):
+                fail_triggered = True
+
+        # --- Combined artifact spanning all targets ---
+        if combined:
+            from report import render_combined
+            from ui import print_info, print_error
+            artifact = render_combined(reports, report_format, brief=args.brief)
             try:
-                with open(args.metrics_output, "w", encoding="utf-8") as fh:
-                    fh.write(render_prometheus(reports, include_history=args.metrics_history))
-                print_info(f"wrote metrics for {len(reports)} target(s) to {args.metrics_output}")
+                with open(args.combined_output, "w", encoding="utf-8") as fh:
+                    fh.write(artifact)
+                for row in fleet_rows:
+                    row["report"] = args.combined_output
+                print_info(f"combined {len(reports)} report(s) into {args.combined_output}")
             except OSError as exc:
-                print_error(f"could not write metrics to {args.metrics_output}", str(exc))
-                sys.exit(2)
-        if args.metrics_push:
-            # Pushgateway rejects timestamped samples, so push current gauges only.
-            try:
-                push_metrics(args.metrics_push, render_prometheus(reports), job=args.metrics_job)
-                print_info(f"pushed metrics to {args.metrics_push} (job={args.metrics_job})")
-            except Exception as exc:
-                print_error(f"could not push metrics to {args.metrics_push}", str(exc))
+                print_error(f"could not write combined artifact to {args.combined_output}", str(exc))
                 sys.exit(2)
 
-    # --- Fleet overview (only when more than one target was scanned) ---
-    if multi:
-        from ui import print_fleet_summary
-        print_fleet_summary(fleet_rows)
+        # --- Prometheus / OpenMetrics export (all targets) ---
+        if args.metrics_output or args.metrics_push:
+            from metrics import push_metrics, render_prometheus
+            from ui import print_info, print_error
+            if args.metrics_output:
+                try:
+                    with open(args.metrics_output, "w", encoding="utf-8") as fh:
+                        fh.write(render_prometheus(reports, include_history=args.metrics_history))
+                    print_info(f"wrote metrics for {len(reports)} target(s) to {args.metrics_output}")
+                except OSError as exc:
+                    print_error(f"could not write metrics to {args.metrics_output}", str(exc))
+                    sys.exit(2)
+            if args.metrics_push:
+                # Pushgateway rejects timestamped samples, so push current gauges only.
+                try:
+                    push_metrics(args.metrics_push, render_prometheus(reports), job=args.metrics_job)
+                    print_info(f"pushed metrics to {args.metrics_push} (job={args.metrics_job})")
+                except Exception as exc:
+                    print_error(f"could not push metrics to {args.metrics_push}", str(exc))
+                    sys.exit(2)
 
-    # --- CI gating: exit non-zero when any target meets the --fail-on threshold ---
-    if fail_triggered:
+        # --- Fleet overview (only when more than one target was scanned) ---
+        if multi:
+            from ui import print_fleet_summary
+            print_fleet_summary(fleet_rows)
+
+        return fail_triggered
+
+    # --- Watch mode: loop on an interval until interrupted ---
+    if args.watch > 0:
+        import time
+        from ui import print_info, print_warning
+        cycle = 0
+        try:
+            while True:
+                cycle += 1
+                print_info(f"watch: scan cycle {cycle} ({len(targets)} target(s))")
+                if _cycle() and threshold:
+                    print_warning(
+                        f"fail-on: a finding meets threshold '{threshold.value}' "
+                        "(watch mode — not exiting)"
+                    )
+                print_info(f"watch: sleeping {args.watch}s — Ctrl-C to stop")
+                time.sleep(args.watch)
+        except KeyboardInterrupt:
+            from ui import print_interrupted
+            print_interrupted()
+            sys.exit(130)
+
+    # --- Single run: CI gating exits non-zero when --fail-on is met ---
+    if _cycle() and threshold:
         from ui import print_warning
-        print_warning(
-            f"fail-on: a finding meets threshold '{threshold.value}' — exiting 1"  # type: ignore[union-attr]
-        )
+        print_warning(f"fail-on: a finding meets threshold '{threshold.value}' — exiting 1")
         sys.exit(1)
 
 
