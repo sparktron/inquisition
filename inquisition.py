@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 # Ensure local modules can be imported
@@ -191,6 +192,45 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Write Prometheus/OpenMetrics text exposition (findings by severity, "
             "risk score, CVE/misconfig counts, max finding age, scan duration) for "
             "all targets to FILE, in addition to the normal report."
+        ),
+    )
+
+    parser.add_argument(
+        "--metrics-push",
+        metavar="URL",
+        dest="metrics_push",
+        help=(
+            "Push the Prometheus metrics to a Pushgateway base URL "
+            "(e.g. http://localhost:9091). Uses PUT under --metrics-job."
+        ),
+    )
+
+    parser.add_argument(
+        "--metrics-job",
+        metavar="NAME",
+        default="inquisition",
+        dest="metrics_job",
+        help="Pushgateway job name for --metrics-push (default: inquisition)",
+    )
+
+    parser.add_argument(
+        "--metrics-history",
+        action="store_true",
+        dest="metrics_history",
+        help=(
+            "In --metrics-output, emit the findings trend as timestamped samples "
+            "per stored history scan (for backfill; not used by --metrics-push)."
+        ),
+    )
+
+    parser.add_argument(
+        "--fleet-config",
+        metavar="FILE",
+        dest="fleet_config",
+        help=(
+            "JSON file defining targets and per-target scan overrides (depth, "
+            "ports, auth, SLA, …). Supplies the target list; positional targets "
+            "and --targets-file are not used with it."
         ),
     )
 
@@ -399,12 +439,6 @@ def main(argv: list[str] | None = None) -> None:
     log_level = logging.DEBUG if args.verbose else logging.WARNING
     logging.basicConfig(level=log_level, format="%(levelname)s  %(name)s: %(message)s")
 
-    targets = _gather_targets(args)
-    if not targets:
-        from ui import print_error
-        print_error("no targets given", "pass one or more hostnames, or use --targets-file")
-        sys.exit(2)
-
     # Build shared ScanConfig fields
     depth = ScanDepth(args.depth)
     report_format = ReportFormat(args.report_format)
@@ -414,33 +448,57 @@ def main(argv: list[str] | None = None) -> None:
         993, 995, 3306, 3389, 5432, 5900, 6379, 8080, 8443, 9200,
     )
     ports = tuple(args.ports) if args.ports else default_ports
+    sla_overrides = _parse_sla_overrides(args.sla_by_severity)
+
+    # A base config (target filled in per scan) shared by all targets unless a
+    # fleet config overrides fields per target.
+    base_config = ScanConfig(
+        target="",
+        depth=depth,
+        report_format=report_format,
+        max_threads=args.threads,
+        safe_mode=True,
+        dry_run=args.dry_run,
+        rate_limit=args.rate_limit,
+        timeout=args.timeout,
+        connect_timeout=args.connect_timeout,
+        ports=ports,
+        active=args.active,
+        active_engine=args.active_engine,
+        auth_header=args.auth_header,
+        auth_cookie=args.auth_cookie,
+        sla_max_age=args.sla_max_age,
+        sla_severity_overrides=sla_overrides,
+    )
+
+    config_by_target: dict[str, ScanConfig] = {}
+    if args.fleet_config:
+        from fleet_config import FleetConfigError, load_fleet_config, resolved_configs
+        from ui import print_error
+        try:
+            configs = resolved_configs(load_fleet_config(args.fleet_config), base_config)
+        except FleetConfigError as exc:
+            print_error(f"fleet config error: {exc}", f"check {args.fleet_config}")
+            sys.exit(2)
+        config_by_target = {c.target: c for c in configs}
+        targets = list(config_by_target.keys())
+    else:
+        targets = _gather_targets(args)
+        config_by_target = {t: replace(base_config, target=t) for t in targets}
+
+    if not targets:
+        from ui import print_error
+        print_error("no targets given", "pass hostnames, --targets-file, or --fleet-config")
+        sys.exit(2)
 
     from models import severity_at_least
     multi = len(targets) > 1
     combined = bool(args.combined_output)
     concurrent = args.jobs > 1 and multi
     threshold = Severity(args.fail_on) if args.fail_on else None
-    sla_overrides = _parse_sla_overrides(args.sla_by_severity)
 
     def _scan(target: str) -> ScanReport:
-        config = ScanConfig(
-            target=target,
-            depth=depth,
-            report_format=report_format,
-            max_threads=args.threads,
-            safe_mode=True,
-            dry_run=args.dry_run,
-            rate_limit=args.rate_limit,
-            timeout=args.timeout,
-            connect_timeout=args.connect_timeout,
-            ports=ports,
-            active=args.active,
-            active_engine=args.active_engine,
-            auth_header=args.auth_header,
-            auth_cookie=args.auth_cookie,
-            sla_max_age=args.sla_max_age,
-            sla_severity_overrides=sla_overrides,
-        )
+        config = config_by_target[target]
         return run_scan(
             config,
             skip_auth=args.authorized or args.dry_run,
@@ -491,17 +549,26 @@ def main(argv: list[str] | None = None) -> None:
             print_error(f"could not write combined artifact to {args.combined_output}", str(exc))
             sys.exit(2)
 
-    # --- Prometheus / OpenMetrics export (all targets, one file) ---
-    if args.metrics_output:
-        from metrics import render_prometheus
+    # --- Prometheus / OpenMetrics export (all targets) ---
+    if args.metrics_output or args.metrics_push:
+        from metrics import push_metrics, render_prometheus
         from ui import print_info, print_error
-        try:
-            with open(args.metrics_output, "w", encoding="utf-8") as fh:
-                fh.write(render_prometheus(reports))
-            print_info(f"wrote metrics for {len(reports)} target(s) to {args.metrics_output}")
-        except OSError as exc:
-            print_error(f"could not write metrics to {args.metrics_output}", str(exc))
-            sys.exit(2)
+        if args.metrics_output:
+            try:
+                with open(args.metrics_output, "w", encoding="utf-8") as fh:
+                    fh.write(render_prometheus(reports, include_history=args.metrics_history))
+                print_info(f"wrote metrics for {len(reports)} target(s) to {args.metrics_output}")
+            except OSError as exc:
+                print_error(f"could not write metrics to {args.metrics_output}", str(exc))
+                sys.exit(2)
+        if args.metrics_push:
+            # Pushgateway rejects timestamped samples, so push current gauges only.
+            try:
+                push_metrics(args.metrics_push, render_prometheus(reports), job=args.metrics_job)
+                print_info(f"pushed metrics to {args.metrics_push} (job={args.metrics_job})")
+            except Exception as exc:
+                print_error(f"could not push metrics to {args.metrics_push}", str(exc))
+                sys.exit(2)
 
     # --- Fleet overview (only when more than one target was scanned) ---
     if multi:
