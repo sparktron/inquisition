@@ -20,10 +20,15 @@ such as output/notify stay global).
 from __future__ import annotations
 
 import json
+import os
+import re
+from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
 
 from models import ScanConfig, ScanDepth, Severity
+
+_ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 _STR_FIELDS = {"auth_header", "auth_cookie", "active_engine"}
 _INT_FIELDS = {"max_threads", "sla_max_age"}
@@ -35,20 +40,62 @@ class FleetConfigError(ValueError):
     """Raised when a fleet config file is malformed."""
 
 
+def _parse_yaml(text: str) -> Any:
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ImportError:
+        raise FleetConfigError(
+            "PyYAML is required for YAML fleet configs — install pyyaml or use a .json file"
+        ) from None
+    try:
+        return yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise FleetConfigError(f"fleet config is not valid YAML: {exc}") from exc
+
+
 def load_fleet_config(path: str) -> dict[str, Any]:
-    """Load and minimally validate a JSON fleet config file."""
+    """Load and minimally validate a JSON or YAML fleet config file."""
     try:
         with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
+            text = fh.read()
     except OSError as exc:
         raise FleetConfigError(f"could not read fleet config: {exc}") from exc
-    except ValueError as exc:
-        raise FleetConfigError(f"fleet config is not valid JSON: {exc}") from exc
+
+    if path.lower().endswith((".yaml", ".yml")):
+        data = _parse_yaml(text)
+    else:
+        try:
+            data = json.loads(text)
+        except ValueError as exc:
+            raise FleetConfigError(f"fleet config is not valid JSON: {exc}") from exc
+
     if not isinstance(data, dict):
-        raise FleetConfigError("fleet config must be a JSON object with a 'targets' array")
+        raise FleetConfigError("fleet config must be an object with a 'targets' array")
     if not isinstance(data.get("targets"), list) or not data["targets"]:
         raise FleetConfigError("fleet config must define a non-empty 'targets' array")
     return data
+
+
+def interpolate_env(obj: Any, env: Mapping[str, str] | None = None) -> Any:
+    """Recursively replace ``${VAR}`` in string values from the environment.
+
+    A reference to an undefined variable raises ``FleetConfigError`` rather than
+    silently leaving the literal text — important when the value is a secret such
+    as an auth token.
+    """
+    environ = os.environ if env is None else env
+    if isinstance(obj, dict):
+        return {k: interpolate_env(v, environ) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [interpolate_env(v, environ) for v in obj]
+    if isinstance(obj, str):
+        def _sub(match: re.Match[str]) -> str:
+            name = match.group(1)
+            if name not in environ:
+                raise FleetConfigError(f"undefined environment variable in fleet config: ${{{name}}}")
+            return environ[name]
+        return _ENV_RE.sub(_sub, obj)
+    return obj
 
 
 def _coerce(key: str, value: Any) -> tuple[str, Any]:

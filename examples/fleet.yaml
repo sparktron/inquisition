@@ -1,0 +1,21 @@
+# Example YAML fleet config. Use with:
+#   API_TOKEN=... inquisition --fleet-config examples/fleet.yaml --yes
+# String values may reference environment variables as ${VAR}; an undefined
+# variable is an error (so a missing secret fails loudly).
+defaults:
+  depth: standard
+  sla_max_age: 5
+
+targets:
+  - marketing.example.com
+
+  - target: api.example.com
+    depth: deep
+    sla_by_severity:
+      critical: 1
+      high: 3
+    auth_header: "Authorization: Bearer ${API_TOKEN}"
+
+  - target: legacy.example.com
+    ports: [80, 443, 8080, 8443]
+    timeout: 20

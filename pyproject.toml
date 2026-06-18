@@ -12,6 +12,7 @@ dependencies = [
     "dnspython>=2.4",
     "rich>=13.0",
     "cryptography>=42.0",
+    "PyYAML>=6.0",
 ]
 
 [tool.setuptools]

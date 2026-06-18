@@ -7,7 +7,12 @@ import os
 import tempfile
 import unittest
 
-from fleet_config import FleetConfigError, load_fleet_config, resolved_configs
+from fleet_config import (
+    FleetConfigError,
+    interpolate_env,
+    load_fleet_config,
+    resolved_configs,
+)
 from models import ScanConfig, ScanDepth
 
 
@@ -81,6 +86,36 @@ class LoadTests(unittest.TestCase):
                 fh.write("{not json")
             with self.assertRaises(FleetConfigError):
                 load_fleet_config(path)
+
+    def test_load_yaml(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "f.yaml")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("defaults:\n  depth: deep\ntargets:\n  - a.com\n")
+            cfg = load_fleet_config(path)
+            self.assertEqual(cfg["targets"], ["a.com"])
+            self.assertEqual(cfg["defaults"]["depth"], "deep")
+
+
+class InterpolateEnvTests(unittest.TestCase):
+    def test_replaces_known_vars(self) -> None:
+        out = interpolate_env(
+            {"targets": [{"target": "a.com", "auth_header": "Bearer ${TOK}"}]},
+            {"TOK": "secret"},
+        )
+        self.assertEqual(out["targets"][0]["auth_header"], "Bearer secret")
+
+    def test_nested_and_lists(self) -> None:
+        out = interpolate_env(["${A}", {"k": "${A}/x"}], {"A": "1"})
+        self.assertEqual(out, ["1", {"k": "1/x"}])
+
+    def test_missing_var_raises(self) -> None:
+        with self.assertRaises(FleetConfigError):
+            interpolate_env({"h": "${NOPE}"}, {})
+
+    def test_non_strings_untouched(self) -> None:
+        out = interpolate_env({"n": 5, "b": True, "p": [80, 443]}, {})
+        self.assertEqual(out, {"n": 5, "b": True, "p": [80, 443]})
 
 
 if __name__ == "__main__":
