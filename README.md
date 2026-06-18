@@ -281,6 +281,10 @@ inquisition --targets-file hosts.txt --format sarif \
 | `--sla-max-age` | int | 0 (off) | Warn and notify when a finding has stayed open beyond N consecutive scans (notifies even if nothing changed) |
 | `--sla-by-severity` | spec | none | Per-severity SLA overrides, e.g. `critical=1,high=3,medium=10` (falls back to `--sla-max-age`; `0` disables a severity) |
 | `--metrics-output` | path | none | Also write Prometheus/OpenMetrics text exposition for all targets to this file |
+| `--metrics-history` | flag | off | In the metrics file, emit the findings trend as timestamped samples per stored scan (backfill) |
+| `--metrics-push` | URL | none | Push current metrics to a Prometheus Pushgateway base URL (PUT under `--metrics-job`) |
+| `--metrics-job` | name | `inquisition` | Pushgateway job name for `--metrics-push` |
+| `--fleet-config` | path | none | JSON file defining targets and per-target scan overrides (supplies the target list) |
 | `--history-size` | int | 10 | Number of past scans retained per target for trend tracking |
 | `--history-max-age-days` | int | 0 (off) | Also drop history entries older than this many days (count cap still applies) |
 
@@ -307,7 +311,14 @@ critical+high counts) at the end of each run. Continuous-assurance extras:
   counts, a per-target trend sparkline, and a Δ-vs-last-scan column.
 - **Prometheus/OpenMetrics** — `--metrics-output metrics.prom` writes scrape-able
   gauges (findings by severity, risk score, CVE/misconfig counts, oldest finding
-  age, scan duration) for every target — one file per fleet run.
+  age, scan duration) for every target — one file per fleet run. `--metrics-push
+  http://gateway:9091` pushes the current gauges to a Pushgateway, and
+  `--metrics-history` adds the findings trend as timestamped samples (for
+  backfill; not pushed, since the Pushgateway rejects timestamps).
+- **Fleet config** — `--fleet-config fleet.json` defines the target list and
+  per-target overrides (depth, ports, auth, SLA, …) so a single run can scan many
+  targets with different settings. Per-target settings override a `defaults`
+  block, which overrides the CLI flags.
 - **History retention** — `--history-max-age-days` prunes the trend window by
   age in addition to the `--history-size` count cap.
 

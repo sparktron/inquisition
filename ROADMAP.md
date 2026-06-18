@@ -378,6 +378,14 @@ Goal: the tool's existing output is correct and its claims are true.
 - [x] **Prometheus/OpenMetrics export** — `--metrics-output` writes scrape-able
       gauges (findings by severity, risk score, CVE/misconfig counts, oldest
       finding age, scan duration) for every target (`metrics.py`).
+- [x] **Pushgateway metrics push** — `--metrics-push URL` PUTs the current gauges
+      to a Prometheus Pushgateway job (`--metrics-job`), with an injectable sender.
+- [x] **Fleet config file** — `--fleet-config FILE` (JSON) supplies the target
+      list and per-target overrides merged over a `defaults` block over the CLI
+      flags (`fleet_config.py`); example at `examples/fleet.json`.
+- [x] **Historical metrics samples** — `--metrics-history` emits the findings
+      trend as timestamped Prometheus samples per stored scan (file only; the
+      Pushgateway rejects timestamps).
 
 ### Phase 4 — Active Testing (optional, authorization-gated)
 - [x] Integrate Nuclei behind an explicit `--active` flag (`active_scan.py`)
@@ -396,8 +404,8 @@ Goal: the tool's existing output is correct and its claims are true.
 ---
 
 ### Suggested immediate next step
-All planned phases and follow-ons are complete, including per-severity SLA
-thresholds, the dashboard Δ column, and Prometheus/OpenMetrics export. Candidate
-future directions: a Pushgateway/HTTP metrics push (not just a file); a config
-file for fleet definitions and per-target overrides; and historical metrics
-(emitting the trend series as Prometheus samples with timestamps).
+All planned phases and follow-ons are complete, now including the Pushgateway
+push, the JSON fleet config, and historical metric samples. Candidate future
+directions: environment-variable interpolation in fleet config (e.g. `${API_TOKEN}`
+in auth headers); a long-running watch/daemon mode driven by the fleet config; and
+YAML fleet config support alongside JSON.
