@@ -386,6 +386,12 @@ Goal: the tool's existing output is correct and its claims are true.
 - [x] **Historical metrics samples** — `--metrics-history` emits the findings
       trend as timestamped Prometheus samples per stored scan (file only; the
       Pushgateway rejects timestamps).
+- [x] **Env-var interpolation in fleet config** — `${VAR}` in string values is
+      filled from the environment (`interpolate_env`); undefined → error.
+- [x] **YAML fleet config** — `.yaml`/`.yml` configs parse via PyYAML alongside
+      JSON (same schema).
+- [x] **Watch / daemon mode** — `--watch SECONDS` re-scans all targets on an
+      interval until interrupted; `--fail-on` only warns in this mode.
 
 ### Phase 4 — Active Testing (optional, authorization-gated)
 - [x] Integrate Nuclei behind an explicit `--active` flag (`active_scan.py`)
@@ -404,8 +410,8 @@ Goal: the tool's existing output is correct and its claims are true.
 ---
 
 ### Suggested immediate next step
-All planned phases and follow-ons are complete, now including the Pushgateway
-push, the JSON fleet config, and historical metric samples. Candidate future
-directions: environment-variable interpolation in fleet config (e.g. `${API_TOKEN}`
-in auth headers); a long-running watch/daemon mode driven by the fleet config; and
-YAML fleet config support alongside JSON.
+All planned phases and follow-ons are complete, now including env-var
+interpolation, YAML fleet configs, and watch/daemon mode. Candidate future
+directions: a `/metrics` HTTP endpoint served in watch mode (scrape instead of
+push); jittered/staggered scheduling per target in watch mode; and a SIGHUP
+reload of the fleet config without restarting the daemon.

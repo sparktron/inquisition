@@ -284,7 +284,8 @@ inquisition --targets-file hosts.txt --format sarif \
 | `--metrics-history` | flag | off | In the metrics file, emit the findings trend as timestamped samples per stored scan (backfill) |
 | `--metrics-push` | URL | none | Push current metrics to a Prometheus Pushgateway base URL (PUT under `--metrics-job`) |
 | `--metrics-job` | name | `inquisition` | Pushgateway job name for `--metrics-push` |
-| `--fleet-config` | path | none | JSON file defining targets and per-target scan overrides (supplies the target list) |
+| `--fleet-config` | path | none | JSON or YAML file defining targets and per-target scan overrides (`${VAR}` filled from env) |
+| `--watch` | int (seconds) | 0 (off) | Run continuously, re-scanning all targets every N seconds until interrupted |
 | `--history-size` | int | 10 | Number of past scans retained per target for trend tracking |
 | `--history-max-age-days` | int | 0 (off) | Also drop history entries older than this many days (count cap still applies) |
 
@@ -315,10 +316,16 @@ critical+high counts) at the end of each run. Continuous-assurance extras:
   http://gateway:9091` pushes the current gauges to a Pushgateway, and
   `--metrics-history` adds the findings trend as timestamped samples (for
   backfill; not pushed, since the Pushgateway rejects timestamps).
-- **Fleet config** — `--fleet-config fleet.json` defines the target list and
-  per-target overrides (depth, ports, auth, SLA, …) so a single run can scan many
-  targets with different settings. Per-target settings override a `defaults`
-  block, which overrides the CLI flags.
+- **Fleet config** — `--fleet-config fleet.json` (or `.yaml`) defines the target
+  list and per-target overrides (depth, ports, auth, SLA, …) so a single run can
+  scan many targets with different settings. Per-target settings override a
+  `defaults` block, which overrides the CLI flags. String values may reference
+  environment variables as `${VAR}` (an undefined variable is an error, so
+  secrets fail loudly rather than leak a literal placeholder).
+- **Watch / daemon mode** — `--watch SECONDS` re-scans every target on an
+  interval until interrupted, pairing naturally with `--fleet-config`,
+  `--notify`, and `--metrics-push` for continuous monitoring. In watch mode
+  `--fail-on` only warns (it does not exit the loop).
 - **History retention** — `--history-max-age-days` prunes the trend window by
   age in addition to the `--history-size` count cap.
 
