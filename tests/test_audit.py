@@ -1,0 +1,63 @@
+"""Tests for the JSONL audit log."""
+
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+import unittest
+from datetime import datetime, timedelta, timezone
+
+from audit import append_jsonl, build_cycle_record
+from models import Finding, FindingCategory, ScanReport, Severity
+
+
+def _report(target: str, *findings: Finding) -> ScanReport:
+    start = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    return ScanReport(
+        target=target,
+        started_at=start,
+        finished_at=start + timedelta(seconds=2),
+        findings=list(findings),
+        report_path=f"reports/{target}.txt",
+    )
+
+
+def _f(sev: Severity, age: int = 0) -> Finding:
+    return Finding(title="x", category=FindingCategory.TLS, severity=sev, evidence="e", age_scans=age)
+
+
+class BuildRecordTests(unittest.TestCase):
+    def test_cycle_record_shape(self) -> None:
+        reports = [_report("a.com", _f(Severity.HIGH, age=3)), _report("b.com")]
+        rec = build_cycle_record(reports, cycle=4, fail_triggered=True)
+        self.assertEqual(rec["event"], "scan_cycle")
+        self.assertEqual(rec["cycle"], 4)
+        self.assertEqual(rec["target_count"], 2)
+        self.assertTrue(rec["fail_triggered"])
+        self.assertEqual(rec["targets"][0]["target"], "a.com")
+        self.assertEqual(rec["targets"][0]["total"], 1)
+        self.assertEqual(rec["targets"][0]["highest"], "high")
+        self.assertEqual(rec["targets"][0]["max_age_scans"], 3)
+        self.assertEqual(rec["targets"][0]["duration_seconds"], 2.0)
+        self.assertIn("ts", rec)
+
+    def test_empty_target_has_no_highest(self) -> None:
+        rec = build_cycle_record([_report("a.com")], cycle=1, fail_triggered=False)
+        self.assertIsNone(rec["targets"][0]["highest"])
+        self.assertEqual(rec["targets"][0]["total"], 0)
+
+
+class AppendTests(unittest.TestCase):
+    def test_appends_one_line_per_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "audit.jsonl")
+            append_jsonl(path, {"cycle": 1})
+            append_jsonl(path, {"cycle": 2})
+            lines = open(path, encoding="utf-8").read().splitlines()
+            self.assertEqual(len(lines), 2)
+            self.assertEqual(json.loads(lines[1])["cycle"], 2)
+
+
+if __name__ == "__main__":
+    unittest.main()
