@@ -271,8 +271,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         dest="metrics_serve",
         help=(
             "Serve the latest metrics for Prometheus to scrape at "
-            "http://HOST:PORT/metrics (refreshed after each scan). The pull-based "
-            "alternative to --metrics-push; most useful with --watch."
+            "http://HOST:PORT/metrics (refreshed after each scan), plus liveness "
+            "/healthz and readiness /readyz. The pull-based alternative to "
+            "--metrics-push; most useful with --watch."
+        ),
+    )
+
+    parser.add_argument(
+        "--audit-log",
+        metavar="FILE",
+        dest="audit_log",
+        help=(
+            "Append one JSON line per scan cycle (targets, severity counts, "
+            "highest severity, durations, fail-on status) to FILE for ingestion."
         ),
     )
 
@@ -480,6 +491,31 @@ def _install_sighup_reload(
     return flag
 
 
+def _install_sigterm_drain(announce: Callable[[str], None]) -> threading.Event:
+    """Return an Event set on SIGTERM, used to drain after the current cycle."""
+    flag = threading.Event()
+    import signal
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, lambda *_: flag.set())
+        announce("watch: SIGTERM will drain (finish the current cycle, then exit)")
+    return flag
+
+
+def _sleep_interruptible(seconds: float, stop: threading.Event) -> bool:
+    """Sleep up to ``seconds``, returning True early if ``stop`` is set.
+
+    Sleeps in short steps so a SIGTERM during the inter-cycle wait is honored
+    within ~1s instead of blocking for the full interval.
+    """
+    remaining = float(seconds)
+    while remaining > 0:
+        if stop.is_set():
+            return True
+        time.sleep(min(1.0, remaining))
+        remaining -= 1.0
+    return stop.is_set()
+
+
 def _run_targets(
     targets: list[str], scan_fn: Callable[[str], ScanReport], *, jobs: int
 ) -> list[ScanReport]:
@@ -568,19 +604,24 @@ def main(argv: list[str] | None = None) -> None:
         print_error("no targets given", "pass hostnames, --targets-file, or --fleet-config")
         sys.exit(2)
 
-    # Optional scrape endpoint, refreshed after every cycle.
+    # Optional scrape + health endpoints, refreshed after every cycle.
     metrics_holder = None
+    health = None
     if args.metrics_serve:
-        from metrics_server import MetricsHolder, start_metrics_server
+        from metrics_server import HealthState, MetricsHolder, start_metrics_server
         metrics_holder = MetricsHolder()
+        health = HealthState()
         try:
-            start_metrics_server(args.metrics_serve, metrics_holder)
-            print_info(f"serving metrics at http://0.0.0.0:{args.metrics_serve}/metrics")
+            start_metrics_server(args.metrics_serve, metrics_holder, health=health)
+            print_info(
+                f"serving metrics at http://0.0.0.0:{args.metrics_serve}/metrics "
+                "(+ /healthz, /readyz)"
+            )
         except OSError as exc:
             print_error(f"could not start metrics server on :{args.metrics_serve}", str(exc))
             sys.exit(2)
 
-    def _cycle() -> bool:
+    def _cycle(cycle: int) -> bool:
         """Run one full pass over the current targets. Returns whether --fail-on was met."""
         multi = len(targets) > 1
         concurrent = args.jobs > 1 and multi
@@ -663,11 +704,27 @@ def main(argv: list[str] | None = None) -> None:
             from ui import print_fleet_summary
             print_fleet_summary(fleet_rows)
 
+        # --- Audit log (one JSON line per cycle) ---
+        if args.audit_log:
+            from audit import append_jsonl, build_cycle_record
+            try:
+                append_jsonl(args.audit_log, build_cycle_record(
+                    reports, cycle=cycle, fail_triggered=fail_triggered))
+            except OSError as exc:
+                print_warning(f"could not write audit log {args.audit_log}: {exc}")
+
+        # --- Health / readiness state for the scrape server ---
+        if health is not None:
+            health.record_cycle(len(reports))
+
         return fail_triggered
 
-    # --- Watch mode: loop on an interval until interrupted (SIGHUP reloads config) ---
+    # --- Watch mode: loop on an interval until interrupted ---
+    # SIGHUP reloads the fleet config; SIGTERM drains (finish the in-flight cycle
+    # then exit cleanly); Ctrl-C / SIGINT stops immediately.
     if args.watch > 0:
         reload_flag = _install_sighup_reload(args, print_info)
+        stop_flag = _install_sigterm_drain(print_info)
         cycle = 0
         try:
             while True:
@@ -683,19 +740,24 @@ def main(argv: list[str] | None = None) -> None:
                         print_warning(f"watch: fleet reload failed, keeping previous config: {exc}")
                 cycle += 1
                 print_info(f"watch: scan cycle {cycle} ({len(targets)} target(s))")
-                if _cycle() and threshold:
+                if _cycle(cycle) and threshold:
                     print_warning(
                         f"fail-on: a finding meets threshold '{threshold.value}' "
                         "(watch mode — not exiting)"
                     )
+                if stop_flag.is_set():
+                    print_info("watch: SIGTERM received — drained after current cycle, exiting")
+                    sys.exit(0)
                 print_info(f"watch: sleeping {args.watch}s — Ctrl-C to stop")
-                time.sleep(args.watch)
+                if _sleep_interruptible(args.watch, stop_flag):
+                    print_info("watch: SIGTERM received — exiting")
+                    sys.exit(0)
         except KeyboardInterrupt:
             print_interrupted()
             sys.exit(130)
 
     # --- Single run ---
-    failed = _cycle()
+    failed = _cycle(1)
     if metrics_holder is not None:
         # Keep serving the single result for scraping until interrupted.
         print_info(f"serving metrics on :{args.metrics_serve} — Ctrl-C to stop")
