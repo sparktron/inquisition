@@ -58,6 +58,27 @@ class AppendTests(unittest.TestCase):
             self.assertEqual(len(lines), 2)
             self.assertEqual(json.loads(lines[1])["cycle"], 2)
 
+    def test_no_rotation_when_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "a.jsonl")
+            for i in range(20):
+                append_jsonl(path, {"cycle": i})
+            self.assertFalse(os.path.exists(path + ".1"))
+
+    def test_rotation_caps_size_and_keeps_backups(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "a.jsonl")
+            # Each record is well over 20 bytes, so a 60-byte cap rotates often.
+            for i in range(10):
+                append_jsonl(path, {"cycle": i, "pad": "x" * 40}, max_bytes=60, backups=2)
+            # Current file plus at most `backups` rotated files exist.
+            self.assertTrue(os.path.exists(path))
+            self.assertTrue(os.path.exists(path + ".1"))
+            self.assertFalse(os.path.exists(path + ".3"))  # capped at backups=2
+            # The newest record is in the live file.
+            last = open(path, encoding="utf-8").read().splitlines()[-1]
+            self.assertEqual(json.loads(last)["cycle"], 9)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,7 @@ the daemon's activity over time without parsing human-readable output.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -48,7 +49,32 @@ def build_cycle_record(
     }
 
 
-def append_jsonl(path: str, record: dict[str, Any]) -> None:
-    """Append one record as a JSON line to ``path``."""
+def _rotate(path: str, backups: int) -> None:
+    """Roll ``path`` to ``path.1``, shifting existing backups up to ``backups``."""
+    oldest = f"{path}.{backups}"
+    if os.path.exists(oldest):
+        os.remove(oldest)
+    for i in range(backups - 1, 0, -1):
+        src, dst = f"{path}.{i}", f"{path}.{i + 1}"
+        if os.path.exists(src):
+            os.replace(src, dst)
+    if os.path.exists(path):
+        os.replace(path, f"{path}.1")
+
+
+def append_jsonl(
+    path: str, record: dict[str, Any], *, max_bytes: int = 0, backups: int = 3
+) -> None:
+    """Append ``record`` as a JSON line, rotating first if size would exceed ``max_bytes``.
+
+    Rotation (``max_bytes > 0``) mirrors a size-based log rotator: when the file
+    would grow past the cap it is rolled to ``path.1`` (and ``.1``→``.2`` …, up to
+    ``backups``), then the new line starts a fresh file.
+    """
+    line = json.dumps(record) + "\n"
+    if max_bytes > 0 and backups > 0 and os.path.exists(path):
+        current = os.path.getsize(path)
+        if current > 0 and current + len(line.encode("utf-8")) > max_bytes:
+            _rotate(path, backups)
     with open(path, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record) + "\n")
+        fh.write(line)
