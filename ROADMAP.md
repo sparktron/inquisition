@@ -407,6 +407,13 @@ Goal: the tool's existing output is correct and its claims are true.
       cycle then exits 0 (interruptible inter-cycle sleep); SIGINT still stops now.
 - [x] **JSONL audit log** — `--audit-log FILE` appends one structured record per
       scan cycle (`audit.py`): targets, counts, highest, durations, fail status.
+- [x] **Audit-log rotation** — `--audit-max-bytes`/`--audit-backups` roll the log
+      (size-based, mirroring a rotating handler) to bound disk use.
+- [x] **SIGUSR1 run-now** — in watch mode, SIGUSR1 triggers an immediate scan
+      cycle, skipping the rest of the interval.
+- [x] **Container image + compose** — `Dockerfile` (non-root, openssl included)
+      and `examples/docker-compose.yml` wire watch mode + `/metrics` to a
+      Prometheus container, with a `/healthz` healthcheck and graceful drain.
 
 ### Phase 4 — Active Testing (optional, authorization-gated)
 - [x] Integrate Nuclei behind an explicit `--active` flag (`active_scan.py`)
@@ -425,8 +432,8 @@ Goal: the tool's existing output is correct and its claims are true.
 ---
 
 ### Suggested immediate next step
-All planned phases and follow-ons are complete, now including the /healthz and
-/readyz endpoints, SIGTERM graceful drain, and the JSONL audit log. Candidate
-future directions: a container image + compose example wiring watch mode to
-Prometheus/Pushgateway; audit-log rotation (size/age) to bound disk; and a
-`--once`/run-now signal (SIGUSR1) to trigger an immediate cycle in watch mode.
+All planned phases and follow-ons are complete, now including the container image
++ compose example, audit-log rotation, and the SIGUSR1 run-now trigger. Candidate
+future directions: publish the image to a registry via a CI workflow; a Grafana
+dashboard JSON for the exported metrics; and time-based (not just size-based)
+audit-log rotation.

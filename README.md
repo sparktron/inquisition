@@ -286,6 +286,8 @@ inquisition --targets-file hosts.txt --format sarif \
 | `--metrics-job` | name | `inquisition` | Pushgateway job name for `--metrics-push` |
 | `--metrics-serve` | int (port) | 0 (off) | Serve the latest metrics at `http://HOST:PORT/metrics` for Prometheus to scrape, plus `/healthz` (liveness) and `/readyz` (readiness) |
 | `--audit-log` | path | none | Append one JSON line per scan cycle (targets, counts, durations, fail status) to this file |
+| `--audit-max-bytes` | int | 0 (off) | Rotate the audit log when it would exceed N bytes |
+| `--audit-backups` | int | 3 | Number of rotated audit-log backups to keep |
 | `--fleet-config` | path | none | JSON or YAML file defining targets and per-target scan overrides (`${VAR}` filled from env) |
 | `--watch` | int (seconds) | 0 (off) | Run continuously, re-scanning all targets every N seconds until interrupted (SIGHUP reloads a fleet config) |
 | `--watch-jitter` | float (seconds) | 0 | In watch mode, stagger each target by a random 0–N second delay |
@@ -326,7 +328,8 @@ critical+high counts) at the end of each run. Continuous-assurance extras:
   orchestrators.
 - **Audit log** — `--audit-log audit.jsonl` appends one structured JSON line per
   scan cycle (targets, severity counts, highest severity, durations, fail-on
-  status) for ingestion into a log pipeline or SIEM.
+  status) for ingestion into a log pipeline or SIEM. `--audit-max-bytes` rotates
+  it (keeping `--audit-backups` files) to bound disk use.
 - **Fleet config** — `--fleet-config fleet.json` (or `.yaml`) defines the target
   list and per-target overrides (depth, ports, auth, SLA, …) so a single run can
   scan many targets with different settings. Per-target settings override a
@@ -338,9 +341,13 @@ critical+high counts) at the end of each run. Continuous-assurance extras:
   `--notify`, and `--metrics-push`/`--metrics-serve` for continuous monitoring.
   In watch mode `--fail-on` only warns (it does not exit the loop),
   `--watch-jitter` staggers targets to spread load, and the daemon responds to
-  signals: **SIGHUP** reloads the fleet config without restarting, **SIGTERM**
-  drains (finishes the in-flight cycle, then exits 0), and Ctrl-C/SIGINT stops
-  immediately.
+  signals: **SIGHUP** reloads the fleet config without restarting, **SIGUSR1**
+  triggers an immediate scan cycle (skipping the rest of the interval),
+  **SIGTERM** drains (finishes the in-flight cycle, then exits 0), and
+  Ctrl-C/SIGINT stops immediately.
+- **Container** — a `Dockerfile` and `examples/docker-compose.yml` run watch mode
+  behind Prometheus (scraping `/metrics`), with a rotating audit log and a
+  `/healthz` healthcheck; `docker compose stop` triggers a graceful drain.
 - **History retention** — `--history-max-age-days` prunes the trend window by
   age in addition to the `--history-size` count cap.
 
