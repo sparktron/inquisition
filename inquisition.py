@@ -288,6 +288,24 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--audit-max-bytes",
+        type=int,
+        default=0,
+        metavar="N",
+        dest="audit_max_bytes",
+        help="Rotate the audit log when it would exceed N bytes (0 = no rotation)",
+    )
+
+    parser.add_argument(
+        "--audit-backups",
+        type=int,
+        default=3,
+        metavar="N",
+        dest="audit_backups",
+        help="Number of rotated audit-log backups to keep (default: 3)",
+    )
+
+    parser.add_argument(
         "--brief",
         action="store_true",
         help="Omit verbose deep-analysis and remediation guide from text/HTML report",
@@ -501,19 +519,32 @@ def _install_sigterm_drain(announce: Callable[[str], None]) -> threading.Event:
     return flag
 
 
-def _sleep_interruptible(seconds: float, stop: threading.Event) -> bool:
-    """Sleep up to ``seconds``, returning True early if ``stop`` is set.
+def _install_sigusr1_runnow(announce: Callable[[str], None]) -> threading.Event:
+    """Return an Event set on SIGUSR1, used to trigger an immediate scan cycle."""
+    flag = threading.Event()
+    import signal
+    if hasattr(signal, "SIGUSR1"):
+        signal.signal(signal.SIGUSR1, lambda *_: flag.set())
+        announce("watch: send SIGUSR1 to run a scan cycle immediately")
+    return flag
 
-    Sleeps in short steps so a SIGTERM during the inter-cycle wait is honored
+
+def _sleep_interruptible(seconds: float, *events: threading.Event) -> bool:
+    """Sleep up to ``seconds``, returning True early if any of ``events`` is set.
+
+    Sleeps in short steps so a signal during the inter-cycle wait is honored
     within ~1s instead of blocking for the full interval.
     """
+    def _any() -> bool:
+        return any(e.is_set() for e in events)
+
     remaining = float(seconds)
     while remaining > 0:
-        if stop.is_set():
+        if _any():
             return True
         time.sleep(min(1.0, remaining))
         remaining -= 1.0
-    return stop.is_set()
+    return _any()
 
 
 def _run_targets(
@@ -708,8 +739,12 @@ def main(argv: list[str] | None = None) -> None:
         if args.audit_log:
             from audit import append_jsonl, build_cycle_record
             try:
-                append_jsonl(args.audit_log, build_cycle_record(
-                    reports, cycle=cycle, fail_triggered=fail_triggered))
+                append_jsonl(
+                    args.audit_log,
+                    build_cycle_record(reports, cycle=cycle, fail_triggered=fail_triggered),
+                    max_bytes=args.audit_max_bytes,
+                    backups=args.audit_backups,
+                )
             except OSError as exc:
                 print_warning(f"could not write audit log {args.audit_log}: {exc}")
 
@@ -725,6 +760,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.watch > 0:
         reload_flag = _install_sighup_reload(args, print_info)
         stop_flag = _install_sigterm_drain(print_info)
+        runnow_flag = _install_sigusr1_runnow(print_info)
         cycle = 0
         try:
             while True:
@@ -738,6 +774,7 @@ def main(argv: list[str] | None = None) -> None:
                         print_info(f"watch: reloaded fleet config — {len(targets)} target(s)")
                     except FleetConfigError as exc:
                         print_warning(f"watch: fleet reload failed, keeping previous config: {exc}")
+                runnow_flag.clear()
                 cycle += 1
                 print_info(f"watch: scan cycle {cycle} ({len(targets)} target(s))")
                 if _cycle(cycle) and threshold:
@@ -749,9 +786,11 @@ def main(argv: list[str] | None = None) -> None:
                     print_info("watch: SIGTERM received — drained after current cycle, exiting")
                     sys.exit(0)
                 print_info(f"watch: sleeping {args.watch}s — Ctrl-C to stop")
-                if _sleep_interruptible(args.watch, stop_flag):
-                    print_info("watch: SIGTERM received — exiting")
-                    sys.exit(0)
+                if _sleep_interruptible(args.watch, stop_flag, runnow_flag):
+                    if stop_flag.is_set():
+                        print_info("watch: SIGTERM received — exiting")
+                        sys.exit(0)
+                    print_info("watch: SIGUSR1 received — running now")
         except KeyboardInterrupt:
             print_interrupted()
             sys.exit(130)
