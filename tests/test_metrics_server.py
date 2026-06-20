@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 import urllib.error
 import urllib.request
 
-from metrics_server import MetricsHolder, start_metrics_server
+from metrics_server import HealthState, MetricsHolder, start_metrics_server
 
 
 class HolderTests(unittest.TestCase):
@@ -17,10 +18,24 @@ class HolderTests(unittest.TestCase):
         self.assertEqual(h.get(), "updated")
 
 
+class HealthStateTests(unittest.TestCase):
+    def test_not_ready_until_a_cycle_recorded(self) -> None:
+        h = HealthState()
+        self.assertFalse(h.is_ready())
+        self.assertEqual(h.snapshot()["cycles"], 0)
+        h.record_cycle(3)
+        self.assertTrue(h.is_ready())
+        snap = h.snapshot()
+        self.assertEqual(snap["cycles"], 1)
+        self.assertEqual(snap["targets"], 3)
+        self.assertTrue(snap["last_cycle_at"])
+
+
 class ServerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.holder = MetricsHolder()
-        self.server = start_metrics_server(0, self.holder, host="127.0.0.1")
+        self.health = HealthState()
+        self.server = start_metrics_server(0, self.holder, health=self.health, host="127.0.0.1")
         self.port = self.server.server_address[1]
         self.addCleanup(self.server.shutdown)
 
@@ -46,6 +61,19 @@ class ServerTests(unittest.TestCase):
     def test_other_path_is_404(self) -> None:
         status, _ = self._get("/nope")
         self.assertEqual(status, 404)
+
+    def test_healthz_always_200(self) -> None:
+        status, body = self._get("/healthz")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["status"], "ok")
+
+    def test_readyz_503_until_ready_then_200(self) -> None:
+        status, _ = self._get("/readyz")
+        self.assertEqual(status, 503)  # no cycle yet
+        self.health.record_cycle(2)
+        status, body = self._get("/readyz")
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["ready"])
 
 
 if __name__ == "__main__":
