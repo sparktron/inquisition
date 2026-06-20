@@ -1,0 +1,10 @@
+# Minimal Prometheus config that scrapes Inquisition's /metrics endpoint.
+# Used by examples/docker-compose.yml.
+global:
+  scrape_interval: 30s
+
+scrape_configs:
+  - job_name: inquisition
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["inquisition:9090"]
