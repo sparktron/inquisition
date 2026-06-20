@@ -400,6 +400,13 @@ Goal: the tool's existing output is correct and its claims are true.
 - [x] **SIGHUP fleet reload** — in watch mode, SIGHUP reloads the fleet config
       in place (targets and per-target settings) without restarting; a failed
       reload keeps the previous config.
+- [x] **/healthz + /readyz endpoints** — the scrape server also serves liveness
+      (`/healthz`, always 200) and readiness (`/readyz`, 503 until the first
+      cycle completes) from a thread-safe `HealthState`.
+- [x] **SIGTERM graceful drain** — in watch mode, SIGTERM finishes the in-flight
+      cycle then exits 0 (interruptible inter-cycle sleep); SIGINT still stops now.
+- [x] **JSONL audit log** — `--audit-log FILE` appends one structured record per
+      scan cycle (`audit.py`): targets, counts, highest, durations, fail status.
 
 ### Phase 4 — Active Testing (optional, authorization-gated)
 - [x] Integrate Nuclei behind an explicit `--active` flag (`active_scan.py`)
@@ -418,8 +425,8 @@ Goal: the tool's existing output is correct and its claims are true.
 ---
 
 ### Suggested immediate next step
-All planned phases and follow-ons are complete, now including the `/metrics`
-scrape endpoint, watch jitter, and SIGHUP fleet reload. Candidate future
-directions: a `/healthz` readiness/liveness endpoint alongside `/metrics`;
-graceful drain on SIGTERM (finish the in-flight cycle); and a structured JSONL
-event/audit log of each scan cycle for ingestion.
+All planned phases and follow-ons are complete, now including the /healthz and
+/readyz endpoints, SIGTERM graceful drain, and the JSONL audit log. Candidate
+future directions: a container image + compose example wiring watch mode to
+Prometheus/Pushgateway; audit-log rotation (size/age) to bound disk; and a
+`--once`/run-now signal (SIGUSR1) to trigger an immediate cycle in watch mode.

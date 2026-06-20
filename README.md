@@ -284,7 +284,8 @@ inquisition --targets-file hosts.txt --format sarif \
 | `--metrics-history` | flag | off | In the metrics file, emit the findings trend as timestamped samples per stored scan (backfill) |
 | `--metrics-push` | URL | none | Push current metrics to a Prometheus Pushgateway base URL (PUT under `--metrics-job`) |
 | `--metrics-job` | name | `inquisition` | Pushgateway job name for `--metrics-push` |
-| `--metrics-serve` | int (port) | 0 (off) | Serve the latest metrics for Prometheus to scrape at `http://HOST:PORT/metrics` |
+| `--metrics-serve` | int (port) | 0 (off) | Serve the latest metrics at `http://HOST:PORT/metrics` for Prometheus to scrape, plus `/healthz` (liveness) and `/readyz` (readiness) |
+| `--audit-log` | path | none | Append one JSON line per scan cycle (targets, counts, durations, fail status) to this file |
 | `--fleet-config` | path | none | JSON or YAML file defining targets and per-target scan overrides (`${VAR}` filled from env) |
 | `--watch` | int (seconds) | 0 (off) | Run continuously, re-scanning all targets every N seconds until interrupted (SIGHUP reloads a fleet config) |
 | `--watch-jitter` | float (seconds) | 0 | In watch mode, stagger each target by a random 0–N second delay |
@@ -320,7 +321,12 @@ critical+high counts) at the end of each run. Continuous-assurance extras:
   backfill; not pushed, since the Pushgateway rejects timestamps).
   `--metrics-serve 9092` instead exposes the latest metrics at
   `http://HOST:9092/metrics` for Prometheus to **scrape** (refreshed after each
-  scan) — the natural pairing with `--watch`.
+  scan) — the natural pairing with `--watch` — and serves `/healthz` (liveness)
+  and `/readyz` (readiness, 503 until the first cycle completes) for
+  orchestrators.
+- **Audit log** — `--audit-log audit.jsonl` appends one structured JSON line per
+  scan cycle (targets, severity counts, highest severity, durations, fail-on
+  status) for ingestion into a log pipeline or SIEM.
 - **Fleet config** — `--fleet-config fleet.json` (or `.yaml`) defines the target
   list and per-target overrides (depth, ports, auth, SLA, …) so a single run can
   scan many targets with different settings. Per-target settings override a
@@ -331,8 +337,10 @@ critical+high counts) at the end of each run. Continuous-assurance extras:
   interval until interrupted, pairing naturally with `--fleet-config`,
   `--notify`, and `--metrics-push`/`--metrics-serve` for continuous monitoring.
   In watch mode `--fail-on` only warns (it does not exit the loop),
-  `--watch-jitter` staggers targets to spread load, and sending **SIGHUP**
-  reloads the fleet config without restarting the daemon.
+  `--watch-jitter` staggers targets to spread load, and the daemon responds to
+  signals: **SIGHUP** reloads the fleet config without restarting, **SIGTERM**
+  drains (finishes the in-flight cycle, then exits 0), and Ctrl-C/SIGINT stops
+  immediately.
 - **History retention** — `--history-max-age-days` prunes the trend window by
   age in addition to the `--history-size` count cap.
 
