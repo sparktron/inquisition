@@ -249,7 +249,8 @@ def notify(
     """Send a notification if the diff qualifies under ``policy``, or an SLA breach exists.
 
     A finding open beyond its SLA always triggers a send, even when the diff
-    itself is quiet. ``sender`` defaults to ``requests.post``.
+    itself is quiet. ``sender`` defaults to ``requests.post``. A non-2xx response
+    is raised so the caller does not report a rejected delivery as success.
     """
     breaches = sla_breaches(report, sla_max_age, sla_overrides)
     if not should_notify(diff, threshold, policy) and not breaches:
@@ -267,5 +268,8 @@ def notify(
         import requests  # type: ignore[import-untyped]
         post = requests.post
 
-    post(url, json=payload, timeout=timeout)
+    resp = post(url, json=payload, timeout=timeout)
+    check = getattr(resp, "raise_for_status", None)
+    if callable(check):
+        check()
     return True
