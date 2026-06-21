@@ -65,6 +65,28 @@ class AppendTests(unittest.TestCase):
                 append_jsonl(path, {"cycle": i})
             self.assertFalse(os.path.exists(path + ".1"))
 
+    def test_age_rotation_when_oldest_record_is_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "a.jsonl")
+            old_ts = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps({"ts": old_ts, "cycle": 1}) + "\n")
+            # Oldest record is 10 days old; a 7-day cap rotates before the new line.
+            append_jsonl(path, {"ts": datetime.now(timezone.utc).isoformat(), "cycle": 2},
+                         max_age_days=7)
+            self.assertTrue(os.path.exists(path + ".1"))
+            live = open(path, encoding="utf-8").read().splitlines()
+            self.assertEqual(len(live), 1)
+            self.assertEqual(json.loads(live[0])["cycle"], 2)
+
+    def test_age_rotation_skipped_when_fresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "a.jsonl")
+            for i in range(3):
+                append_jsonl(path, {"ts": datetime.now(timezone.utc).isoformat(), "cycle": i},
+                             max_age_days=7)
+            self.assertFalse(os.path.exists(path + ".1"))
+
     def test_rotation_caps_size_and_keeps_backups(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "a.jsonl")
