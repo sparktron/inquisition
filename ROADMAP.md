@@ -414,6 +414,13 @@ Goal: the tool's existing output is correct and its claims are true.
 - [x] **Container image + compose** — `Dockerfile` (non-root, openssl included)
       and `examples/docker-compose.yml` wire watch mode + `/metrics` to a
       Prometheus container, with a `/healthz` healthcheck and graceful drain.
+- [x] **Image publish CI** — `.github/workflows/docker-publish.yml` runs the test
+      suite + mypy, then builds and pushes the image to GHCR on a version tag.
+- [x] **Grafana dashboard** — `examples/grafana-dashboard.json`, an importable
+      dashboard (findings over time, severity breakdown, risk score, finding age,
+      scan duration, CVE/misconfig counts) over the exported Prometheus metrics.
+- [x] **Time-based audit rotation** — `--audit-max-age-days` rotates the audit log
+      when its oldest record exceeds the age cap (alongside size-based rotation).
 
 ### Phase 4 — Active Testing (optional, authorization-gated)
 - [x] Integrate Nuclei behind an explicit `--active` flag (`active_scan.py`)
@@ -432,8 +439,8 @@ Goal: the tool's existing output is correct and its claims are true.
 ---
 
 ### Suggested immediate next step
-All planned phases and follow-ons are complete, now including the container image
-+ compose example, audit-log rotation, and the SIGUSR1 run-now trigger. Candidate
-future directions: publish the image to a registry via a CI workflow; a Grafana
-dashboard JSON for the exported metrics; and time-based (not just size-based)
-audit-log rotation.
+All planned phases and follow-ons are complete, now including the image-publish
+CI workflow, the Grafana dashboard, and time-based audit rotation. Candidate
+future directions: a multi-arch (arm64/amd64) image build in the publish
+workflow; alerting rules (Prometheus `*.rules.yml`) for the exported metrics; and
+a signed/SBOM-attached image release.
