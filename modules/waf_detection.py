@@ -10,7 +10,14 @@ from __future__ import annotations
 
 import re
 
-from models import Confidence, Finding, FindingCategory, Severity, combine_confidence
+from models import (
+    CONFIDENCE_ORDER,
+    Confidence,
+    Finding,
+    FindingCategory,
+    Severity,
+    combine_confidence,
+)
 from modules.base import BaseModule
 from modules.http_client import HttpRequestException
 
@@ -84,12 +91,10 @@ class _WafAccumulator:
     """Collects WAF/CDN signals per product so corroborating hits combine."""
 
     def __init__(self) -> None:
-        self._signals: dict[str, list[tuple[Confidence, str]]] = {}
-        self._category: dict[str, str] = {}
+        self._signals: dict[str, list[tuple[Confidence, str, str]]] = {}
 
     def add(self, product: str, category: str, confidence: Confidence, evidence: str) -> None:
-        self._signals.setdefault(product, []).append((confidence, evidence))
-        self._category.setdefault(product, category)
+        self._signals.setdefault(product, []).append((confidence, evidence, category))
 
     def __bool__(self) -> bool:
         return bool(self._signals)
@@ -97,14 +102,19 @@ class _WafAccumulator:
     def emit(self) -> list[Finding]:
         findings: list[Finding] = []
         for product, signals in self._signals.items():
-            confidence = combine_confidence([c for c, _ in signals])
+            confidence = combine_confidence([c for c, _, _ in signals])
             if confidence == Confidence.CONFIRMED:  # signatures stay heuristic
                 confidence = Confidence.HIGH
+            # Label with the category of the strongest signal (ties keep the
+            # first seen), so a block page beats an incidental cache header.
+            category = min(
+                signals, key=lambda s: CONFIDENCE_ORDER.index(s[0])
+            )[2]
             evidences: list[str] = []
-            for _, evidence in signals:
+            for _, evidence, _ in signals:
                 if evidence not in evidences:
                     evidences.append(evidence)
-            findings.append(_make_finding(product, self._category[product], "; ".join(evidences), confidence))
+            findings.append(_make_finding(product, category, "; ".join(evidences), confidence))
         return findings
 
 

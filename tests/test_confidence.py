@@ -99,6 +99,46 @@ class TechStackConfidenceTests(unittest.TestCase):
         self.assertEqual(finding.confidence, Confidence.HIGH)
 
 
+class TechStackDiscoveredPathTests(unittest.TestCase):
+    def test_discovered_sensitive_path_uses_true_severity(self) -> None:
+        from models import Severity
+
+        env_url = "https://example.com/.env?probe=1"
+
+        class FakeHttpClient:
+            def get(self, url: str, **_: object) -> FakeResponse:
+                if url.rstrip("/") == "https://example.com":
+                    return FakeResponse(status_code=200, text="", headers={})
+                if url == env_url:
+                    return FakeResponse(status_code=200, text="SECRET=1\n", headers={})
+                raise HttpRequestException("404")  # root probes find nothing
+
+        config = ScanConfig(
+            target="example.com",
+            depth=ScanDepth.STANDARD,
+            rate_limit=0,
+            discovered_urls=(env_url,),
+        )
+        findings = TechStackModule(config, http_client=cast(Any, FakeHttpClient())).run()
+        env = next(f for f in findings if "/.env" in f.title)
+        # Previously emitted at INFO; must match the root probe's CRITICAL rating.
+        self.assertEqual(env.severity, Severity.CRITICAL)
+        self.assertTrue(env.impact)
+
+
+class WafAccumulatorTests(unittest.TestCase):
+    def test_category_reflects_strongest_signal_not_arrival_order(self) -> None:
+        from modules.waf_detection import _WafAccumulator
+
+        acc = _WafAccumulator()
+        # Weak cache hint arrives first, strong block-page signal second.
+        acc.add("Example WAF", "Cache", Confidence.LOW, "x-cache: HIT")
+        acc.add("Example WAF", "WAF block page", Confidence.HIGH, "body: blocked")
+        findings = acc.emit()
+        self.assertEqual(len(findings), 1)
+        self.assertTrue(findings[0].title.startswith("WAF block page detected:"))
+
+
 @dataclass
 class _WafResp:
     headers: dict[str, str]

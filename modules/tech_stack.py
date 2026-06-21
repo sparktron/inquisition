@@ -360,11 +360,16 @@ class TechStackModule(BaseModule):
             if label in detected:
                 continue
             detected.add(label)
+            # Use the same risk table as the root probe so a discovered sensitive
+            # path (e.g. /.env) is reported at its true severity, not flat INFO.
+            sev, impact, remediation = self._path_risk(path)
             findings.append(Finding(
                 title=f"Accessible discovered path: {parsed.path}" if not tech else f"Detected: {tech} ({parsed.path})",
                 category=FindingCategory.TECH_STACK,
-                severity=Severity.INFO if tech else Severity.LOW,
+                severity=sev,
                 evidence=f"HTTP 200 at discovered URL {url}",
+                impact=impact,
+                remediation=remediation,
                 cpe=cpe,
                 metadata=page_meta,
             ))

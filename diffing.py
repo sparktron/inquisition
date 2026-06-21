@@ -27,8 +27,12 @@ _HISTORY_SUFFIX = ".history.json"
 _DEFAULT_HISTORY_SIZE = 10
 
 # Weights used to collapse a severity breakdown into one comparable risk score
-# for trend direction. Higher-severity findings dominate, so fixing a CRITICAL
-# counts for more than adding a handful of INFO notes.
+# for trend *direction* only (the sign of newest-minus-oldest). Higher-severity
+# findings dominate, so fixing a CRITICAL counts for more than adding a handful
+# of INFO notes. This is deliberately separate from ``report._SEVERITY_WEIGHTS``
+# (the user-facing graded score, tuned to its letter-grade thresholds): only the
+# sign matters here, and ``report`` cannot be imported (it imports this module).
+# Keep both monotonic in severity so the trend never contradicts the grade.
 _SEVERITY_WEIGHT: dict[str, int] = {
     "critical": 100, "high": 40, "medium": 10, "low": 3, "info": 0,
 }
