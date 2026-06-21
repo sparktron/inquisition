@@ -287,6 +287,7 @@ inquisition --targets-file hosts.txt --format sarif \
 | `--metrics-serve` | int (port) | 0 (off) | Serve the latest metrics at `http://HOST:PORT/metrics` for Prometheus to scrape, plus `/healthz` (liveness) and `/readyz` (readiness) |
 | `--audit-log` | path | none | Append one JSON line per scan cycle (targets, counts, durations, fail status) to this file |
 | `--audit-max-bytes` | int | 0 (off) | Rotate the audit log when it would exceed N bytes |
+| `--audit-max-age-days` | float | 0 (off) | Rotate the audit log when its oldest record is older than DAYS |
 | `--audit-backups` | int | 3 | Number of rotated audit-log backups to keep |
 | `--fleet-config` | path | none | JSON or YAML file defining targets and per-target scan overrides (`${VAR}` filled from env) |
 | `--watch` | int (seconds) | 0 (off) | Run continuously, re-scanning all targets every N seconds until interrupted (SIGHUP reloads a fleet config) |
@@ -328,8 +329,9 @@ critical+high counts) at the end of each run. Continuous-assurance extras:
   orchestrators.
 - **Audit log** — `--audit-log audit.jsonl` appends one structured JSON line per
   scan cycle (targets, severity counts, highest severity, durations, fail-on
-  status) for ingestion into a log pipeline or SIEM. `--audit-max-bytes` rotates
-  it (keeping `--audit-backups` files) to bound disk use.
+  status) for ingestion into a log pipeline or SIEM. `--audit-max-bytes` (size)
+  or `--audit-max-age-days` (age of the oldest record) rotates it, keeping
+  `--audit-backups` files, to bound disk use.
 - **Fleet config** — `--fleet-config fleet.json` (or `.yaml`) defines the target
   list and per-target overrides (depth, ports, auth, SLA, …) so a single run can
   scan many targets with different settings. Per-target settings override a
@@ -347,7 +349,10 @@ critical+high counts) at the end of each run. Continuous-assurance extras:
   Ctrl-C/SIGINT stops immediately.
 - **Container** — a `Dockerfile` and `examples/docker-compose.yml` run watch mode
   behind Prometheus (scraping `/metrics`), with a rotating audit log and a
-  `/healthz` healthcheck; `docker compose stop` triggers a graceful drain.
+  `/healthz` healthcheck; `docker compose stop` triggers a graceful drain. The
+  `.github/workflows/docker-publish.yml` workflow tests then publishes the image
+  to GHCR on a version tag, and `examples/grafana-dashboard.json` is an importable
+  Grafana dashboard for the exported metrics.
 - **History retention** — `--history-max-age-days` prunes the trend window by
   age in addition to the `--history-size` count cap.
 
