@@ -49,6 +49,28 @@ def build_cycle_record(
     }
 
 
+def _first_record_age_days(path: str, now: datetime) -> float | None:
+    """Age in days of the oldest record in ``path`` (from its ``ts``), or None."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            first = fh.readline()
+    except OSError:
+        return None
+    try:
+        ts = json.loads(first).get("ts")
+    except ValueError:
+        return None
+    if not isinstance(ts, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(ts)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (now - dt).total_seconds() / 86400.0
+
+
 def _rotate(path: str, backups: int) -> None:
     """Roll ``path`` to ``path.1``, shifting existing backups up to ``backups``."""
     oldest = f"{path}.{backups}"
@@ -63,18 +85,30 @@ def _rotate(path: str, backups: int) -> None:
 
 
 def append_jsonl(
-    path: str, record: dict[str, Any], *, max_bytes: int = 0, backups: int = 3
+    path: str,
+    record: dict[str, Any],
+    *,
+    max_bytes: int = 0,
+    backups: int = 3,
+    max_age_days: float = 0,
 ) -> None:
-    """Append ``record`` as a JSON line, rotating first if size would exceed ``max_bytes``.
+    """Append ``record`` as a JSON line, rotating first if a cap is exceeded.
 
-    Rotation (``max_bytes > 0``) mirrors a size-based log rotator: when the file
-    would grow past the cap it is rolled to ``path.1`` (and ``.1``→``.2`` …, up to
-    ``backups``), then the new line starts a fresh file.
+    Rotation (when ``backups > 0``) rolls the file to ``path.1`` (and ``.1``→``.2``
+    …) before the new line starts a fresh file. It triggers on size
+    (``max_bytes``) or on the age of the oldest record (``max_age_days``, read
+    from its ``ts`` field) — whichever applies first.
     """
     line = json.dumps(record) + "\n"
-    if max_bytes > 0 and backups > 0 and os.path.exists(path):
-        current = os.path.getsize(path)
-        if current > 0 and current + len(line.encode("utf-8")) > max_bytes:
+    if backups > 0 and os.path.exists(path) and os.path.getsize(path) > 0:
+        should_rotate = False
+        if max_bytes > 0 and os.path.getsize(path) + len(line.encode("utf-8")) > max_bytes:
+            should_rotate = True
+        if not should_rotate and max_age_days > 0:
+            age = _first_record_age_days(path, datetime.now(timezone.utc))
+            if age is not None and age >= max_age_days:
+                should_rotate = True
+        if should_rotate:
             _rotate(path, backups)
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(line)

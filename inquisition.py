@@ -306,6 +306,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--audit-max-age-days",
+        type=float,
+        default=0,
+        metavar="DAYS",
+        dest="audit_max_age_days",
+        help="Rotate the audit log when its oldest record is older than DAYS (0 = off)",
+    )
+
+    parser.add_argument(
         "--brief",
         action="store_true",
         help="Omit verbose deep-analysis and remediation guide from text/HTML report",
@@ -744,6 +753,7 @@ def main(argv: list[str] | None = None) -> None:
                     build_cycle_record(reports, cycle=cycle, fail_triggered=fail_triggered),
                     max_bytes=args.audit_max_bytes,
                     backups=args.audit_backups,
+                    max_age_days=args.audit_max_age_days,
                 )
             except OSError as exc:
                 print_warning(f"could not write audit log {args.audit_log}: {exc}")
