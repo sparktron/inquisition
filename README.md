@@ -1,8 +1,13 @@
 # Inquisition
 
+[![Publish image](https://github.com/sparktron/inquisition/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/sparktron/inquisition/actions/workflows/docker-publish.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Image on GHCR](https://img.shields.io/badge/ghcr.io-inquisition-blue)](https://github.com/sparktron/inquisition/pkgs/container/inquisition)
+
 **A comprehensive, read-only security reconnaissance scanner for identifying misconfigurations, exposed services, and known vulnerabilities on authorised targets.**
 
-Inquisition probes your target across DNS, network, TLS, HTTP, application layers—then generates a detailed analysis of every issue found, explaining *why* it matters and *exactly how* to fix it. Reports include risk scoring, remediation priority matrices, and deep-dive guidance with platform-specific configuration examples.
+Inquisition probes your target across DNS, network, TLS, HTTP, and application layers — then generates a detailed analysis of every issue found, explaining *why* it matters and *exactly how* to fix it. Reports include risk scoring, remediation priority matrices, and deep-dive guidance with platform-specific configuration examples.
 
 **Read-only active reconnaissance by design.** No exploit payloads, authentication bypasses, injection attacks, login attempts, or data-modifying requests are sent. Inquisition does send non-mutating reconnaissance probes such as DNS lookups, TCP connects, HTTP `GET`/`OPTIONS`, CORS preflights, and GraphQL introspection checks, so only scan targets you are authorized to assess.
 
@@ -43,12 +48,13 @@ Inquisition probes your target across DNS, network, TLS, HTTP, application layer
 1. [Quick Start](#quick-start)
 2. [Installation](#installation)
 3. [Usage](#usage)
-4. [Report Structure](#report-structure)
-5. [Modules Reference](#modules-reference)
-6. [Misconfiguration Rules](#misconfiguration-rules)
-7. [Examples](#examples)
-8. [Legal & Safety](#legal--safety)
-9. [License](#license)
+4. [Container & Deployment](#container--deployment)
+5. [Report Structure](#report-structure)
+6. [Modules Reference](#modules-reference)
+7. [Misconfiguration Rules](#misconfiguration-rules)
+8. [Examples](#examples)
+9. [Legal & Safety](#legal--safety)
+10. [License](#license)
 
 ---
 
@@ -70,6 +76,13 @@ python inquisition.py example.com --depth deep --yes
 python inquisition.py example.com -o report.html --yes
 ```
 
+Or pull the pre-built container image:
+
+```bash
+docker pull ghcr.io/sparktron/inquisition:latest
+docker run --rm ghcr.io/sparktron/inquisition example.com --yes --depth quick
+```
+
 ---
 
 ## Installation
@@ -83,14 +96,10 @@ python inquisition.py example.com -o report.html --yes
 ### Setup
 
 ```bash
-# Clone the repository
 git clone https://github.com/sparktron/inquisition.git
 cd inquisition
-
-# Install dependencies
 pip install -r requirements.txt
 
-# Run directly with Python (no installation)
 python inquisition.py example.com --yes
 ```
 
@@ -144,7 +153,7 @@ python inquisition.py example.com -f json -o findings.json
 # 9. Slower scanning to avoid rate-limit triggers
 python inquisition.py example.com --rate-limit 0.5 --timeout 15
 
-# 10. Custom port list (must use custom ports, not depth defaults)
+# 10. Custom port list
 python inquisition.py example.com --ports 22 80 443 8080 8443 9000
 ```
 
@@ -220,19 +229,9 @@ python inquisition.py example.com -o report.txt    # → Text format
 | `-d`, `--depth` | `quick` \| `standard` \| `deep` | `standard` | Scan depth: controls ports and path probing |
 | `--ports` | list of ints | 20 well-known | Override default ports (e.g. `--ports 22 80 443 8080`) |
 
-**Fleet scanning:** pass several targets (or `--targets-file`) to scan each in
-turn. A combined overview table prints at the end, each target is diffed and
-notified independently, and `--fail-on` exits non-zero if *any* target meets the
-threshold. With multiple targets, `--output` is treated as a **directory** and a
-per-target report (`<target>.<ext>`) is written into it; with a single target it
-remains a file path.
+**Fleet scanning:** pass several targets (or `--targets-file`) to scan each in turn. A combined overview table prints at the end, each target is diffed and notified independently, and `--fail-on` exits non-zero if *any* target meets the threshold. With multiple targets, `--output` is treated as a **directory** and a per-target report (`<target>.<ext>`) is written into it; with a single target it remains a file path.
 
-To collect a whole fleet into **one artifact**, use `--combined-output FILE`
-(it replaces the per-target files). JSON and SARIF are merged structurally — a
-fleet JSON object with an aggregated severity summary, or a single SARIF 2.1.0
-file with one `run` per target (GitHub code scanning accepts multiple runs).
-Text and HTML are concatenated with per-target separators. This is the simplest
-way to upload one SARIF file from a multi-target CI job:
+To collect a whole fleet into **one artifact**, use `--combined-output FILE` (it replaces the per-target files). JSON and SARIF are merged structurally — a fleet JSON object with an aggregated severity summary, or a single SARIF 2.1.0 file with one `run` per target (GitHub code scanning accepts multiple runs). Text and HTML are concatenated with per-target separators. This is the simplest way to upload one SARIF file from a multi-target CI job:
 
 ```bash
 inquisition --targets-file hosts.txt --format sarif \
@@ -295,71 +294,20 @@ inquisition --targets-file hosts.txt --format sarif \
 | `--history-size` | int | 10 | Number of past scans retained per target for trend tracking |
 | `--history-max-age-days` | int | 0 (off) | Also drop history entries older than this many days (count cap still applies) |
 
-Each scan is diffed against the previous run for the same target (state is kept
-under `reports/.state/`). Inquisition also keeps a rolling window of the last
-`--history-size` scans per target and reports the **trend** (improving /
-worsening / stable, by a severity-weighted score, plus the change in total and
-critical+high counts) at the end of each run. Continuous-assurance extras:
+Each scan is diffed against the previous run for the same target (state is kept under `reports/.state/`). Inquisition also keeps a rolling window of the last `--history-size` scans per target and reports the **trend** (improving / worsening / stable, by a severity-weighted score, plus the change in total and critical+high counts) at the end of each run. Continuous-assurance extras:
 
-- **Per-finding age** — every finding records when it was *first seen* and how
-  many consecutive scans it has been open ("new this scan" / "open 4 scans since
-  2026-06-01"), shown in the text/HTML reports and the JSON `age_scans` /
-  `first_seen` fields.
-- **Trend sparkline** — the HTML report draws an inline sparkline of total
-  findings across the history window with an improving/worsening/stable label.
-- **History in JSON** — JSON (and the combined fleet JSON) embed the `history`
-  window and a `trend` summary for downstream dashboards.
-- **SLA alerting** — `--sla-max-age N` flags findings open beyond N consecutive
-  scans; they print a warning and are pushed to the webhook (with an
-  `sla_breaches` payload section) even when nothing changed. `--sla-by-severity`
-  sets stricter per-severity thresholds (e.g. `critical=1,high=3`).
-- **Fleet HTML dashboard** — a fleet run with `--combined-output report.html`
-  renders one dashboard page ranking every target by risk, with grade, severity
-  counts, a per-target trend sparkline, and a Δ-vs-last-scan column.
-- **Prometheus/OpenMetrics** — `--metrics-output metrics.prom` writes scrape-able
-  gauges (findings by severity, risk score, CVE/misconfig counts, oldest finding
-  age, scan duration) for every target — one file per fleet run. `--metrics-push
-  http://gateway:9091` pushes the current gauges to a Pushgateway, and
-  `--metrics-history` adds the findings trend as timestamped samples (for
-  backfill; not pushed, since the Pushgateway rejects timestamps).
-  `--metrics-serve 9092` instead exposes the latest metrics at
-  `http://HOST:9092/metrics` for Prometheus to **scrape** (refreshed after each
-  scan) — the natural pairing with `--watch` — and serves `/healthz` (liveness)
-  and `/readyz` (readiness, 503 until the first cycle completes) for
-  orchestrators.
-- **Audit log** — `--audit-log audit.jsonl` appends one structured JSON line per
-  scan cycle (targets, severity counts, highest severity, durations, fail-on
-  status) for ingestion into a log pipeline or SIEM. `--audit-max-bytes` (size)
-  or `--audit-max-age-days` (age of the oldest record) rotates it, keeping
-  `--audit-backups` files, to bound disk use.
-- **Fleet config** — `--fleet-config fleet.json` (or `.yaml`) defines the target
-  list and per-target overrides (depth, ports, auth, SLA, …) so a single run can
-  scan many targets with different settings. Per-target settings override a
-  `defaults` block, which overrides the CLI flags. String values may reference
-  environment variables as `${VAR}` (an undefined variable is an error, so
-  secrets fail loudly rather than leak a literal placeholder).
-- **Watch / daemon mode** — `--watch SECONDS` re-scans every target on an
-  interval until interrupted, pairing naturally with `--fleet-config`,
-  `--notify`, and `--metrics-push`/`--metrics-serve` for continuous monitoring.
-  In watch mode `--fail-on` only warns (it does not exit the loop),
-  `--watch-jitter` staggers targets to spread load, and the daemon responds to
-  signals: **SIGHUP** reloads the fleet config without restarting, **SIGUSR1**
-  triggers an immediate scan cycle (skipping the rest of the interval),
-  **SIGTERM** drains (finishes the in-flight cycle, then exits 0), and
-  Ctrl-C/SIGINT stops immediately.
-- **Container** — a `Dockerfile` and `examples/docker-compose.yml` run watch mode
-  behind Prometheus (scraping `/metrics`), with a rotating audit log and a
-  `/healthz` healthcheck; `docker compose stop` triggers a graceful drain. The
-  `.github/workflows/docker-publish.yml` workflow tests then publishes the image
-  to GHCR on a version tag, and `examples/grafana-dashboard.json` is an importable
-  Grafana dashboard for the exported metrics.
-- **History retention** — `--history-max-age-days` prunes the trend window by
-  age in addition to the `--history-size` count cap.
+- **Per-finding age** — every finding records when it was *first seen* and how many consecutive scans it has been open ("new this scan" / "open 4 scans since 2026-06-01"), shown in the text/HTML reports and the JSON `age_scans` / `first_seen` fields.
+- **Trend sparkline** — the HTML report draws an inline sparkline of total findings across the history window with an improving/worsening/stable label.
+- **History in JSON** — JSON (and the combined fleet JSON) embed the `history` window and a `trend` summary for downstream dashboards.
+- **SLA alerting** — `--sla-max-age N` flags findings open beyond N consecutive scans; they print a warning and are pushed to the webhook (with an `sla_breaches` payload section) even when nothing changed. `--sla-by-severity` sets stricter per-severity thresholds (e.g. `critical=1,high=3`).
+- **Fleet HTML dashboard** — a fleet run with `--combined-output report.html` renders one dashboard page ranking every target by risk, with grade, severity counts, a per-target trend sparkline, and a Δ-vs-last-scan column.
+- **Prometheus/OpenMetrics** — `--metrics-output metrics.prom` writes scrape-able gauges (findings by severity, risk score, CVE/misconfig counts, oldest finding age, scan duration) for every target. `--metrics-push http://gateway:9091` pushes the current gauges to a Pushgateway, and `--metrics-history` adds the findings trend as timestamped samples (for backfill; not pushed, since the Pushgateway rejects timestamps). `--metrics-serve 9092` exposes the latest metrics at `http://HOST:9092/metrics` for Prometheus to **scrape** (refreshed after each scan) — the natural pairing with `--watch` — and serves `/healthz` (liveness) and `/readyz` (readiness, 503 until the first cycle completes) for orchestrators.
+- **Audit log** — `--audit-log audit.jsonl` appends one structured JSON line per scan cycle (targets, severity counts, highest severity, durations, fail-on status) for ingestion into a log pipeline or SIEM. Rotation is controlled by **size** (`--audit-max-bytes`) or **age** (`--audit-max-age-days` — rotates when the oldest record in the log exceeds the given number of days), keeping `--audit-backups` files to bound disk use. Both triggers can be combined.
+- **Fleet config** — `--fleet-config fleet.json` (or `.yaml`) defines the target list and per-target overrides (depth, ports, auth, SLA, …) so a single run can scan many targets with different settings. Per-target settings override a `defaults` block, which overrides the CLI flags. String values may reference environment variables as `${VAR}` (an undefined variable is an error, so secrets fail loudly rather than leak a literal placeholder).
+- **Watch / daemon mode** — `--watch SECONDS` re-scans every target on an interval until interrupted, pairing naturally with `--fleet-config`, `--notify`, and `--metrics-push`/`--metrics-serve` for continuous monitoring. In watch mode `--fail-on` only warns (it does not exit the loop), `--watch-jitter` staggers targets to spread load, and the daemon responds to signals: **SIGHUP** reloads the fleet config without restarting, **SIGUSR1** triggers an immediate scan cycle (skipping the rest of the interval), **SIGTERM** drains (finishes the in-flight cycle, then exits 0), and Ctrl-C/SIGINT stops immediately.
+- **History retention** — `--history-max-age-days` prunes the trend window by age in addition to the `--history-size` count cap.
 
-Notification payloads include a severity summary and, for `changes`/`always`,
-the fixed and improved findings as well as regressions. See
-`examples/github-action.yml` for a scheduled (cron) workflow that uploads SARIF
-and notifies a Slack webhook on every change.
+Notification payloads include a severity summary and, for `changes`/`always`, the fixed and improved findings as well as regressions. See `examples/github-action.yml` for a scheduled (cron) workflow that uploads SARIF and notifies a Slack webhook on every change.
 
 ### Safety
 
@@ -372,9 +320,87 @@ and notifies a Slack webhook on every change.
 
 ---
 
-## Report Structure
+## Container & Deployment
 
-## Report structure
+### Docker
+
+The repo ships a `Dockerfile` that builds a minimal image (Python 3.12 slim + OpenSSL). Inquisition runs as a non-root user (`inquisitor`, UID 10001) with `/data` as the writable working directory for reports and the audit log.
+
+```bash
+# Build locally
+docker build -t inquisition .
+
+# One-off scan
+docker run --rm inquisition example.com --yes --depth quick
+
+# Save an HTML report to the host
+docker run --rm -v "$PWD/reports:/data" inquisition \
+  example.com --yes -o /data/report.html
+```
+
+The pre-built image is published to GHCR on every version tag:
+
+```bash
+docker pull ghcr.io/sparktron/inquisition:latest
+docker pull ghcr.io/sparktron/inquisition:0.1.0   # specific version
+```
+
+### Watch Mode with Prometheus (docker-compose)
+
+`examples/docker-compose.yml` runs Inquisition in continuous watch mode alongside a Prometheus instance:
+
+```bash
+# Edit examples/fleet.yaml first — list hosts you are authorised to scan
+docker compose -f examples/docker-compose.yml up --build
+```
+
+Inquisition scans the fleet hourly, serves `/metrics` (plus `/healthz` and `/readyz`) on port 9090, and writes a rotating audit log to the `inquisition-data` volume. Prometheus is configured to scrape it automatically.
+
+### Signal Reference (watch mode)
+
+| Signal | Effect |
+|---|---|
+| `SIGUSR1` | Trigger an immediate scan cycle — skips the remainder of the current interval |
+| `SIGHUP` | Reload `--fleet-config` without restarting |
+| `SIGTERM` | Graceful drain — finish the in-flight cycle, then exit 0 |
+| `SIGINT` / Ctrl-C | Stop immediately |
+
+With docker-compose, send signals via:
+
+```bash
+docker compose kill -s SIGUSR1 inquisition   # run now
+docker compose kill -s SIGHUP  inquisition   # reload fleet config
+docker compose stop inquisition              # SIGTERM → graceful drain
+```
+
+`stop_grace_period: 5m` in the compose file gives a long-running scan cycle up to five minutes to complete before the container is killed.
+
+### Grafana Dashboard
+
+`examples/grafana-dashboard.json` is an importable Grafana dashboard for the metrics exported by `--metrics-serve` / `--metrics-push`. Import it via **Dashboards → Import → Upload JSON file**.
+
+The dashboard visualises:
+
+- Finding counts by severity (CRITICAL / HIGH / MEDIUM / LOW) per target
+- Risk score and security grade time-series
+- CVE and misconfiguration counts
+- Oldest open finding age
+- Scan duration
+
+### Image Publishing (CI)
+
+`.github/workflows/docker-publish.yml` runs automatically when a version tag (`v*`) is pushed or via manual `workflow_dispatch`. It:
+
+1. Runs the full test suite and type-checker (`mypy`) on Python 3.12
+2. Builds and pushes the image to `ghcr.io/sparktron/inquisition` tagged with the semver version (`0.1.0`), the minor release (`0.1`), and `latest`
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0   # triggers the workflow
+```
+
+---
+
+## Report Structure
 
 Every completed scan produces the following sections:
 
@@ -389,7 +415,7 @@ Every completed scan produces the following sections:
 | **Misconfiguration Summary** | Higher-level pattern analysis derived from the raw findings |
 | **Tool Reference** | Recommended open-source tools for deeper investigation by category |
 
-### Risk score and grade
+### Risk Score and Grade
 
 The risk score is a weighted sum of finding severities:
 
@@ -399,21 +425,22 @@ The risk score is a weighted sum of finding severities:
 | HIGH | 15 |
 | MEDIUM | 5 |
 | LOW | 1 |
+| INFO | 0 |
 
-| Grade | Score range | Meaning |
+| Grade | Score | Assessment |
 |---|---|---|
-| A+ | 0 | No findings |
-| A | 1–9 | Negligible — informational findings only |
-| B | 10–24 | Minor — low-severity issues present |
-| C | 25–49 | Moderate risk — medium issues need attention |
-| D | 50–99 | Significant risk — high-severity issues present |
-| F | 100+ | Critical exposure — immediate action required |
+| **A+** | 0 | No findings — clean bill of health |
+| **A** | 1–9 | Negligible — informational findings only |
+| **B** | 10–24 | Minor — low-severity issues present |
+| **C** | 25–49 | Moderate — medium-severity issues require attention |
+| **D** | 50–99 | Significant risk — high-severity issues present |
+| **F** | 100+ | Critical — immediate action required; high-risk exposure |
 
-### HTML report
+### HTML Report
 
 The HTML report is a self-contained single file (no external dependencies). Each finding is rendered as a severity-coloured card. Click **Issue Analysis** or **Remediation Steps** on any card to expand the full deep-dive content inline.
 
-## Example output (text)
+### Example Output (text)
 
 ```
 ########################################################################
@@ -482,8 +509,7 @@ The HTML report is a self-contained single file (no external dependencies). Each
 
 ## Modules Reference
 
-Inquisition runs 9 specialised modules, beginning with crawler pre-discovery
-before the remaining modules run concurrently:
+Inquisition runs 9 specialised modules, beginning with crawler pre-discovery before the remaining modules run concurrently:
 
 ### 1. DNS Reconnaissance (`dns_recon`)
 **What it does:** Resolves DNS records, enumerates subdomains, checks email security.
@@ -532,8 +558,7 @@ before the remaining modules run concurrently:
 - Protocol version detection (flags SSLv2, SSLv3, TLSv1.0, TLSv1.1)
 - Active protocol-version enumeration and weak-cipher-family probing
 - Negotiated cipher analysis (flags RC4, DES, NULL, EXPORT, anonymous ciphers if negotiated)
-- Weak Diffie-Hellman parameter detection (Logjam-class) — forces a TLS 1.2 DHE
-  handshake and grades the finite-field DH group size
+- Weak Diffie-Hellman parameter detection (Logjam-class) — forces a TLS 1.2 DHE handshake and grades the finite-field DH group size
 - Certificate fingerprint (SHA-256)
 - Self-signed certificate detection
 - Certificate expiry and validity period
@@ -545,10 +570,7 @@ before the remaining modules run concurrently:
 
 **Severity:** CRITICAL for expired/revoked certs; HIGH for legacy protocols/weak ciphers/export-grade DH
 
-> **Note:** Chain validation, CT/SCT, and OCSP use the `cryptography` package
-> (installed automatically). Weak-DH detection additionally shells out to the
-> `openssl` CLI when present; if `openssl` is not on `PATH` that single check is
-> skipped silently and the rest of the TLS analysis runs unaffected.
+> **Note:** Chain validation, CT/SCT, and OCSP use the `cryptography` package (installed automatically). Weak-DH detection additionally shells out to the `openssl` CLI when present; if `openssl` is not on `PATH` that single check is skipped silently and the rest of the TLS analysis runs unaffected.
 
 ---
 
@@ -564,9 +586,7 @@ before the remaining modules run concurrently:
 - Permissions-Policy
 - Information disclosure headers (Server, X-Powered-By, X-AspNet-Version)
 - Cookie flags: **Secure**, **HttpOnly**, **SameSite** (Strict/Lax/None)
-- Header quality checks for weak HSTS max-age, missing `includeSubDomains` /
-  `preload`, inactive HSTS preload status, permissive CSP sources, invalid
-  defensive header values, broad Permissions-Policy, and cookie prefix rules
+- Header quality checks for weak HSTS max-age, missing `includeSubDomains` / `preload`, inactive HSTS preload status, permissive CSP sources, invalid defensive header values, broad Permissions-Policy, and cookie prefix rules
 - HTTP-to-HTTPS redirect
 
 **Severity:** MEDIUM for missing or weak HSTS/CSP; MEDIUM for insecure cookies
@@ -703,58 +723,11 @@ The misconfiguration engine derives higher-level findings from raw module output
 
 ---
 
-## Risk Scoring & Security Grade
-
-### Scoring Formula
-
-Each finding is weighted by severity:
-
-| Severity | Weight |
-|---|---|
-| CRITICAL | 40 |
-| HIGH | 15 |
-| MEDIUM | 5 |
-| LOW | 1 |
-| INFO | 0 |
-
-**Risk Score = Sum of (finding count × severity weight)**
-
-### Security Grade
-
-| Grade | Score | Assessment |
-|---|---|---|
-| **A+** | 0 | No findings — clean bill of health |
-| **A** | 1–9 | Negligible — informational findings only |
-| **B** | 10–24 | Minor — low-severity issues present |
-| **C** | 25–49 | Moderate — medium-severity issues require attention |
-| **D** | 50–99 | Significant risk — high-severity issues present |
-| **F** | 100+ | Critical — immediate action required; high-risk exposure |
-
----
-
-## Report Sections
-
-Every scan generates the following sections (unless `--brief` is used):
-
-| Section | Content |
-|---|---|
-| **Executive Summary** | Finding counts by severity, CVE count, misconfiguration count, risk score, security grade |
-| **Remediation Priority Matrix** | Ranked CRITICAL → HIGH → MEDIUM findings for quick triage |
-| **Detailed Findings** | Per-finding evidence, impact, quick fix, CPE, recommended tools |
-| **Deep Issue Analysis** | Multi-paragraph explanation: what is the vulnerability, why is it dangerous, real-world attacks, named CVEs *(omitted with `--brief`)* |
-| **Remediation Guide** | Step-by-step fix instructions with platform-specific examples (nginx, Apache, IIS, Docker, K8s, AWS, Azure) *(omitted with `--brief`)* |
-| **CVE Correlation** | CVEs matched to detected CPEs via NVD API, with CVSS scores and references |
-| **Misconfiguration Summary** | Higher-level patterns derived from findings |
-| **Tool Reference** | Recommended open-source tools for deeper investigation by category |
-| **Scan Metadata** | Scan duration, configuration, and any errors encountered |
-
----
-
 ## Examples
 
 ### Example 1: Basic Target Assessment
 
-```bash
+```
 $ python inquisition.py example.com
 
 [*] Inquisition Security Reconnaissance Scanner
@@ -784,7 +757,6 @@ Confirm [y/n]: y
   [+] cpe:2.3:a:openssl:openssl:3.0.1:*:*:*:*:*:*:*: 1 CVE(s)
 
 [*] Removed 2 duplicate finding(s)
-
 [*] 4 misconfiguration(s) detected
 
 ========================================================================
@@ -815,26 +787,21 @@ Confirm [y/n]: y
 ### Example 2: Save HTML Report
 
 ```bash
-$ python inquisition.py example.com -o report.html --depth deep
-
-[*] Starting scan of example.com (depth=deep)
-...
-[*] Report saved to: report.html
+python inquisition.py example.com -o report.html --depth deep
+# [*] Report saved to: report.html
 ```
 
-The generated HTML report includes:
-- Severity-coloured finding cards
-- Collapsible "Issue Analysis" and "Remediation Steps" sections
-- CVE table with CVSS scores
-- No external dependencies (fully self-contained)
+The generated HTML report includes severity-coloured finding cards, collapsible "Issue Analysis" and "Remediation Steps" sections, a CVE table with CVSS scores, and no external dependencies.
 
 ### Example 3: JSON Export for Automation
 
 ```bash
-$ python inquisition.py example.com -f json -o findings.json
+python inquisition.py example.com -f json -o findings.json
 
-$ jq '.findings[] | select(.severity=="CRITICAL")' findings.json
+jq '.findings[] | select(.severity=="CRITICAL")' findings.json
+```
 
+```json
 {
   "title": "Environment file exposure",
   "category": "tech_stack",
@@ -845,6 +812,19 @@ $ jq '.findings[] | select(.severity=="CRITICAL")' findings.json
   "cpe": ""
 }
 ```
+
+### Example 4: Continuous Watch Mode with Notifications
+
+```bash
+inquisition --fleet-config fleet.yaml \
+  --watch 3600 --watch-jitter 30 \
+  --metrics-serve 9090 \
+  --audit-log audit.jsonl --audit-max-age-days 30 --audit-backups 5 \
+  --notify https://hooks.slack.com/... --notify-on regression \
+  --yes
+```
+
+This runs continuously, serves Prometheus metrics on port 9090, rotates the audit log when it contains records older than 30 days, and posts a Slack message whenever a new or worsened finding appears.
 
 ---
 
@@ -867,10 +847,7 @@ By default, Inquisition is intentionally **read-only active reconnaissance:**
 - ✅ No extraction of private data
 - ✅ Live scans require interactive authorization or `--yes` / `--i-am-authorized`
 
-Optional `--active` mode is different: it shells out to Nuclei or OWASP ZAP and
-may send payload-based vulnerability probes after a second, explicit active-scan
-authorization prompt. Use it only where you have written permission for active
-testing.
+Optional `--active` mode is different: it shells out to Nuclei or OWASP ZAP and may send payload-based vulnerability probes after a second, explicit active-scan authorization prompt. Use it only where you have written permission for active testing.
 
 ### Responsible Disclosure
 
@@ -892,23 +869,20 @@ MIT
 
 Contributions are welcome. Please open an issue or pull request at the repository.
 
-### Development validation
+### Development Validation
 
 Run the local checks before opening a pull request:
 
 ```bash
-python -m unittest discover -s tests -v
+python -m pytest -q
 python -m compileall -q .
 python -m mypy .
 python inquisition.py example.com --dry-run --format json --output /tmp/inquisition-dry-run.json
 ```
 
-The test suite includes deterministic recorded HTTP/DNS/socket fixtures for
-network-facing modules; tests should not require live external targets.
+The test suite includes deterministic recorded HTTP/DNS/socket fixtures for network-facing modules; tests should not require live external targets.
 
-Deep remediation text is stored as structured package data in
-`modules/data/analysis_kb.json` and loaded through `analysis_kb.py`. Keep the
-schema test passing whenever adding or editing knowledge-base entries.
+Deep remediation text is stored as structured package data in `modules/data/analysis_kb.json` and loaded through `analysis_kb.py`. Keep the schema test passing whenever adding or editing knowledge-base entries.
 
 For bug reports or feature requests, provide:
 - Description of the issue
@@ -918,4 +892,4 @@ For bug reports or feature requests, provide:
 
 ---
 
-**Last updated:** April 2026
+**Last updated:** June 2026
