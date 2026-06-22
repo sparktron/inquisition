@@ -1,5 +1,7 @@
 # Inquisition
 
+[![CI](https://github.com/sparktron/inquisition/actions/workflows/ci.yml/badge.svg)](https://github.com/sparktron/inquisition/actions/workflows/ci.yml)
+
 **A comprehensive, read-only security reconnaissance scanner for identifying misconfigurations, exposed services, and known vulnerabilities on authorised targets.**
 
 Inquisition probes your target across DNS, network, TLS, HTTP, application layers—then generates a detailed analysis of every issue found, explaining *why* it matters and *exactly how* to fix it. Reports include risk scoring, remediation priority matrices, and deep-dive guidance with platform-specific configuration examples.
@@ -898,6 +900,10 @@ python -m mypy .
 python inquisition.py example.com --dry-run --format json --output /tmp/inquisition-dry-run.json
 ```
 
+These same checks run automatically in [GitHub Actions CI](.github/workflows/ci.yml)
+on every push to `master` and on all pull requests: the unittest suite is
+exercised across Python 3.10–3.13 and `mypy --strict` runs on Python 3.12.
+
 The test suite includes deterministic recorded HTTP/DNS/socket fixtures for
 network-facing modules; tests should not require live external targets.
 
@@ -913,4 +919,4 @@ For bug reports or feature requests, provide:
 
 ---
 
-**Last updated:** April 2026
+**Last updated:** June 2026
