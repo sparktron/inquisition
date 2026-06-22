@@ -100,15 +100,24 @@ def push_metrics(
 ) -> None:
     """Push exposition ``text`` to a Prometheus Pushgateway job (PUT replaces the group).
 
-    ``sender`` defaults to ``requests.put``; inject a fake in tests.
+    ``sender`` defaults to ``requests.put``; inject a fake in tests. A non-2xx
+    response is raised so the caller does not report a rejected push as success.
     """
     url = f"{base_url.rstrip('/')}/metrics/job/{job}"
     put = sender
     if put is None:
         import requests  # type: ignore[import-untyped]
         put = requests.put
-    put(url, data=text.encode("utf-8"),
-        headers={"Content-Type": "text/plain; version=0.0.4"}, timeout=timeout)
+    resp = put(url, data=text.encode("utf-8"),
+               headers={"Content-Type": "text/plain; version=0.0.4"}, timeout=timeout)
+    _raise_for_status(resp)
+
+
+def _raise_for_status(resp: Any) -> None:
+    """Raise on a non-2xx response, tolerating injected fakes without the method."""
+    check = getattr(resp, "raise_for_status", None)
+    if callable(check):
+        check()
 
 
 def _series_for(name: str, report: ScanReport) -> list[str]:

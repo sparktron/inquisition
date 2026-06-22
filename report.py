@@ -36,6 +36,10 @@ _SEVERITY_LABEL: dict[Severity, str] = {
 # Risk scoring
 # ---------------------------------------------------------------------------
 
+# User-facing graded risk score, tuned to map onto _GRADE_THRESHOLDS below.
+# Distinct from ``diffing._SEVERITY_WEIGHT`` (an internal trend-direction signal);
+# both are kept monotonic in severity so a worsening trend never shows a better
+# grade. See the note in diffing.py for why they are not shared.
 _SEVERITY_WEIGHTS: dict[str, int] = {
     "critical": 40,
     "high": 15,

@@ -92,6 +92,17 @@ class PushTests(unittest.TestCase):
         self.assertEqual(calls[0]["data"], b"metricdata\n")
         self.assertIn("text/plain", calls[0]["headers"]["Content-Type"])
 
+    def test_push_raises_on_non_2xx_response(self) -> None:
+        class _Resp:
+            def raise_for_status(self) -> None:
+                raise RuntimeError("400 Bad Request")
+
+        def fake_put(url: str, **kwargs: Any) -> _Resp:
+            return _Resp()
+
+        with self.assertRaises(RuntimeError):
+            push_metrics("http://gw:9091", "x\n", sender=fake_put)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -129,6 +129,18 @@ class NotifyTests(unittest.TestCase):
         self.assertFalse(sent)
         self.assertEqual(sender.calls, [])
 
+    def test_notify_raises_on_non_2xx_response(self) -> None:
+        class _Resp:
+            def raise_for_status(self) -> None:
+                raise RuntimeError("500 Server Error")
+
+        def sender(url: str, json: dict[str, Any], timeout: float) -> _Resp:
+            return _Resp()
+
+        diff = DiffResult(new=[_delta("X", "high")])
+        with self.assertRaises(RuntimeError):
+            notify("https://example.test/hook", "example.com", diff, Severity.HIGH, sender=sender)
+
     def test_slack_url_gets_text_payload(self) -> None:
         sender = RecordingSender()
         diff = DiffResult(new=[_delta("X", "high")])
