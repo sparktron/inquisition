@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
 
 from models import Finding, FindingCategory, ReportFormat, ScanReport, Severity
 from scanner import _deduplicate, _default_report_path, _extract_discovered_urls
@@ -20,18 +21,25 @@ class ScannerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             os.chdir(tmp)
             try:
+                # Each website gets its own folder under reports/.
                 self.assertEqual(
                     str(_default_report_path(report, ReportFormat.JSON)),
-                    "reports/20260610_120000_www_example_com.json",
+                    "reports/www_example_com/20260610_120000.json",
                 )
                 self.assertEqual(
                     str(_default_report_path(report, ReportFormat.HTML)),
-                    "reports/20260610_120000_www_example_com.html",
+                    "reports/www_example_com/20260610_120000.html",
                 )
                 self.assertEqual(
                     str(_default_report_path(report, ReportFormat.TEXT)),
-                    "reports/20260610_120000_www_example_com.txt",
+                    "reports/www_example_com/20260610_120000.txt",
                 )
+                self.assertEqual(
+                    str(_default_report_path(report, ReportFormat.MARKDOWN)),
+                    "reports/www_example_com/20260610_120000.md",
+                )
+                # The per-target folder is created on first use.
+                self.assertTrue((Path(tmp) / "reports" / "www_example_com").is_dir())
             finally:
                 os.chdir(old_cwd)
 

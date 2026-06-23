@@ -298,6 +298,210 @@ def render_text(report: ScanReport, *, brief: bool = False) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Markdown report
+# ---------------------------------------------------------------------------
+
+def _md_cell(text: str) -> str:
+    """Escape a value for safe inclusion in a Markdown table cell."""
+    return text.replace("|", "\\|").replace("\n", " ")
+
+
+def render_markdown(report: ScanReport, *, brief: bool = False) -> str:
+    """Produce a GitHub-flavored Markdown report.
+
+    Mirrors render_text's structure with real Markdown headings, tables, and
+    inline code so it renders cleanly in PRs, issues, and Markdown viewers.
+    """
+    out: list[str] = []
+
+    # --- Banner / metadata ---
+    out.append("# Inquisition — Security Reconnaissance Report")
+    out.append("")
+    out.append(f"- **Target:** `{report.target}`")
+    out.append(f"- **Started:** {report.started_at:%Y-%m-%d %H:%M:%S UTC}")
+    if report.finished_at:
+        duration = (report.finished_at - report.started_at).total_seconds()
+        out.append(f"- **Finished:** {report.finished_at:%Y-%m-%d %H:%M:%S UTC} ({duration:.1f}s)")
+    if report.config:
+        mode = "dry-run" if report.config.dry_run else "safe" if report.config.safe_mode else "standard"
+        out.append(f"- **Depth:** {report.config.depth.value}")
+        out.append(f"- **Mode:** {mode}")
+    out.append("")
+
+    # --- Executive Summary ---
+    out.append("## Executive Summary")
+    out.append("")
+    counts = report.summary_counts()
+    total = sum(counts.values())
+    score, grade = _risk_score(counts)
+    out.append(f"**Total findings: {total}** — risk score **{score}**, security grade **{grade}**")
+    out.append("")
+    out.append("| Severity | Count |")
+    out.append("| --- | --- |")
+    for sev in _SEV_ORDER:
+        count = counts.get(sev.value, 0)
+        if count:
+            out.append(f"| {_SEVERITY_LABEL[sev]} | {count} |")
+    out.append(f"| CVEs correlated | {len(report.cve_records)} |")
+    out.append(f"| Misconfigurations | {len(report.misconfigurations)} |")
+    if report.errors:
+        out.append(f"| Scan errors | {len(report.errors)} |")
+    out.append("")
+    out.append(
+        "_Grade scale: A+ = clean, A/B = minor issues, C = moderate risk, "
+        "D = significant risk, F = critical exposure requiring immediate action._"
+    )
+    out.append("")
+
+    # --- Remediation Priority Matrix ---
+    out.append("## Remediation Priority Matrix")
+    out.append("")
+    actionable = [f for f in report.findings if f.severity in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM)]
+    if actionable:
+        out.append("| # | Severity | Category | Title |")
+        out.append("| --- | --- | --- | --- |")
+        for idx, f in enumerate(sorted(actionable, key=lambda x: _SEV_ORDER.index(x.severity)), 1):
+            out.append(f"| {idx} | {_SEVERITY_LABEL[f.severity]} | {_md_cell(f.category.value)} | {_md_cell(f.title)} |")
+    else:
+        out.append("_No actionable findings._")
+    out.append("")
+
+    # --- Detailed Findings ---
+    out.append("## Detailed Findings")
+    out.append("")
+    any_findings = False
+    for sev in _SEV_ORDER:
+        group = [f for f in report.findings if f.severity == sev]
+        if not group:
+            continue
+        any_findings = True
+        out.append(f"### {_SEVERITY_LABEL[sev]} ({len(group)})")
+        out.append("")
+        for f in group:
+            out.append(f"#### {f.title}")
+            out.append("")
+            out.append(f"- **Category:** {f.category.value}")
+            if f.confidence is not Confidence.CONFIRMED:
+                out.append(f"- **Confidence:** {f.confidence.value}")
+            out.append(f"- **Evidence:** {f.evidence}")
+            if f.impact:
+                out.append(f"- **Impact:** {f.impact}")
+            if f.remediation:
+                out.append(f"- **Fix:** {f.remediation}")
+            if f.verification:
+                out.append(f"- **Verify:** {f.verification}")
+            if f.cpe:
+                out.append(f"- **CPE:** `{f.cpe}`")
+            if f.age_scans:
+                out.append(f"- **Age:** {_age_phrase(f)}")
+            if f.references:
+                out.append(f"- **References:** {', '.join(f.references)}")
+            tools = tools_for_category(f.category)
+            if tools:
+                out.append(f"- **Tools:** {', '.join(tools)}")
+            out.append("")
+    if not any_findings:
+        out.append("_No findings recorded._")
+        out.append("")
+
+    # --- Deep Issue Analysis ---
+    if not brief:
+        deep = [
+            f for f in report.findings
+            if f.severity in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW)
+        ]
+        if deep:
+            out.append("## Deep Issue Analysis")
+            out.append("")
+            for sev in _SEV_ORDER:
+                for f in (x for x in deep if x.severity == sev):
+                    kb = analysis_kb.lookup(f.title)
+                    analysis_text = kb["analysis"] if kb else f.impact
+                    if not analysis_text:
+                        continue
+                    out.append(f"### [{_SEVERITY_LABEL[f.severity]}] {f.title}")
+                    out.append("")
+                    out.append(analysis_text)
+                    out.append("")
+                    out.append(f"**Evidence:** {f.evidence}")
+                    out.append("")
+
+    # --- Remediation Guide ---
+    if not brief:
+        rem = [f for f in report.findings if f.severity in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM)]
+        if rem:
+            out.append("## Remediation Guide")
+            out.append("")
+            for sev in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM):
+                group = [f for f in rem if f.severity == sev]
+                if not group:
+                    continue
+                out.append(f"### {_SEVERITY_LABEL[sev]} priority")
+                out.append("")
+                for f in group:
+                    kb = analysis_kb.lookup(f.title)
+                    remediation_text = (kb["remediation"] if kb else f.remediation) or \
+                        f.remediation or "No specific remediation guidance available."
+                    out.append(f"#### {f.title}")
+                    out.append("")
+                    out.append(remediation_text)
+                    out.append("")
+                    if f.verification:
+                        out.append(f"**Verification:** {f.verification}")
+                        out.append("")
+                    if f.references:
+                        out.append(f"**References:** {', '.join(f.references)}")
+                        out.append("")
+
+    # --- CVE Correlation ---
+    if report.cve_records:
+        out.append("## CVE Correlation")
+        out.append("")
+        for cve in sorted(report.cve_records, key=lambda c: c.cvss_score, reverse=True):
+            out.append(f"### {cve.cve_id} (CVSS {cve.cvss_score:.1f} / {_SEVERITY_LABEL[cve.severity]})")
+            out.append("")
+            out.append(cve.description[:200])
+            out.append("")
+            if cve.references:
+                out.append(f"**References:** {', '.join(cve.references[:3])}")
+                out.append("")
+
+    # --- Misconfiguration Summary ---
+    if report.misconfigurations:
+        out.append("## Misconfiguration Summary")
+        out.append("")
+        for mc in sorted(report.misconfigurations, key=lambda m: _SEV_ORDER.index(m.severity)):
+            out.append(f"### [{_SEVERITY_LABEL[mc.severity]}] {mc.name}")
+            out.append("")
+            out.append(mc.description)
+            out.append("")
+            out.append(f"- **Evidence:** {mc.evidence}")
+            out.append(f"- **Remediate:** {mc.remediation}")
+            out.append("")
+
+    # --- Tool Reference Table ---
+    out.append("## Tool Reference Table")
+    out.append("")
+    out.append("| Category | Recommended tools |")
+    out.append("| --- | --- |")
+    for cat in FindingCategory:
+        tools = TOOL_REFERENCE.get(cat, [])
+        if tools:
+            out.append(f"| {_md_cell(cat.value)} | {_md_cell(', '.join(tools))} |")
+    out.append("")
+
+    # --- Errors ---
+    if report.errors:
+        out.append("## Scan Errors")
+        out.append("")
+        for err in report.errors:
+            out.append(f"- {err}")
+        out.append("")
+
+    return "\n".join(out).rstrip() + "\n"
+
+
+# ---------------------------------------------------------------------------
 # JSON report
 # ---------------------------------------------------------------------------
 
@@ -859,6 +1063,8 @@ def render(report: ScanReport, fmt: ReportFormat, *, brief: bool = False) -> str
         return render_html(report)
     if fmt == ReportFormat.SARIF:
         return render_sarif(report)
+    if fmt == ReportFormat.MARKDOWN:
+        return render_markdown(report, brief=brief)
     return render_text(report, brief=brief)
 
 
@@ -1010,6 +1216,11 @@ def render_combined(reports: list[ScanReport], fmt: ReportFormat, *, brief: bool
         return render_sarif_combined(reports)
     if fmt == ReportFormat.HTML:
         return render_fleet_dashboard(reports)
+    if fmt == ReportFormat.MARKDOWN:
+        return "\n\n---\n\n".join(
+            f"# Fleet report {idx}/{len(reports)} — {r.target}\n\n{render_markdown(r, brief=brief)}"
+            for idx, r in enumerate(reports, 1)
+        )
     banner = "\n\n" + _hr("#") + "\n"
     return banner.join(
         f"  FLEET REPORT {idx}/{len(reports)} — {r.target}\n{render_text(r, brief=brief)}"

@@ -45,6 +45,7 @@ class ReportFormat(enum.Enum):
     JSON = "json"
     HTML = "html"
     SARIF = "sarif"
+    MARKDOWN = "markdown"
 
 
 # Severity ranking, most to least severe. Used for thresholds (--fail-on) and

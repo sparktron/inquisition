@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime, timezone
 
 from models import Finding, FindingCategory, ScanReport, Severity
-from report import _risk_score, render_html, render_json, render_text
+from report import _risk_score, render_html, render_json, render_markdown, render_text
 
 
 def _history(*totals: int) -> list[dict[str, object]]:
@@ -100,6 +100,56 @@ class ModelsAndReportTests(unittest.TestCase):
         self.assertIn("DETAILED FINDINGS", output)
         self.assertNotIn("DEEP ISSUE ANALYSIS", output)
         self.assertNotIn("REMEDIATION GUIDE", output)
+
+
+class MarkdownReportTests(unittest.TestCase):
+    def _report(self) -> ScanReport:
+        return ScanReport(
+            target="example.com",
+            started_at=datetime(2026, 6, 23, 12, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 6, 23, 12, 0, 2, tzinfo=timezone.utc),
+            findings=[
+                Finding(
+                    title="Missing header: Content-Security-Policy",
+                    category=FindingCategory.HTTP_HEADER,
+                    severity=Severity.MEDIUM,
+                    evidence="missing",
+                    impact="impact text",
+                    remediation="fix text",
+                ),
+            ],
+        )
+
+    def test_markdown_has_headings_and_summary_table(self) -> None:
+        output = render_markdown(self._report())
+        self.assertIn("# Inquisition — Security Reconnaissance Report", output)
+        self.assertIn("## Executive Summary", output)
+        self.assertIn("| Severity | Count |", output)
+        self.assertIn("| --- | --- |", output)
+        self.assertIn("#### Missing header: Content-Security-Policy", output)
+        self.assertTrue(output.endswith("\n"))
+
+    def test_markdown_escapes_pipes_in_table_cells(self) -> None:
+        report = ScanReport(
+            target="example.com",
+            started_at=datetime(2026, 6, 23, tzinfo=timezone.utc),
+            findings=[
+                Finding(
+                    title="Weird | title",
+                    category=FindingCategory.APPLICATION,
+                    severity=Severity.HIGH,
+                    evidence="e",
+                ),
+            ],
+        )
+        output = render_markdown(report)
+        self.assertIn("Weird \\| title", output)
+
+    def test_markdown_brief_omits_deep_sections(self) -> None:
+        output = render_markdown(self._report(), brief=True)
+        self.assertIn("## Detailed Findings", output)
+        self.assertNotIn("## Deep Issue Analysis", output)
+        self.assertNotIn("## Remediation Guide", output)
 
 
 class AgeAndTrendRenderTests(unittest.TestCase):

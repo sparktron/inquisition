@@ -58,8 +58,10 @@ class OutputPathTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = os.path.join(tmp, "fleet")
             path = _output_path_for(out_dir, "https://a.com", ReportFormat.JSON, multi=True)
-            self.assertEqual(path, os.path.join(out_dir, "https___a.com.json"))
-            self.assertTrue(os.path.isdir(out_dir))  # directory is created
+            # Each website gets its own subfolder under the --output directory.
+            safe = "https___a.com"
+            self.assertEqual(path, os.path.join(out_dir, safe, f"{safe}.json"))
+            self.assertTrue(os.path.isdir(os.path.join(out_dir, safe)))  # per-site dir created
 
 
 class SlaOverrideParseTests(unittest.TestCase):
