@@ -64,10 +64,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     parser.add_argument(
         "--format", "-f",
-        choices=["text", "json", "html", "sarif"],
+        choices=["text", "json", "html", "sarif", "markdown"],
         default="text",
         dest="report_format",
-        help="Report output format (sarif for CI / GitHub code scanning). Default: text",
+        help="Report output format (sarif for CI / GitHub code scanning, markdown for PRs / docs). Default: text",
     )
 
     parser.add_argument(
@@ -473,9 +473,11 @@ def _output_path_for(output: str | None, target: str, fmt: ReportFormat, multi: 
     if not output:
         return None  # run_scan auto-names under reports/
     ext = {ReportFormat.JSON: "json", ReportFormat.HTML: "html",
-           ReportFormat.SARIF: "sarif"}.get(fmt, "txt")
+           ReportFormat.SARIF: "sarif", ReportFormat.MARKDOWN: "md"}.get(fmt, "txt")
     safe = "".join(c if c.isalnum() or c in "-." else "_" for c in target)
-    out_dir = Path(output)
+    # Each website gets its own subfolder under the --output directory, so a
+    # fleet run produces reports/<dir>/<site>/<site>.<ext> rather than a flat pile.
+    out_dir = Path(output) / safe
     out_dir.mkdir(parents=True, exist_ok=True)
     return str(out_dir / f"{safe}.{ext}")
 

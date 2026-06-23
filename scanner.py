@@ -87,12 +87,15 @@ def _default_report_path(report: ScanReport, report_format: ReportFormat) -> Pat
         ReportFormat.JSON: ".json",
         ReportFormat.HTML: ".html",
         ReportFormat.SARIF: ".sarif",
+        ReportFormat.MARKDOWN: ".md",
     }
     timestamp = report.started_at.strftime("%Y%m%d_%H%M%S")
     safe_target = re.sub(r"[^\w\-]", "_", report.target)
-    reports_dir = Path("reports")
-    reports_dir.mkdir(exist_ok=True)
-    return reports_dir / f"{timestamp}_{safe_target}{extensions[report_format]}"
+    # Each website gets its own folder under reports/; the first scan of a new
+    # target creates it and every later scan of the same target lands beside it.
+    target_dir = Path("reports") / safe_target
+    target_dir.mkdir(parents=True, exist_ok=True)
+    return target_dir / f"{timestamp}{extensions[report_format]}"
 
 
 def _run_module(module: BaseModule) -> tuple[str, list[Finding], list[str]]:
