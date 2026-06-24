@@ -187,6 +187,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--attack-navigator",
+        metavar="FILE",
+        dest="attack_navigator",
+        help=(
+            "Write a MITRE ATT&CK Navigator layer (layer.json) covering all "
+            "targets to FILE. Import at mitre-attack.github.io/attack-navigator/ "
+            "to overlay observed attacker techniques on the ATT&CK matrix."
+        ),
+    )
+
+    parser.add_argument(
         "--metrics-output",
         metavar="FILE",
         dest="metrics_output",
@@ -729,6 +740,17 @@ def main(argv: list[str] | None = None) -> None:
                 print_info(f"combined {len(reports)} report(s) into {args.combined_output}")
             except OSError as exc:
                 print_error(f"could not write combined artifact to {args.combined_output}", str(exc))
+                sys.exit(2)
+
+        # --- MITRE ATT&CK Navigator layer export ---
+        if args.attack_navigator:
+            from mitre import render_navigator_layer
+            try:
+                with open(args.attack_navigator, "w", encoding="utf-8") as fh:
+                    fh.write(render_navigator_layer(reports))
+                print_info(f"wrote ATT&CK Navigator layer for {len(reports)} target(s) to {args.attack_navigator}")
+            except OSError as exc:
+                print_error(f"could not write ATT&CK Navigator layer to {args.attack_navigator}", str(exc))
                 sys.exit(2)
 
         # --- Prometheus / OpenMetrics export (file / push / scrape) ---

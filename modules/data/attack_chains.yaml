@@ -1,0 +1,111 @@
+- name: SSL Stripping Credential Harvest
+  description: Missing HSTS + cleartext HTTP + insecure cookies allows an on-path attacker to strip TLS, intercept login credentials, and hijack the session.
+  steps:
+  - Attacker performs ARP poisoning to become the on-path MITM
+  - sslstrip/bettercap intercepts the victim's HTTP request before HTTPS redirect
+  - Login credentials submitted over HTTP arrive in cleartext at attacker proxy
+  - Attacker replays session cookies to impersonate the victim
+  mitre_techniques:
+  - T1557
+  - T1040
+  - T1539
+  - T1185
+  requires:
+  - misconfig: HSTS not enabled
+  - misconfig: Unencrypted HTTP served
+- name: Source Code Disclosure to Credential Extraction
+  description: Exposed .git directory allows full repository reconstruction. Attacker extracts hardcoded credentials from source history and uses them for direct database access.
+  steps:
+  - Attacker runs git-dumper against /.git to reconstruct the repository
+  - git log --all reveals commits that deleted credentials
+  - Attacker reads deleted config files with git show, extracting DB passwords
+  - Attacker connects directly to the database, bypassing the application layer
+  mitre_techniques:
+  - T1083
+  - T1552
+  - T1078
+  requires:
+  - misconfig: Git repository exposed
+- name: Environment Secrets to Full Compromise
+  description: Exposed .env file contains cloud credentials and database passwords, enabling both data exfiltration and infrastructure takeover.
+  steps:
+  - Attacker fetches /.env — a single HTTP request
+  - AWS_SECRET_ACCESS_KEY extracted → attacker lists and downloads all S3 buckets
+  - DB_PASSWORD extracted → attacker dumps entire production database
+  - APP_KEY extracted → attacker forges authenticated session tokens
+  mitre_techniques:
+  - T1552.001
+  - T1078
+  - T1530
+  requires:
+  - misconfig: Environment file publicly accessible
+- name: Unauthenticated Redis to Remote Code Execution
+  description: Internet-exposed Redis allows file writes to the web server root, turning a data-store exposure into full OS-level code execution.
+  steps:
+  - Attacker connects to Redis on port 6379 with redis-cli — no password required
+  - CONFIG SET dir /var/www/html sets Redis working directory to the web root
+  - CONFIG SET dbfilename shell.php + SET webshell '<?php system($_GET[cmd]); ?>'
+  - BGSAVE writes the PHP file to disk — attacker now has a webshell at /shell.php
+  - Attacker executes arbitrary OS commands via https://target.com/shell.php?cmd=id
+  mitre_techniques:
+  - T1021
+  - T1505.003
+  - T1059
+  requires:
+  - misconfig: Redis exposed to internet
+- name: DNS Zone Transfer to Internal Network Pivot
+  description: Unrestricted AXFR reveals internal infrastructure. Attacker identifies and targets unpatched internal hosts invisible to external scanning.
+  steps:
+  - 'Attacker performs AXFR: dig AXFR @ns1.target.com target.com'
+  - Full zone dump reveals dev.target.com, vpn.target.com, db.target.com
+  - Attacker scans dev/staging server — finds it runs an unpatched web framework
+  - Attacker compromises staging server and uses it as pivot into production network
+  mitre_techniques:
+  - T1590.002
+  - T1046
+  - T1021
+  requires:
+  - misconfig: DNS zone transfer unrestricted
+- name: XSS to Session Hijacking (No CSP + No HttpOnly)
+  description: Missing CSP and insecure cookies combine to turn any XSS vulnerability into a direct account takeover without needing to bypass any browser protections.
+  steps:
+  - Attacker finds a reflected or stored XSS injection point
+  - Without CSP, injected <script> tags load attacker's external scripts freely
+  - Without HttpOnly, document.cookie exposes the full session token to JavaScript
+  - Stolen cookie is exfiltrated via fetch() to attacker's server
+  - Attacker replays the session token to take over the account
+  mitre_techniques:
+  - T1059.007
+  - T1539
+  - T1185
+  requires:
+  - misconfig: CSP not configured
+  - misconfig: Session cookies lack security flags
+- name: EternalBlue Internet Exposure to Network Ransomware
+  description: SMB port 445 exposed to the internet + EternalBlue unpatched = unauthenticated SYSTEM access. This is exactly the WannaCry/NotPetya attack path.
+  steps:
+  - Automated scanner finds port 445 open from the internet
+  - EternalBlue (CVE-2017-0144) exploit achieves SYSTEM-level RCE in seconds
+  - Attacker installs ransomware or a persistent backdoor
+  - SMB shares are used for lateral movement to other internal hosts
+  mitre_techniques:
+  - T1190
+  - T1210
+  - T1021.002
+  - T1570
+  requires:
+  - misconfig: SMB exposed to internet
+- name: Subdomain Takeover to Phishing / CSP Bypass
+  description: Dangling CNAME on a subdomain lets attacker serve content from a trusted company subdomain, bypassing CSP and fooling users who recognize the domain.
+  steps:
+  - Attacker finds dev.target.com CNAME points to unclaimed resource
+  - Attacker claims the resource on the third-party platform
+  - Attacker serves a convincing phishing login page at dev.target.com
+  - Any CSP on target.com that allows *.target.com is bypassed by this subdomain
+  - Users trust the subdomain — phishing success rate is high
+  mitre_techniques:
+  - T1584.001
+  - T1608
+  - T1566
+  requires:
+  - misconfig: Potential subdomain takeover via dangling CNAME

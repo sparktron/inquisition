@@ -175,6 +175,30 @@ class CVERecord:
     references: list[str] = field(default_factory=list)
     days_since_disclosure: int = 0  # days between published date and scan date
     in_cisa_kev: bool = False        # True when CVE appears in CISA Known Exploited Vulnerabilities catalog
+    # Exploitability intelligence (Theme A). EPSS is the FIRST.org-published
+    # probability [0,1] that a CVE will be exploited in the next 30 days, with a
+    # percentile rank against all scored CVEs. ``exploit_public`` is True when a
+    # public exploit/PoC is known to exist, with ``exploit_sources`` naming where.
+    epss_score: float = 0.0
+    epss_percentile: float = 0.0
+    exploit_public: bool = False
+    exploit_sources: list[str] = field(default_factory=list)
+
+
+def cve_priority(cve: "CVERecord") -> tuple[int, int, float, float]:
+    """Sort key (descending) ranking a CVE by real-world exploitation risk.
+
+    KEV membership (known exploited in the wild) dominates, then public-exploit
+    availability, then EPSS probability, then raw CVSS. Use with
+    ``sorted(..., key=cve_priority, reverse=True)`` so the CVEs an attacker is
+    most likely to actually use rise to the top.
+    """
+    return (
+        1 if cve.in_cisa_kev else 0,
+        1 if cve.exploit_public else 0,
+        cve.epss_score,
+        cve.cvss_score,
+    )
 
 
 @dataclass

@@ -297,7 +297,7 @@ def run_scan(
         print_info(f"{n} misconfiguration" + ("s" if n != 1 else "") + " detected")
 
     # --- Attack chain detection ---
-    report.attack_chains = detect_attack_chains(report.misconfigurations)
+    report.attack_chains = detect_attack_chains(report.misconfigurations, report.findings)
 
     # --- Finalize ---
     report.finished_at = datetime.now(timezone.utc)

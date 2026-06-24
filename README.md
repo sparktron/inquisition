@@ -297,6 +297,7 @@ See [Active Testing](#active-testing-1) for a full explanation of how this works
 | `--notify-on` | `regression` \| `changes` \| `always` | `regression` | When to notify: only new/worsened findings at/above the threshold (`regression`); any new/fixed/regressed/improved finding (`changes`); or every scan, even a clean one, as a heartbeat (`always`) |
 | `--sla-max-age` | int | 0 (off) | Warn and notify when a finding has stayed open beyond N consecutive scans (notifies even if nothing changed) |
 | `--sla-by-severity` | spec | none | Per-severity SLA overrides, e.g. `critical=1,high=3,medium=10` (falls back to `--sla-max-age`; `0` disables a severity) |
+| `--attack-navigator` | path | none | Write a MITRE ATT&CK Navigator layer (`layer.json`) covering all targets — import at [attack-navigator](https://mitre-attack.github.io/attack-navigator/) to overlay observed techniques on the ATT&CK matrix |
 | `--metrics-output` | path | none | Also write Prometheus/OpenMetrics text exposition for all targets to this file |
 | `--metrics-history` | flag | off | In the metrics file, emit the findings trend as timestamped samples per stored scan (backfill) |
 | `--metrics-push` | URL | none | Push current metrics to a Prometheus Pushgateway base URL (PUT under `--metrics-job`) |
@@ -430,10 +431,12 @@ Every completed scan produces the following sections:
 | **Detailed Findings** | Per-finding evidence, MITRE ATT&CK technique badges, impact, quick fix, CPE, and recommended tools |
 | **Attack Scenario** | Realistic step-by-step narrative of how an attacker would exploit each finding *(expandable panel in HTML; block-quote in Markdown)* |
 | **PoC Command** | Illustrative attacker command for each finding showing exploitation in practice *(expandable code panel in HTML; fenced code block in Markdown)* |
-| **Attack Chain Analysis** | Multi-step kill chains inferred from the combination of misconfigurations present, with inline SVG flowcharts (HTML) and MITRE technique tags |
+| **Attack Chain Analysis** | Multi-step kill chains inferred from the combination of findings present (data-driven rules in `modules/data/attack_chains.yaml`, matched by a predicate DSL), with inline SVG flowcharts (HTML) and MITRE technique tags |
+| **Attack Graph — Reachable Objectives** | Emergent attacker-state graph: each finding is an edge between attacker states, and a traversal from an external position reveals every objective an attacker can reach (RCE, data access, cloud takeover, lateral movement, …) and the shortest path to each — rendered as a Mermaid diagram in HTML |
+| **MITRE ATT&CK Coverage** | Every finding mapped to ATT&CK techniques (explicit or category-level fallback), grouped by tactic in kill-chain order; exportable as a Navigator layer with `--attack-navigator` |
 | **Deep Issue Analysis** | Multi-paragraph explanation of what each issue is, why it is dangerous, and relevant CVEs *(text/HTML only; omitted with `--brief`)* |
 | **Remediation Guide** | Step-by-step fix instructions with configuration examples for common platforms and verification commands *(text/HTML only; omitted with `--brief`)* |
-| **CVE Correlation** | CVEs matched to detected CPEs via the NVD API, with CVSS scores, days since public disclosure, and CISA KEV badge for actively exploited CVEs |
+| **CVE Correlation** | CVEs matched to detected CPEs via the NVD API, **ranked by real-world exploitation risk** — CISA KEV (actively exploited) > public exploit available (local Nuclei template) > FIRST.org EPSS probability > CVSS — with EPSS percentile and exploit badges |
 | **Misconfiguration Summary** | Higher-level pattern analysis derived from raw findings, with MITRE tags, attack scenarios, and PoC commands per entry |
 | **Tool Reference** | Recommended open-source tools for deeper investigation by category |
 
