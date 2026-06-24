@@ -283,6 +283,7 @@ inquisition --targets-file hosts.txt --format sarif \
 |---|---|---|---|
 | `--active` | flag | off | Enable payload-based active scanning after the explicit active-scan authorization prompt |
 | `--active-engine` | `nuclei` \| `zap` | `nuclei` | Active scanner engine to run when `--active` is set |
+| `--validate` | flag | off | Run the **read-only** verification probes attached to findings (`curl -sI`, `dig`, `openssl s_client`, status checks) to capture live evidence and confirm modeled findings. Mutating PoCs are never executed. Requires authorization; prompts unless `--yes` |
 | `--auth-header` | string | empty | Header injected into HTTP modules and active engines, e.g. `Authorization: Bearer <token>` |
 | `--auth-cookie` | string | empty | Cookie header injected into HTTP modules and active engines, e.g. `session=<value>` |
 

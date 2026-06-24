@@ -749,6 +749,8 @@ def _finding_to_dict(f: Finding) -> dict[str, Any]:
         d["remediation"] = f.remediation
     if f.verification:
         d["verification"] = f.verification
+    if isinstance(f.metadata.get("poc_validation"), dict):
+        d["poc_validation"] = f.metadata["poc_validation"]
     if f.cpe:
         d["cpe"] = f.cpe
     if f.age_scans:
@@ -956,6 +958,42 @@ def _nl2br(text: str) -> str:
     return "<br>\n".join(lines)
 
 
+def _poc_validation_checks(f: Finding) -> list[dict[str, Any]]:
+    """Return the executed PoC-validation checks recorded on a finding, if any."""
+    bundle = f.metadata.get("poc_validation")
+    if not isinstance(bundle, dict):
+        return []
+    checks = bundle.get("checks")
+    if not isinstance(checks, list):
+        return []
+    return [c for c in checks if isinstance(c, dict) and c.get("ran")]
+
+
+def _poc_evidence_html(f: Finding) -> str:
+    """Collapsible block of captured live-validation evidence (Theme E / E2)."""
+    checks = _poc_validation_checks(f)
+    if not checks:
+        return ""
+    blocks = ""
+    for c in checks:
+        code = "timed out" if c.get("exit_code") is None else f"exit {c.get('exit_code')}"
+        captured = (str(c.get("stdout", "")) + str(c.get("stderr", ""))).strip()
+        body = _e(captured) if captured else "<em>no output</em>"
+        blocks += (
+            f'<div style="margin-top:8px"><code style="font-size:.82rem;color:#0f172a">'
+            f'$ {_e(str(c.get("command", "")))}</code> '
+            f'<span style="color:#64748b;font-size:.78rem">({_e(code)})</span>'
+            f'<pre style="margin-top:4px;padding:10px;background:#0f172a;color:#e2e8f0;'
+            f'border-radius:6px;font-size:.8rem;line-height:1.5;overflow-x:auto;'
+            f'white-space:pre-wrap">{body}</pre></div>'
+        )
+    return (
+        f'<details style="margin-top:8px" open>'
+        f'<summary style="cursor:pointer;font-weight:600;color:#16a34a;padding:4px 0">'
+        f'&#9989; Live Validation Evidence</summary>{blocks}</details>'
+    )
+
+
 def _trend_sparkline_html(report: ScanReport) -> str:
     """Inline SVG sparkline of total findings over the rolling history window."""
     totals = [int(e.get("total", 0)) for e in report.history]
@@ -1143,6 +1181,8 @@ def render_html(report: ScanReport, *, attacker_pov: bool = False) -> str:
                     f"<td>{_e('; '.join(f.preconditions))} "
                     f"<span style='color:#94a3b8;font-size:.78rem'>({effort} for attacker)</span></td></tr>\n"
                 )
+            if f.verification:
+                rows += f"<tr><td style='color:#16a34a;white-space:nowrap;padding:4px 12px 4px 0;font-weight:600'>Verified</td><td>{_e(f.verification)}</td></tr>\n"
             if f.impact:
                 rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Impact</td><td>{_e(f.impact)}</td></tr>\n"
             if f.remediation:
@@ -1208,6 +1248,7 @@ def render_html(report: ScanReport, *, attacker_pov: bool = False) -> str:
                 f'</div>'
                 f'<div style="padding:12px 16px">'
                 f'<table style="border-collapse:collapse;width:100%">{rows}</table>'
+                f'{_poc_evidence_html(f)}'
                 f'{analysis_section}'
                 f'</div>'
                 f'</div>\n'

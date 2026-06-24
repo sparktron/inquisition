@@ -118,6 +118,11 @@ class ScanConfig:
     # read-only boundary and requires explicit authorization.
     active: bool = False
     active_engine: str = "nuclei"
+    # PoC auto-validation (Theme E / E1) — OFF by default. When True, the
+    # read-only verification subset of each finding's ``poc_command`` (curl -sI,
+    # dig, openssl s_client, status probes) is executed to capture live evidence
+    # and upgrade modeled findings to confirmed. Mutating PoCs are never run.
+    validate_poc: bool = False
     # Authenticated scanning — credentials injected into every HTTP request so
     # modules and the active engine see the logged-in surface.
     auth_header: str = ""   # e.g. "Authorization: Bearer <token>"

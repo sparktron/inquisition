@@ -144,7 +144,7 @@ reduced*, not just local severity. Surface in `render_fleet_dashboard`.
 ## Theme E — Validation & Evidence (prove "how it's carried out", safely)
 *"Don't just claim it — show it."*
 
-**E1. Safe PoC auto-validation harness**
+**E1. Safe PoC auto-validation harness** — ✅ DONE (`poc_validation.py`)
 Many existing `poc_command` entries are **read-only and safe to run**
 (`curl -sI`, `dig`, `openssl s_client`, status-code probes). Add a gated runner
 that executes only the verification-class steps, captures output as evidence, and

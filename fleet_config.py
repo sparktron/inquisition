@@ -33,7 +33,7 @@ _ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _STR_FIELDS = {"auth_header", "auth_cookie", "active_engine"}
 _INT_FIELDS = {"max_threads", "sla_max_age"}
 _FLOAT_FIELDS = {"rate_limit", "timeout", "connect_timeout"}
-_BOOL_FIELDS = {"active"}
+_BOOL_FIELDS = {"active", "validate_poc"}
 
 
 class FleetConfigError(ValueError):

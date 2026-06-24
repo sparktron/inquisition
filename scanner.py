@@ -34,6 +34,7 @@ from report import render
 from safety import (
     abort,
     confirm_active_scan,
+    confirm_validation,
     enforce_dry_run,
     validate_config,
 )
@@ -292,6 +293,21 @@ def run_scan(
                 f.poc_command = kb.get("poc_command", "")
         # Infer attacker preconditions (network position, user interaction).
         reachability.annotate(f)
+
+    # --- PoC auto-validation (opt-in, runs read-only verification probes) ---
+    if config.validate_poc and not config.dry_run:
+        if confirm_validation(config, assume_yes=skip_auth):
+            import poc_validation
+            validations = poc_validation.validate_findings(report.findings)
+            confirmed = sum(1 for v in validations if v.confirmed)
+            attempted = sum(1 for v in validations if v.attempted)
+            if not quiet:
+                print_info(
+                    f"PoC validation: {attempted} probe(s) run, "
+                    f"{confirmed} finding(s) confirmed with live evidence"
+                )
+        else:
+            print_warning("PoC validation not authorized — skipping validation phase")
 
     # --- Misconfiguration checks ---
     report.misconfigurations = derive_misconfigurations(report.findings)

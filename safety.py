@@ -83,6 +83,42 @@ def confirm_active_scan(config: ScanConfig, *, assume_yes: bool) -> bool:
     return answer == "I AM AUTHORIZED"
 
 
+_VALIDATION_BANNER = """\
+================================================================
+  PoC VALIDATION MODE
+================================================================
+  Target : {target}
+
+  Validation runs the READ-ONLY verification commands attached to
+  findings (curl -sI, dig, openssl s_client, status probes) to
+  capture live evidence. No payloads, writes, or mutating requests
+  are sent — display-only PoCs are never executed.
+
+  Only run this against systems you OWN or are AUTHORIZED to test.
+================================================================
+"""
+
+
+def confirm_validation(config: ScanConfig, *, assume_yes: bool) -> bool:
+    """Show the PoC-validation notice and confirm intent to run probes.
+
+    Validation only executes the read-only, verification-class subset of PoC
+    commands, so the gate is lighter than ``confirm_active_scan``: the notice is
+    always shown, and a simple ``[y/N]`` confirms unless authorization was
+    pre-asserted via ``assume_yes``.
+    """
+    print(_VALIDATION_BANNER.format(target=config.target))
+    if assume_yes:
+        return True
+    try:
+        answer = input(
+            "Run read-only PoC verification probes against this target? [y/N] "
+        ).strip().lower()
+    except EOFError:
+        return False
+    return answer in ("y", "yes")
+
+
 def enforce_dry_run(config: ScanConfig) -> bool:
     """Return True when network calls should be suppressed."""
     return config.dry_run

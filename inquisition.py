@@ -423,6 +423,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Active scanner engine to run when --active is set (default: nuclei)",
     )
     active_group.add_argument(
+        "--validate",
+        action="store_true",
+        dest="validate_poc",
+        help=(
+            "Run the READ-ONLY verification probes attached to findings (curl -sI, dig, "
+            "openssl s_client, status checks) to capture live evidence and confirm modeled "
+            "findings. Mutating PoCs are never executed. Requires authorization; prompts unless --yes."
+        ),
+    )
+    active_group.add_argument(
         "--auth-header",
         metavar="HEADER",
         default="",
@@ -645,6 +655,7 @@ def main(argv: list[str] | None = None) -> None:
         ports=ports,
         active=args.active,
         active_engine=args.active_engine,
+        validate_poc=args.validate_poc,
         auth_header=args.auth_header,
         auth_cookie=args.auth_cookie,
         sla_max_age=args.sla_max_age,
