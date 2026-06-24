@@ -35,7 +35,6 @@ from safety import (
     abort,
     confirm_active_scan,
     enforce_dry_run,
-    prompt_authorization,
     validate_config,
 )
 from ui import (
@@ -186,11 +185,6 @@ def run_scan(
         for w in warnings:
             print_warning(w)
         abort("Invalid configuration — cannot proceed.")
-
-    # --- Authorization ---
-    if not skip_auth:
-        if not prompt_authorization(config):
-            abort("Authorization denied — aborting scan.")
 
     # --- Header ---
     if not quiet:

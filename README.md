@@ -74,21 +74,21 @@ git clone https://github.com/sparktron/inquisition.git
 cd inquisition
 pip install -r requirements.txt
 
-# Run a standard scan (live scans prompt unless --yes is supplied)
-python inquisition.py example.com --yes
+# Run a standard scan
+python inquisition.py example.com
 
 # Full deep scan
-python inquisition.py example.com --depth deep --yes
+python inquisition.py example.com --depth deep
 
 # Save HTML report
-python inquisition.py example.com -o report.html --yes
+python inquisition.py example.com -o report.html
 ```
 
 Or pull the pre-built container image:
 
 ```bash
 docker pull ghcr.io/sparktron/inquisition:latest
-docker run --rm ghcr.io/sparktron/inquisition example.com --yes --depth quick
+docker run --rm ghcr.io/sparktron/inquisition example.com --depth quick
 ```
 
 ---
@@ -108,13 +108,13 @@ git clone https://github.com/sparktron/inquisition.git
 cd inquisition
 pip install -r requirements.txt
 
-python inquisition.py example.com --yes
+python inquisition.py example.com
 ```
 
 **Note:** The source checkout can be run directly with `python inquisition.py`. When installed with `pip install .`, the `inquisition` console script is also available.
 
 ```bash
-inquisition example.com --yes
+inquisition example.com
 ```
 
 ---
@@ -250,7 +250,7 @@ To collect a whole fleet into **one artifact**, use `--combined-output FILE` (it
 
 ```bash
 inquisition --targets-file hosts.txt --format sarif \
-  --combined-output fleet.sarif --fail-on high --yes
+  --combined-output fleet.sarif --fail-on high
 ```
 
 #### Output & Reporting
@@ -275,7 +275,7 @@ inquisition --targets-file hosts.txt --format sarif \
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `--dry-run` | flag | off | Preview scan without sending any traffic |
-| `--yes`, `--i-am-authorized` | flag | off | Confirm authorization and skip the interactive live-scan prompt |
+| `--yes`, `--i-am-authorized` | flag | off | Skip the active-scan authorization prompt when used with `--active` |
 | `-v`, `--verbose` | flag | off | Enable debug logging to stderr |
 
 #### Active Testing
@@ -349,11 +349,11 @@ The repo ships a `Dockerfile` that builds a minimal image (Python 3.12 slim + Op
 docker build -t inquisition .
 
 # One-off scan
-docker run --rm inquisition example.com --yes --depth quick
+docker run --rm inquisition example.com --depth quick
 
 # Save an HTML report to the host
 docker run --rm -v "$PWD/reports:/data" inquisition \
-  example.com --yes -o /data/report.html
+  example.com -o /data/report.html
 ```
 
 The pre-built image is published to GHCR on every version tag:
@@ -863,14 +863,17 @@ python inquisition.py example.com --active -o report.html --yes
 
 Active findings appear in the report prefixed with `[active]` and are categorised as `vulnerability`. They pass through the same deduplication, KB enrichment, and attacker-context pipeline as passive findings.
 
-### Authorization gates
+### Authorization gate
 
-Active testing requires clearing two separate prompts:
+Passive scanning starts immediately with no prompt — it is read-only reconnaissance and requires no interactive confirmation.
 
-1. **Standard scan prompt** — confirms you are authorised to scan the target at all (bypassed with `--yes`)
-2. **Active scan prompt** — a second, explicit confirmation that you have permission to send payload-based probes (also bypassed with `--yes` when used alongside `--active`)
+Active testing shows one authorization prompt before sending payloads. Pass `--yes` to suppress it in non-interactive environments (CI pipelines, cron jobs, scripts):
 
-Both prompts exist so that `--yes` in a CI pipeline that was written for passive scanning cannot accidentally enable active testing without an explicit `--active` flag in the command.
+```bash
+python inquisition.py example.com --active --yes
+```
+
+The `--yes` flag has no effect on passive-only scans.
 
 ---
 
@@ -880,17 +883,6 @@ Both prompts exist so that `--yes` in a CI pipeline that was written for passive
 
 ```
 $ python inquisition.py example.com
-
-[*] Inquisition Security Reconnaissance Scanner
-
- ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
- ┃  AUTHORIZATION REQUIRED                                              ┃
- ┃  Do you have permission to scan: example.com?                        ┃
- ┃  This tool is designed for authorised security testing only.        ┃
- ┃  Unauthorised scanning may violate laws.                             ┃
- ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-Confirm [y/n]: y
 
 [*] Starting scan of example.com (depth=standard)
 
@@ -979,8 +971,7 @@ inquisition --fleet-config fleet.yaml \
   --watch 3600 --watch-jitter 30 \
   --metrics-serve 9090 \
   --audit-log audit.jsonl --audit-max-age-days 30 --audit-backups 5 \
-  --notify https://hooks.slack.com/... --notify-on regression \
-  --yes
+  --notify https://hooks.slack.com/... --notify-on regression
 ```
 
 This runs continuously, serves Prometheus metrics on port 9090, rotates the audit log when it contains records older than 30 days, and posts a Slack message whenever a new or worsened finding appears.
@@ -1004,7 +995,7 @@ By default, Inquisition is intentionally **read-only active reconnaissance:**
 - ✅ No injection, fuzzing, or enumeration of application logic
 - ✅ No modifications to target systems
 - ✅ No extraction of private data
-- ✅ Live scans require interactive authorization or `--yes` / `--i-am-authorized`
+- ✅ Passive scans start immediately — no prompt required
 
 Optional `--active` mode is different: it shells out to Nuclei or OWASP ZAP and sends payload-based vulnerability probes after a second, explicit active-scan authorization prompt. DOS, brute-force, and fuzzing template categories are always excluded. Use it only where you have written permission for active testing. See [Active Testing](#active-testing-1) for the full explanation.
 

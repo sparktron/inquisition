@@ -392,7 +392,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--i-am-authorized",
         action="store_true",
         dest="authorized",
-        help="Confirm that you are authorized to scan the target and skip the interactive prompt",
+        help="Skip the active-scan authorization prompt when used with --active",
     )
 
     active_group = parser.add_argument_group("active testing (sends payloads)")
