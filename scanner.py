@@ -280,6 +280,7 @@ def run_scan(
 
     # --- Enrich findings with KB attack context ---
     import analysis_kb
+    import reachability
     for f in report.findings:
         kb = analysis_kb.lookup(f.title)
         if kb:
@@ -289,6 +290,8 @@ def run_scan(
                 f.mitre_techniques = list(kb.get("mitre_techniques", []))
             if not f.poc_command:
                 f.poc_command = kb.get("poc_command", "")
+        # Infer attacker preconditions (network position, user interaction).
+        reachability.annotate(f)
 
     # --- Misconfiguration checks ---
     report.misconfigurations = derive_misconfigurations(report.findings)

@@ -37,6 +37,13 @@ class PrometheusTests(unittest.TestCase):
         self.assertIn('inquisition_findings{target="example.com",severity="critical"} 0', out)
         self.assertIn('inquisition_findings_total{target="example.com"} 2', out)
 
+    def test_exposure_index_metric(self) -> None:
+        svc = Finding(title="Redis exposed to internet", category=FindingCategory.PORT,
+                      severity=Severity.HIGH, evidence="e")
+        out = render_prometheus([_report("example.com", svc)])
+        self.assertIn("# TYPE inquisition_exposure_index gauge", out)
+        self.assertRegex(out, r'inquisition_exposure_index\{target="example.com"\} \d+')
+
     def test_max_age_and_duration(self) -> None:
         out = render_prometheus([_report("example.com", _f(Severity.HIGH, age=7), duration=1.5)])
         self.assertIn('inquisition_finding_max_age_scans{target="example.com"} 7', out)

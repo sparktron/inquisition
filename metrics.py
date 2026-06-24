@@ -43,6 +43,7 @@ def render_prometheus(reports: list[ScanReport], *, include_history: bool = Fals
         ("findings", "gauge", "Open findings by target and severity"),
         ("findings_total", "gauge", "Total open findings by target"),
         ("risk_score", "gauge", "Severity-weighted risk score by target"),
+        ("exposure_index", "gauge", "Attack-surface exposure index (0-100) by target"),
         ("cves_total", "gauge", "Correlated CVE records by target"),
         ("misconfigurations_total", "gauge", "Derived misconfigurations by target"),
         ("finding_max_age_scans", "gauge", "Oldest finding's age in consecutive scans by target"),
@@ -133,6 +134,9 @@ def _series_for(name: str, report: ScanReport) -> list[str]:
         return [_metric("findings_total", {"target": target}, sum(counts.values()))]
     if name == "risk_score":
         return [_metric("risk_score", {"target": target}, _risk_score(counts)[0])]
+    if name == "exposure_index":
+        import reachability
+        return [_metric("exposure_index", {"target": target}, reachability.exposure_index(report))]
     if name == "cves_total":
         return [_metric("cves_total", {"target": target}, len(report.cve_records))]
     if name == "misconfigurations_total":

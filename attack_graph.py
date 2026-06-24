@@ -93,12 +93,27 @@ _CONSEQUENCE_EDGES: list[tuple[str, str, str]] = [
 ]
 
 
+# How feasible an edge is for an external attacker (1.0 = trivial). Edges that
+# require an on-path position or a victim's interaction are harder, so paths that
+# rely on them rank below remote/unauthenticated routes to the same objective.
+def _edge_feasibility(frm: str, to: str, label: str) -> float:
+    low = label.lower()
+    if to == "on_path":
+        return 0.4
+    if to == "phishing":
+        return 0.5
+    if "xss" in low or "xst" in low or "clickjack" in low:
+        return 0.6
+    return 1.0
+
+
 @dataclass(frozen=True)
 class Edge:
     frm: str
     to: str
     label: str
     via: str = ""  # the misconfiguration name that created the edge (if any)
+    feasibility: float = 1.0
 
 
 @dataclass
@@ -112,6 +127,19 @@ class GoalPath:
     @property
     def label(self) -> str:
         return STATE_LABEL.get(self.state, self.state)
+
+    @property
+    def feasibility(self) -> float:
+        """Cumulative feasibility of the path (product of its edges)."""
+        score = 1.0
+        for edge in self.path:
+            score *= edge.feasibility
+        return round(score, 3)
+
+    @property
+    def priority(self) -> int:
+        """Objective value discounted by how feasible the path is to walk."""
+        return round(self.value * self.feasibility)
 
 
 @dataclass
@@ -129,12 +157,12 @@ def _all_candidate_edges(active_names: set[str]) -> list[Edge]:
     edges: list[Edge] = []
     for name, (frm, to, label) in _MISCONFIG_EDGES.items():
         if name in active_names:
-            edges.append(Edge(frm, to, label, via=name))
+            edges.append(Edge(frm, to, label, via=name, feasibility=_edge_feasibility(frm, to, label)))
     for names, (frm, to, label) in _COMBO_EDGES:
         if all(n in active_names for n in names):
-            edges.append(Edge(frm, to, label, via=" + ".join(names)))
+            edges.append(Edge(frm, to, label, via=" + ".join(names), feasibility=_edge_feasibility(frm, to, label)))
     for frm, to, label in _CONSEQUENCE_EDGES:
-        edges.append(Edge(frm, to, label))
+        edges.append(Edge(frm, to, label, feasibility=_edge_feasibility(frm, to, label)))
     return edges
 
 
@@ -181,7 +209,9 @@ def build_attack_graph(report: "ScanReport") -> AttackGraph:
         for state in reachable
         if state in GOAL_VALUE
     ]
-    goals.sort(key=lambda g: (-g.value, len(g.path)))
+    # Rank by feasibility-discounted value: a remote/unauth route to a high-value
+    # objective beats one that needs an on-path position or victim interaction.
+    goals.sort(key=lambda g: (-g.priority, -g.value, len(g.path)))
 
     return AttackGraph(edges=active_edges, reachable=reachable, goals=goals)
 
@@ -216,13 +246,72 @@ def to_mermaid(graph: AttackGraph) -> str:
     return "\n".join(lines)
 
 
+def attack_story(report: "ScanReport", *, narrator: "object | None" = None) -> str:
+    """Narrate the single most dangerous reachable attack path in plain English.
+
+    Deterministic by default: stitches the top-priority objective's shortest path
+    (from :func:`build_attack_graph`) together with the matching misconfiguration's
+    attack scenario for color. Pass ``narrator`` (a callable taking a prompt
+    string and returning prose) to delegate phrasing to an LLM; the tool stays
+    fully offline when it is omitted.
+    """
+    import reachability
+
+    graph = build_attack_graph(report)
+    if graph.empty:
+        return ""
+    top = graph.goals[0]
+
+    scenarios = {mc.name: mc.attack_scenario for mc in report.misconfigurations if mc.attack_scenario}
+
+    if callable(narrator):
+        prompt = _story_prompt(report.target, top, scenarios)
+        return str(narrator(prompt))
+
+    effort = reachability.feasibility_label(top.feasibility)
+    parts: list[str] = [
+        f"Against {report.target}, the most dangerous reachable objective is "
+        f"\"{top.label}\" (attacker value {top.value}/100, {effort} to carry out)."
+    ]
+    if top.path:
+        steps: list[str] = []
+        for i, edge in enumerate(top.path):
+            lead = "Starting from an external position, the attacker uses" if i == 0 else "Then they use"
+            steps.append(f"{lead} {edge.label} to reach {STATE_LABEL.get(edge.to, edge.to).lower()}.")
+        parts.append(" ".join(steps))
+        # Add the concrete scenario behind the first enabling weakness, if known.
+        first_via = top.path[0].via
+        scenario = scenarios.get(first_via.split(" + ")[0]) if first_via else ""
+        if scenario:
+            parts.append(f"Concretely: {scenario}")
+    if len(graph.goals) > 1:
+        others = ", ".join(g.label.lower() for g in graph.goals[1:4])
+        parts.append(f"Other reachable objectives include {others}.")
+    return " ".join(parts)
+
+
+def _story_prompt(target: str, top: GoalPath, scenarios: dict[str, str]) -> str:
+    """Build a structured prompt describing the top path for an LLM narrator."""
+    path = " -> ".join([STATE_LABEL[START]] + [STATE_LABEL.get(e.to, e.to) for e in top.path])
+    edges = "; ".join(f"{e.label} ({e.via})" if e.via else e.label for e in top.path)
+    return (
+        f"Write a short executive paragraph describing how an attacker compromises {target}.\n"
+        f"Objective: {top.label} (value {top.value}).\n"
+        f"State path: {path}\n"
+        f"Enabling weaknesses: {edges}\n"
+        f"Scenario notes: {' | '.join(scenarios.values())}"
+    )
+
+
 def summary_lines(graph: AttackGraph) -> list[str]:
     """Plain-text summary of reachable objectives and their shortest paths."""
     if graph.empty:
         return ["  No attacker objectives are reachable from the current findings."]
+    import reachability
     out: list[str] = []
     for goal in graph.goals:
-        out.append(f"  [{goal.value:>3}] {goal.label}")
+        effort = reachability.feasibility_label(goal.feasibility)
+        out.append(f"  [priority {goal.priority:>3}] {goal.label}  (value {goal.value}, {effort} to reach)")
         if goal.path:
             chain = "external"
             for edge in goal.path:

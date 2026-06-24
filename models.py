@@ -160,6 +160,14 @@ class Finding:
     attack_scenario: str = ""          # step-by-step attacker exploitation narrative
     mitre_techniques: list[str] = field(default_factory=list)  # e.g. ["T1557", "T1040"]
     poc_command: str = ""              # illustrative command/payload an attacker would use
+    # Reachability / preconditions — what an attacker needs to actually use this.
+    # ``network_position`` is one of reachability.NetworkPosition values
+    # ("remote", "adjacent", "on_path", "local"). These weight the attack graph
+    # so a remote/unauth issue outranks one that needs a privileged position.
+    network_position: str = "remote"
+    auth_required: bool = False        # attacker needs valid credentials first
+    user_interaction: bool = False     # exploitation needs a victim to act (click, visit)
+    preconditions: list[str] = field(default_factory=list)  # free-form notes
 
 
 # ---------------------------------------------------------------------------

@@ -194,6 +194,22 @@ class AgeAndTrendRenderTests(unittest.TestCase):
         report.history = []
         self.assertNotIn("<polyline", render_html(report))
 
+    def test_html_has_interactive_filter_and_data_attrs(self) -> None:
+        html = render_html(self._report())
+        self.assertIn('id="flt-search"', html)            # filter bar present
+        self.assertIn('id="flt-severity"', html)
+        self.assertIn('class="finding-card"', html)        # cards carry filter data
+        self.assertIn('data-severity="high"', html)
+        self.assertIn('data-tactics=', html)
+        self.assertIn('addEventListener', html)            # filter JS wired
+
+    def test_html_shows_exposure_and_story(self) -> None:
+        html = render_html(self._report())
+        self.assertIn("Exposure", html)
+        # a TLS HIGH finding yields no reachable graph objective; story may be
+        # empty, but the exposure metric is always rendered.
+        self.assertIn("/100", html)
+
     def test_new_finding_reads_as_new(self) -> None:
         report = self._report()
         report.findings[0].age_scans = 1

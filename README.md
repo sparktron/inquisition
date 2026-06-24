@@ -432,7 +432,8 @@ Every completed scan produces the following sections:
 | **Attack Scenario** | Realistic step-by-step narrative of how an attacker would exploit each finding *(expandable panel in HTML; block-quote in Markdown)* |
 | **PoC Command** | Illustrative attacker command for each finding showing exploitation in practice *(expandable code panel in HTML; fenced code block in Markdown)* |
 | **Attack Chain Analysis** | Multi-step kill chains inferred from the combination of findings present (data-driven rules in `modules/data/attack_chains.yaml`, matched by a predicate DSL), with inline SVG flowcharts (HTML) and MITRE technique tags |
-| **Attack Graph — Reachable Objectives** | Emergent attacker-state graph: each finding is an edge between attacker states, and a traversal from an external position reveals every objective an attacker can reach (RCE, data access, cloud takeover, lateral movement, …) and the shortest path to each — rendered as a Mermaid diagram in HTML |
+| **Executive Attack Story** | A plain-English narrative of the single most dangerous reachable attack path (top objective, the steps to reach it, and the concrete scenario behind the first weakness) — a red callout in HTML, a section in text/markdown |
+| **Attack Graph — Reachable Objectives** | Emergent attacker-state graph: each finding is an edge between attacker states, and a traversal from an external position reveals every objective an attacker can reach (RCE, data access, cloud takeover, lateral movement, …), ranked by **feasibility-discounted value** (a remote/unauth route outranks one needing an on-path position) with the shortest path to each — rendered as a Mermaid diagram in HTML |
 | **MITRE ATT&CK Coverage** | Every finding mapped to ATT&CK techniques (explicit or category-level fallback), grouped by tactic in kill-chain order; exportable as a Navigator layer with `--attack-navigator` |
 | **Deep Issue Analysis** | Multi-paragraph explanation of what each issue is, why it is dangerous, and relevant CVEs *(text/HTML only; omitted with `--brief`)* |
 | **Remediation Guide** | Step-by-step fix instructions with configuration examples for common platforms and verification commands *(text/HTML only; omitted with `--brief`)* |
@@ -461,9 +462,15 @@ The risk score is a weighted sum of finding severities:
 | **D** | 50–99 | Significant risk — high-severity issues present |
 | **F** | 100+ | Critical — immediate action required; high-risk exposure |
 
+Alongside the severity-weighted risk score, every report shows an **exposure index** (0–100): a measure of *how much attack surface is open* — exposed unauthenticated services, admin panels, secret files, weak transport, missing controls — independent of severity. It is also exported as `inquisition_exposure_index` in the Prometheus metrics.
+
+### Reachability / preconditions
+
+Findings are annotated with the attacker preconditions they imply — network position (`remote` / `adjacent` / `on_path` / `local`), whether valid credentials or victim interaction are required — which combine into a feasibility score. The attack graph uses this to **rank objectives by feasibility-discounted value**, so a remote, unauthenticated route to RCE outranks one that needs an on-path MITM position. Preconditions are shown per finding in the HTML report.
+
 ### HTML Report
 
-The HTML report is a self-contained single file (no external dependencies). Each finding is rendered as a severity-coloured card with expandable panels:
+The HTML report is a self-contained single file (the only optional external dependency is the Mermaid script used to draw the attack-graph diagram). It includes a **client-side filter bar** for the findings list (free-text search plus severity / category / ATT&CK-tactic / confidence filters). Each finding is rendered as a severity-coloured card with expandable panels:
 
 - **Issue Analysis** — multi-paragraph deep-dive into what the issue is and why it matters
 - **How an Attacker Exploits This** — step-by-step realistic attack scenario (purple panel)

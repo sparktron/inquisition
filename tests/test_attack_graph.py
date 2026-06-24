@@ -7,10 +7,14 @@ import attack_graph
 from models import MisconfigurationCheck, ScanReport, Severity
 
 
-def _report(*names: str) -> ScanReport:
+def _report(*names: str, scenarios: dict[str, str] | None = None) -> ScanReport:
+    scenarios = scenarios or {}
     r = ScanReport(target="example.com", started_at=datetime.now(timezone.utc))
     r.misconfigurations = [
-        MisconfigurationCheck(name=n, description="d", severity=Severity.HIGH, evidence="e", remediation="r")
+        MisconfigurationCheck(
+            name=n, description="d", severity=Severity.HIGH, evidence="e",
+            remediation="r", attack_scenario=scenarios.get(n, ""),
+        )
         for n in names
     ]
     return r
@@ -70,6 +74,48 @@ class AttackGraphTests(unittest.TestCase):
         text = "\n".join(attack_graph.summary_lines(g))
         self.assertIn("Code execution", text)
         self.assertIn("path:", text)
+
+    def test_feasibility_discounts_on_path_routes(self) -> None:
+        # Credentials reached only via an on-path MITM chain (HSTS) should have
+        # lower priority than its raw value because the path is hard to walk.
+        g = attack_graph.build_attack_graph(_report("HSTS not enabled"))
+        cred = next(goal for goal in g.goals if goal.state == "credentials")
+        self.assertLess(cred.feasibility, 1.0)
+        self.assertLess(cred.priority, cred.value)
+
+    def test_remote_rce_outranks_on_path_objective(self) -> None:
+        g = attack_graph.build_attack_graph(
+            _report("Redis exposed to internet", "HSTS not enabled")
+        )
+        # Remote unauth RCE (feasibility 1.0) is the top objective.
+        self.assertEqual(g.goals[0].state, "code_exec")
+        self.assertEqual(g.goals[0].feasibility, 1.0)
+
+
+class AttackStoryTests(unittest.TestCase):
+    def test_empty_when_no_objectives(self) -> None:
+        self.assertEqual(attack_graph.attack_story(_report()), "")
+
+    def test_story_names_top_objective_and_path(self) -> None:
+        r = _report("Redis exposed to internet",
+                    scenarios={"Redis exposed to internet": "Attacker writes a webshell via CONFIG SET."})
+        story = attack_graph.attack_story(r)
+        self.assertIn("Code execution", story)
+        self.assertIn("example.com", story)
+        self.assertIn("Concretely:", story)
+        self.assertIn("webshell", story)
+
+    def test_narrator_hook_is_used_when_provided(self) -> None:
+        r = _report("Redis exposed to internet")
+        captured = {}
+
+        def fake(prompt: str) -> str:
+            captured["prompt"] = prompt
+            return "LLM-WRITTEN STORY"
+
+        out = attack_graph.attack_story(r, narrator=fake)
+        self.assertEqual(out, "LLM-WRITTEN STORY")
+        self.assertIn("Objective:", captured["prompt"])
 
 
 if __name__ == "__main__":

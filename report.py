@@ -23,6 +23,7 @@ from diffing import compute_trend
 import analysis_kb
 import mitre
 import attack_graph
+import reachability
 
 _SEV_ORDER = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO]
 
@@ -269,7 +270,8 @@ def render_text(report: ScanReport, *, brief: bool = False, attacker_pov: bool =
     lines.append(f"  Misconfigurations: {len(report.misconfigurations)}")
     if report.errors:
         lines.append(f"  Scan errors      : {len(report.errors)}")
-    lines.append(f"\n  Risk score : {score}  |  Security grade : {grade}")
+    exposure = reachability.exposure_index(report)
+    lines.append(f"\n  Risk score : {score}  |  Security grade : {grade}  |  Exposure index : {exposure}/100")
     lines.append("")
 
     # --- What Could Happen (consequence ladder) ---
@@ -280,6 +282,13 @@ def render_text(report: ScanReport, *, brief: bool = False, attacker_pov: bool =
         if g == grade:
             lines.append(f"           {detail}")
     lines.append("")
+
+    # --- Executive Attack Story ---
+    story = attack_graph.attack_story(report)
+    if story:
+        lines.append(_section("EXECUTIVE ATTACK STORY"))
+        lines.extend(_wrap_paragraphs(story, indent="  "))
+        lines.append("")
 
     # --- Remediation Priority Matrix ---
     lines.append(_section("REMEDIATION PRIORITY MATRIX"))
@@ -486,7 +495,10 @@ def render_markdown(report: ScanReport, *, brief: bool = False, attacker_pov: bo
     counts = report.summary_counts()
     total = sum(counts.values())
     score, grade = _risk_score(counts)
-    out.append(f"**Total findings: {total}** — risk score **{score}**, security grade **{grade}**")
+    out.append(
+        f"**Total findings: {total}** — risk score **{score}**, security grade **{grade}**, "
+        f"exposure index **{reachability.exposure_index(report)}/100**"
+    )
     out.append("")
     out.append("| Severity | Count |")
     out.append("| --- | --- |")
@@ -759,6 +771,7 @@ def _json_report_dict(report: ScanReport) -> dict[str, Any]:
         "started_at": report.started_at.isoformat(),
         "finished_at": report.finished_at.isoformat() if report.finished_at else None,
         "summary": report.summary_counts(),
+        "exposure_index": reachability.exposure_index(report),
         "findings": [_finding_to_dict(f) for f in report.findings],
         "cve_records": [
             {
@@ -1021,6 +1034,16 @@ def render_html(report: ScanReport, *, attacker_pov: bool = False) -> str:
     pov = attacker_pov or bool(report.config and report.config.attacker_pov)
     counts = report.summary_counts()
     score, grade = _risk_score(counts)
+    exposure_idx = reachability.exposure_index(report)
+    story = attack_graph.attack_story(report)
+    story_callout = (
+        f'<div style="background:#fef2f2;border-left:4px solid #dc2626;border-radius:6px;'
+        f'padding:14px 16px;margin-top:16px">'
+        f'<div style="font-size:.75rem;font-weight:700;color:#b91c1c;text-transform:uppercase;'
+        f'letter-spacing:.06em;margin-bottom:6px">&#128520; Executive Attack Story</div>'
+        f'<div style="font-size:.92rem;color:#7f1d1d;line-height:1.6">{_e(story)}</div></div>'
+        if story else ""
+    )
     grade_color = _GRADE_CSS.get(grade, "#dc2626")
     duration = ""
     if report.finished_at:
@@ -1113,6 +1136,13 @@ def render_html(report: ScanReport, *, attacker_pov: bool = False) -> str:
                     for t in mitre_ids
                 )
                 rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>MITRE</td><td>{mitre_links}</td></tr>\n"
+            if f.preconditions:
+                effort = reachability.feasibility_label(reachability.feasibility(f))
+                rows += (
+                    f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Preconditions</td>"
+                    f"<td>{_e('; '.join(f.preconditions))} "
+                    f"<span style='color:#94a3b8;font-size:.78rem'>({effort} for attacker)</span></td></tr>\n"
+                )
             if f.impact:
                 rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Impact</td><td>{_e(f.impact)}</td></tr>\n"
             if f.remediation:
@@ -1164,8 +1194,12 @@ def render_html(report: ScanReport, *, attacker_pov: bool = False) -> str:
                     f'{poc_html}'
                 )
 
+            tactics = sorted({mitre.technique_tactic(t) for t in mitre.techniques_for_finding(f)})
             finding_cards += (
-                f'<div style="margin-bottom:16px;border:1px solid {border};border-radius:8px;'
+                f'<div class="finding-card" data-severity="{f.severity.value}" '
+                f'data-category="{f.category.value}" data-confidence="{f.confidence.value}" '
+                f'data-tactics="{_e("|".join(tactics))}" '
+                f'style="margin-bottom:16px;border:1px solid {border};border-radius:8px;'
                 f'background:{bg};overflow:hidden">'
                 f'<div style="padding:10px 16px;display:flex;align-items:center;gap:10px;'
                 f'border-bottom:1px solid {border}">'
@@ -1178,6 +1212,54 @@ def render_html(report: ScanReport, *, attacker_pov: bool = False) -> str:
                 f'</div>'
                 f'</div>\n'
             )
+
+    # ---- interactive findings filter bar (C4) ----
+    findings_filter = ""
+    if finding_cards:
+        cats = sorted({f.category.value for f in report.findings})
+        tactics_all = sorted({
+            mitre.technique_tactic(t)
+            for f in report.findings for t in mitre.techniques_for_finding(f)
+        })
+        confs = sorted({f.confidence.value for f in report.findings})
+
+        def _opts(values: list[str]) -> str:
+            return "".join(f'<option value="{_e(v)}">{_e(v)}</option>' for v in values)
+
+        _sel = ("padding:5px 8px;border:1px solid #cbd5e1;border-radius:6px;"
+                "font-size:.85rem;background:#fff;color:#1e293b")
+        findings_filter = (
+            f'<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:16px">'
+            f'<input id="flt-search" type="search" placeholder="Filter findings…" '
+            f'style="{_sel};flex:1 1 200px">'
+            f'<select id="flt-severity" style="{_sel}"><option value="">All severities</option>'
+            f'{_opts([s.value for s in _SEV_ORDER])}</select>'
+            f'<select id="flt-category" style="{_sel}"><option value="">All categories</option>{_opts(cats)}</select>'
+            f'<select id="flt-tactic" style="{_sel}"><option value="">All tactics</option>{_opts(tactics_all)}</select>'
+            f'<select id="flt-confidence" style="{_sel}"><option value="">All confidence</option>{_opts(confs)}</select>'
+            f'<span id="flt-count" style="font-size:.82rem;color:#64748b;white-space:nowrap"></span>'
+            f'</div>'
+        )
+
+    findings_filter_js = (
+        '<script>(function(){'
+        'var s=document.getElementById("flt-search");'
+        'if(!s)return;'
+        'var sev=document.getElementById("flt-severity"),cat=document.getElementById("flt-category"),'
+        'tac=document.getElementById("flt-tactic"),conf=document.getElementById("flt-confidence"),'
+        'count=document.getElementById("flt-count");'
+        'var cards=Array.prototype.slice.call(document.querySelectorAll(".finding-card"));'
+        'function apply(){var q=s.value.toLowerCase(),shown=0;cards.forEach(function(c){'
+        'var ok=(!sev.value||c.dataset.severity===sev.value)'
+        '&&(!cat.value||c.dataset.category===cat.value)'
+        '&&(!conf.value||c.dataset.confidence===conf.value)'
+        '&&(!tac.value||(c.dataset.tactics||"").split("|").indexOf(tac.value)>-1)'
+        '&&(!q||c.textContent.toLowerCase().indexOf(q)>-1);'
+        'c.style.display=ok?"":"none";if(ok)shown++;});'
+        'count.textContent=shown+" / "+cards.length+" shown";}'
+        '[s,sev,cat,tac,conf].forEach(function(el){el.addEventListener("input",apply);'
+        'el.addEventListener("change",apply);});apply();})();</script>'
+    )
 
     # ---- CVE rows ----
     cve_rows = ""
@@ -1437,6 +1519,10 @@ def render_html(report: ScanReport, *, attacker_pov: bool = False) -> str:
         <div style="font-size:.75rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Risk Score</div>
         <div style="font-size:2rem;font-weight:800;color:{grade_color}">{score}</div>
       </div>
+      <div>
+        <div style="font-size:.75rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em" title="How much attack surface is open, independent of severity">Exposure</div>
+        <div style="font-size:2rem;font-weight:800;color:#e2e8f0">{exposure_idx}<span style="font-size:.9rem;color:#64748b">/100</span></div>
+      </div>
     </div>
   </div>
 </header>
@@ -1453,6 +1539,7 @@ def render_html(report: ScanReport, *, attacker_pov: bool = False) -> str:
     Total findings: <strong>{sum(counts.values())}</strong>
   </div>
   {_trend_sparkline_html(report)}
+  {story_callout}
 </section>
 
 <!-- What Could Happen -->
@@ -1503,7 +1590,8 @@ def render_html(report: ScanReport, *, attacker_pov: bool = False) -> str:
     Expand <em>&#128192; Attacker's Command</em> for a proof-of-concept command.
     Click MITRE technique badges to open the MITRE ATT&amp;CK knowledge base.
   </p>
-  {finding_cards if finding_cards else '<p style="color:#64748b">No findings.</p>'}
+  {findings_filter}
+  <div id="findings-container">{finding_cards if finding_cards else '<p style="color:#64748b">No findings.</p>'}</div>
 </section>
 
 {attack_graph_section}
@@ -1562,6 +1650,7 @@ def render_html(report: ScanReport, *, attacker_pov: bool = False) -> str:
   Generated by Inquisition &nbsp;·&nbsp; {_e(report.target)} &nbsp;·&nbsp; {report.started_at:%Y-%m-%d %H:%M UTC}
 </footer>
 {mermaid_script}
+{findings_filter_js}
 </body>
 </html>"""
 
