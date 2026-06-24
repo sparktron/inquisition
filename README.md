@@ -59,9 +59,10 @@ Inquisition probes your target across DNS, network, TLS, HTTP, and application l
 5. [Report Structure](#report-structure)
 6. [Modules Reference](#modules-reference)
 7. [Misconfiguration Rules](#misconfiguration-rules)
-8. [Examples](#examples)
-9. [Legal & Safety](#legal--safety)
-10. [License](#license)
+8. [Active Testing](#active-testing-1)
+9. [Examples](#examples)
+10. [Legal & Safety](#legal--safety)
+11. [License](#license)
 
 ---
 
@@ -284,6 +285,8 @@ inquisition --targets-file hosts.txt --format sarif \
 | `--active-engine` | `nuclei` \| `zap` | `nuclei` | Active scanner engine to run when `--active` is set |
 | `--auth-header` | string | empty | Header injected into HTTP modules and active engines, e.g. `Authorization: Bearer <token>` |
 | `--auth-cookie` | string | empty | Cookie header injected into HTTP modules and active engines, e.g. `session=<value>` |
+
+See [Active Testing](#active-testing-1) for a full explanation of how this works and what it does.
 
 #### Continuous Assurance & Notifications
 | Option | Type | Default | Description |
@@ -749,6 +752,128 @@ The misconfiguration engine derives higher-level findings from raw module output
 
 ---
 
+## Active Testing
+
+> **This feature sends payloads to the target.** Only use it against targets you own or have explicit written authorisation to actively test.
+
+By default, Inquisition is entirely **read-only**. The standard scan (without `--active`) sends only benign reconnaissance probes: DNS queries, TCP connects, HTTP `GET`/`OPTIONS` requests, TLS handshakes, CORS preflights, and similar non-mutating checks. No payloads, no injections, no brute-force.
+
+`--active` enables a second phase that crosses this boundary. After the passive scan completes, Inquisition spawns an external vulnerability scanner — either **Nuclei** (default) or **OWASP ZAP** — which sends actual attack templates against the target to confirm real vulnerabilities rather than just infer them from configuration.
+
+### What active testing does differently
+
+| | Passive (default) | Active (`--active`) |
+|---|---|---|
+| What it sends | GET/HEAD/OPTIONS, DNS, TLS handshakes | CVE-based payload templates, WAF evasion probes, injection checks |
+| Can it confirm a vuln is exploitable? | No — infers from config | Yes — receives a real response to a crafted probe |
+| Side effects on the target | None | May trigger WAF alerts, appear in access logs, consume rate-limit quota |
+| Needs explicit authorization | Yes (one prompt) | Yes (a second, separate prompt specifically for active scanning) |
+| Finds | Misconfigurations, missing headers, weak crypto | Same as passive, plus exploitable injection points, exposed panels, template-matched CVEs |
+
+### How Nuclei integration works
+
+[Nuclei](https://github.com/projectdiscovery/nuclei) (ProjectDiscovery) is a template-driven vulnerability scanner. Each template describes a specific CVE or misconfiguration: the HTTP request to send, the pattern to match in the response, and the severity if it matches.
+
+Inquisition shells out to the `nuclei` binary already on your `PATH`. It runs with these constraints to stay a controlled vulnerability check rather than a full attack:
+
+- **Severity filter:** only `low`, `medium`, `high`, `critical` templates are run — informational noise is suppressed
+- **Excluded tags:** `dos`, `intrusive`, `fuzz`, `brute-force` template categories are always excluded. This prevents denial-of-service payloads, brute-force login attempts, and aggressive fuzzing even if such templates are present in your local template library
+- **Silent JSONL output:** results are returned as one JSON object per line and parsed directly into `Finding` objects — no intermediate files
+
+The effective Nuclei command looks like:
+
+```bash
+nuclei -u https://example.com \
+       -jsonl -silent \
+       -severity low,medium,high,critical \
+       -exclude-tags dos,intrusive,fuzz,brute-force \
+       -timeout 10 \
+       -disable-update-check
+```
+
+If `--auth-header` is set (e.g. `Authorization: Bearer <token>`), the header is forwarded to Nuclei via `-H` so authenticated surfaces are also tested.
+
+#### Installing Nuclei
+
+```bash
+# macOS
+brew install nuclei
+
+# Linux
+go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+
+# Docker (alternative — the Inquisition container does not bundle Nuclei)
+docker run --rm projectdiscovery/nuclei --version
+```
+
+Nuclei maintains its own template library at `~/.local/nuclei-templates/`. Run `nuclei -update-templates` periodically to get new CVE coverage.
+
+### How OWASP ZAP integration works
+
+[OWASP ZAP](https://www.zaproxy.org/) (Zed Attack Proxy) is a full web application security scanner. Inquisition uses its **baseline scan** mode (`zap-baseline.py`), which is the lighter, non-intrusive profile — it spiders and passively analyses the target, then runs a constrained set of active rules.
+
+ZAP is invoked as:
+
+```bash
+zap-baseline.py -t https://example.com -J - -m <minutes> -I
+```
+
+Results are returned as a JSON report on stdout. Inquisition parses each alert, maps ZAP's risk codes to its own severity levels, and converts them into `Finding` objects. Informational alerts are suppressed.
+
+If `--auth-header` or `--auth-cookie` is set, Inquisition configures ZAP's HTTP replacer extension to inject the credential on every request, so authenticated scan surfaces are covered.
+
+#### Installing ZAP
+
+```bash
+# macOS
+brew install --cask owasp-zap
+
+# Or use the ZAP Docker image (includes zap-baseline.py)
+docker pull ghcr.io/zaproxy/zaproxy:stable
+```
+
+### Choosing between Nuclei and ZAP
+
+| | Nuclei | OWASP ZAP |
+|---|---|---|
+| Best for | CVE-specific template matching, API endpoints | Full web app scanning, spidering, authenticated sessions |
+| Speed | Fast (seconds to a few minutes per target) | Slower (minutes; spider + active rules) |
+| Output style | Template-per-finding, high precision | Alert-per-issue, broader coverage |
+| Auth support | Single header (`--auth-header`) | Header + cookie via replacer |
+| Requires | `nuclei` binary on `PATH` | `zap-baseline.py` on `PATH` (from ZAP install) |
+
+Use Nuclei for a quick, targeted CVE sweep. Use ZAP when you need broader coverage of the authenticated application surface.
+
+### Running an active scan
+
+```bash
+# Standard passive + active (Nuclei, default)
+python inquisition.py example.com --active --yes
+
+# Active scan with ZAP
+python inquisition.py example.com --active --active-engine zap --yes
+
+# Authenticated active scan (Bearer token)
+python inquisition.py example.com --active \
+  --auth-header "Authorization: Bearer eyJ..." --yes
+
+# Save full HTML report including active findings
+python inquisition.py example.com --active -o report.html --yes
+```
+
+Active findings appear in the report prefixed with `[active]` and are categorised as `vulnerability`. They pass through the same deduplication, KB enrichment, and attacker-context pipeline as passive findings.
+
+### Authorization gates
+
+Active testing requires clearing two separate prompts:
+
+1. **Standard scan prompt** — confirms you are authorised to scan the target at all (bypassed with `--yes`)
+2. **Active scan prompt** — a second, explicit confirmation that you have permission to send payload-based probes (also bypassed with `--yes` when used alongside `--active`)
+
+Both prompts exist so that `--yes` in a CI pipeline that was written for passive scanning cannot accidentally enable active testing without an explicit `--active` flag in the command.
+
+---
+
 ## Examples
 
 ### Example 1: Basic Target Assessment
@@ -881,7 +1006,7 @@ By default, Inquisition is intentionally **read-only active reconnaissance:**
 - ✅ No extraction of private data
 - ✅ Live scans require interactive authorization or `--yes` / `--i-am-authorized`
 
-Optional `--active` mode is different: it shells out to Nuclei or OWASP ZAP and may send payload-based vulnerability probes after a second, explicit active-scan authorization prompt. Use it only where you have written permission for active testing.
+Optional `--active` mode is different: it shells out to Nuclei or OWASP ZAP and sends payload-based vulnerability probes after a second, explicit active-scan authorization prompt. DOS, brute-force, and fuzzing template categories are always excluded. Use it only where you have written permission for active testing. See [Active Testing](#active-testing-1) for the full explanation.
 
 ### Responsible Disclosure
 
