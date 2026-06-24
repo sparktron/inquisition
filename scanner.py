@@ -51,7 +51,7 @@ from ui import (
     print_summary,
     print_warning,
 )
-from vuln_correlation import derive_misconfigurations, lookup_cves_for_cpe
+from vuln_correlation import derive_misconfigurations, detect_attack_chains, lookup_cves_for_cpe
 
 if TYPE_CHECKING:
     from models import Finding, ScanConfig
@@ -163,6 +163,7 @@ def run_scan(
     *,
     skip_auth: bool = False,
     brief: bool = False,
+    attacker_pov: bool = False,
     output_path: str | None = None,
     notify_url: str | None = None,
     notify_min_severity: Severity = Severity.HIGH,
@@ -283,11 +284,26 @@ def run_scan(
     if dupes and not quiet:
         print_info(f"removed {dupes} duplicate finding" + ("s" if dupes != 1 else ""))
 
+    # --- Enrich findings with KB attack context ---
+    import analysis_kb
+    for f in report.findings:
+        kb = analysis_kb.lookup(f.title)
+        if kb:
+            if not f.attack_scenario:
+                f.attack_scenario = kb.get("attack_scenario", "")
+            if not f.mitre_techniques:
+                f.mitre_techniques = list(kb.get("mitre_techniques", []))
+            if not f.poc_command:
+                f.poc_command = kb.get("poc_command", "")
+
     # --- Misconfiguration checks ---
     report.misconfigurations = derive_misconfigurations(report.findings)
     if report.misconfigurations and not quiet:
         n = len(report.misconfigurations)
         print_info(f"{n} misconfiguration" + ("s" if n != 1 else "") + " detected")
+
+    # --- Attack chain detection ---
+    report.attack_chains = detect_attack_chains(report.misconfigurations)
 
     # --- Finalize ---
     report.finished_at = datetime.now(timezone.utc)
@@ -345,7 +361,7 @@ def run_scan(
     report_saved = False
     summary_path = "(combined artifact)"
     if write_report:
-        output = render(report, config.report_format, brief=brief)
+        output = render(report, config.report_format, brief=brief, attacker_pov=attacker_pov)
 
         if not output_path:
             output_path = str(_default_report_path(report, config.report_format))

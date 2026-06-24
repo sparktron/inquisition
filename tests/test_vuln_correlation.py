@@ -9,6 +9,7 @@ import vuln_correlation
 class VulenCorrelationTests(unittest.TestCase):
     def setUp(self) -> None:
         vuln_correlation._cve_cache.clear()
+        vuln_correlation._kev_cache = None
 
     def test_lookup_uses_virtual_match_string_for_partial_cpe(self) -> None:
         response = Mock()
@@ -25,7 +26,9 @@ class VulenCorrelationTests(unittest.TestCase):
             )
 
         self.assertEqual(records, [])
-        params = get.call_args.kwargs["params"]
+        # First call is the NVD API; second (if any) is CISA KEV — check the NVD call.
+        nvd_call = get.call_args_list[0]
+        params = nvd_call.kwargs["params"]
         self.assertNotIn("cpeName", params)
         self.assertEqual(
             params["virtualMatchString"],

@@ -31,6 +31,45 @@ _SEVERITY_LABEL: dict[Severity, str] = {
     Severity.INFO: "INFO",
 }
 
+# "What Could Happen" consequence ladder — maps letter grade to real-world outcome language.
+_CONSEQUENCE_LADDER: list[tuple[str, str, str]] = [
+    # (grade, headline, detail)
+    ("A+", "No material risk",
+     "No actionable findings. Continue routine monitoring."),
+    ("A",  "Minimal risk",
+     "Minor configuration gaps. Low attacker value; schedule routine hardening."),
+    ("B",  "Limited impact if exploited",
+     "Information leakage or minor disruption likely. An opportunistic attacker gains reconnaissance advantage."),
+    ("C",  "Credential theft or data exposure likely",
+     "A motivated attacker can intercept sessions, steal credentials, or access sensitive data without advanced tools."),
+    ("D",  "Account takeover or significant breach probable",
+     "Active exploitation is straightforward. Expect lateral movement, data exfiltration, or service disruption if targeted."),
+    ("F",  "Full system compromise and mass data exfiltration",
+     "Critical exposures present that require no credentials to exploit. Ransomware, backdoor installation, and supply-chain attacks are viable immediately."),
+]
+
+_MITRE_BASE_URL = "https://attack.mitre.org/techniques/"
+
+
+def _mitre_url(technique_id: str) -> str:
+    """Return the MITRE ATT&CK URL for a technique ID like T1557 or T1557.002."""
+    base = technique_id.replace(".", "/")
+    return f"{_MITRE_BASE_URL}{base}/"
+
+
+def _exploitability_key(f: Finding) -> tuple[int, int, int]:
+    """Sort key for attacker-POV ordering: most exploitable first.
+
+    Primary: severity (lower index = more severe).
+    Secondary: findings with a PoC command rank higher (attacker already has a tool).
+    Tertiary: findings with MITRE tags rank higher (known attack path).
+    """
+    return (
+        _SEV_ORDER.index(f.severity),
+        0 if f.poc_command else 1,
+        0 if f.mitre_techniques else 1,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Risk scoring
@@ -119,13 +158,28 @@ def _render_deep_analysis(lines: list[str], report: ScanReport) -> None:
         for f in group:
             kb = analysis_kb.lookup(f.title)
             analysis_text = kb["analysis"] if kb else f.impact
-            if not analysis_text:
+            attack_scenario = f.attack_scenario or (kb.get("attack_scenario", "") if kb else "")
+            mitre = f.mitre_techniques or (kb.get("mitre_techniques", []) if kb else [])
+            poc = f.poc_command or (kb.get("poc_command", "") if kb else "")
+
+            if not analysis_text and not attack_scenario:
                 continue
 
             label = f"[{_SEVERITY_LABEL[f.severity]}] {f.title}"
             lines.append(f"\n  {label}")
             lines.append("  " + "-" * (len(label) + 2))
-            lines.extend(_wrap_paragraphs(analysis_text))
+            if analysis_text:
+                lines.extend(_wrap_paragraphs(analysis_text))
+            if attack_scenario:
+                lines.append("")
+                lines.append("    HOW AN ATTACKER EXPLOITS THIS:")
+                lines.extend(_wrap_paragraphs(attack_scenario))
+            if mitre:
+                lines.append(f"\n    MITRE ATT&CK: {', '.join(mitre)}")
+            if poc:
+                lines.append("\n    ATTACKER'S COMMAND:")
+                for poc_line in poc.split("\n"):
+                    lines.append(f"      {poc_line}")
             lines.append(f"\n    Evidence: {f.evidence}")
             lines.append("")
 
@@ -158,10 +212,16 @@ def _render_remediation_guide(lines: list[str], report: ScanReport) -> None:
             if not remediation_text:
                 remediation_text = f.remediation or "No specific remediation guidance available."
 
+            kb = analysis_kb.lookup(f.title)
+            poc = f.poc_command or (kb.get("poc_command", "") if kb else "")
             label = f"[{_SEVERITY_LABEL[f.severity]}] {f.title}"
             lines.append(f"  {label}")
             lines.append("  " + "-" * (len(label) + 2))
             lines.extend(_wrap_paragraphs(remediation_text))
+            if poc:
+                lines.append("\n    VERIFY THE FIX (run after remediation — should now fail/return 403):")
+                for poc_line in poc.split("\n"):
+                    lines.append(f"      {poc_line}")
             if f.verification:
                 lines.append(f"\n    Verification: {f.verification}")
             if f.references:
@@ -169,13 +229,16 @@ def _render_remediation_guide(lines: list[str], report: ScanReport) -> None:
             lines.append("")
 
 
-def render_text(report: ScanReport, *, brief: bool = False) -> str:
+def render_text(report: ScanReport, *, brief: bool = False, attacker_pov: bool = False) -> str:
     """Produce a human-readable text report."""
     lines: list[str] = []
 
+    pov = attacker_pov or bool(report.config and report.config.attacker_pov)
+
     # --- Banner ---
     lines.append(_hr("#"))
-    lines.append("  INQUISITION — Security Reconnaissance Report")
+    title = "  INQUISITION — Attacker's View Report" if pov else "  INQUISITION — Security Reconnaissance Report"
+    lines.append(title)
     lines.append(_hr("#"))
     lines.append(f"  Target   : {report.target}")
     lines.append(f"  Started  : {report.started_at:%Y-%m-%d %H:%M:%S UTC}")
@@ -185,6 +248,8 @@ def render_text(report: ScanReport, *, brief: bool = False) -> str:
     if report.config:
         lines.append(f"  Depth    : {report.config.depth.value}")
         lines.append(f"  Mode     : {'dry-run' if report.config.dry_run else 'safe' if report.config.safe_mode else 'standard'}")
+    if pov:
+        lines.append("  View     : ATTACKER POV — findings ordered by exploitability")
     lines.append("")
 
     # --- Executive Summary ---
@@ -202,26 +267,37 @@ def render_text(report: ScanReport, *, brief: bool = False) -> str:
     if report.errors:
         lines.append(f"  Scan errors      : {len(report.errors)}")
     lines.append(f"\n  Risk score : {score}  |  Security grade : {grade}")
-    lines.append("  (Grade scale: A+ = clean, A/B = minor issues, C = moderate risk,")
-    lines.append("   D = significant risk, F = critical exposure requiring immediate action)")
+    lines.append("")
+
+    # --- What Could Happen (consequence ladder) ---
+    lines.append(_section("WHAT COULD HAPPEN — CONSEQUENCE ASSESSMENT"))
+    for g, headline, detail in _CONSEQUENCE_LADDER:
+        marker = ">>>" if g == grade else "   "
+        lines.append(f"  {marker} Grade {g:<3s}  {headline}")
+        if g == grade:
+            lines.append(f"           {detail}")
     lines.append("")
 
     # --- Remediation Priority Matrix ---
     lines.append(_section("REMEDIATION PRIORITY MATRIX"))
     actionable = [f for f in report.findings if f.severity in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM)]
+    sort_key = _exploitability_key if pov else lambda x: (_SEV_ORDER.index(x.severity),)
     if actionable:
         lines.append(f"  {'#':<4s} {'Severity':<10s} {'Category':<16s} {'Title'}")
         lines.append(f"  {'-'*4} {'-'*10} {'-'*16} {'-'*38}")
-        for idx, f in enumerate(sorted(actionable, key=lambda x: _SEV_ORDER.index(x.severity)), 1):
-            lines.append(f"  {idx:<4d} {_SEVERITY_LABEL[f.severity]:<10s} {f.category.value:<16s} {f.title}")
+        for idx, f in enumerate(sorted(actionable, key=sort_key), 1):
+            poc_flag = " [PoC]" if f.poc_command else ""
+            lines.append(f"  {idx:<4d} {_SEVERITY_LABEL[f.severity]:<10s} {f.category.value:<16s} {f.title}{poc_flag}")
     else:
         lines.append("  No actionable findings.")
     lines.append("")
 
     # --- Detailed Findings ---
-    lines.append(_section("DETAILED FINDINGS"))
+    header = "DETAILED FINDINGS — ATTACKER POV (easiest to exploit first)" if pov else "DETAILED FINDINGS"
+    lines.append(_section(header))
+    findings_ordered = sorted(report.findings, key=_exploitability_key) if pov else report.findings
     for sev in _SEV_ORDER:
-        group = [f for f in report.findings if f.severity == sev]
+        group = [f for f in findings_ordered if f.severity == sev]
         if not group:
             continue
         lines.append(f"\n  --- {_SEVERITY_LABEL[sev]} ({len(group)}) ---\n")
@@ -231,6 +307,9 @@ def render_text(report: ScanReport, *, brief: bool = False) -> str:
             if f.confidence is not Confidence.CONFIRMED:
                 lines.append(f"    Confidence: {f.confidence.value}")
             lines.append(f"    Evidence : {f.evidence}")
+            if f.mitre_techniques:
+                links = [f"{t} ({_mitre_url(t)})" for t in f.mitre_techniques]
+                lines.append(f"    MITRE    : {', '.join(links)}")
             if f.impact:
                 lines.append(f"    Impact   : {f.impact}")
             if f.remediation:
@@ -243,10 +322,13 @@ def render_text(report: ScanReport, *, brief: bool = False) -> str:
                 lines.append(f"    Age      : {_age_phrase(f)}")
             if f.references:
                 lines.append(f"    Refs     : {', '.join(f.references)}")
-            # Tool reference
             tools = tools_for_category(f.category)
             if tools:
                 lines.append(f"    Tools    : {', '.join(tools)}")
+            if pov and f.poc_command:
+                lines.append("    PoC cmd  :")
+                for poc_line in f.poc_command.split("\n"):
+                    lines.append(f"      {poc_line}")
             lines.append("")
 
     # --- Deep Issue Analysis ---
@@ -261,7 +343,9 @@ def render_text(report: ScanReport, *, brief: bool = False) -> str:
     if report.cve_records:
         lines.append(_section("CVE CORRELATION"))
         for cve in sorted(report.cve_records, key=lambda c: c.cvss_score, reverse=True):
-            lines.append(f"  {cve.cve_id}  (CVSS {cve.cvss_score:.1f} / {_SEVERITY_LABEL[cve.severity]})")
+            kev_flag = " [CISA KEV — ACTIVELY EXPLOITED]" if cve.in_cisa_kev else ""
+            age_str = f"  disclosed {cve.days_since_disclosure}d ago" if cve.days_since_disclosure else ""
+            lines.append(f"  {cve.cve_id}  (CVSS {cve.cvss_score:.1f} / {_SEVERITY_LABEL[cve.severity]}){kev_flag}{age_str}")
             lines.append(f"    {cve.description[:200]}")
             if cve.references:
                 lines.append(f"    Refs: {', '.join(cve.references[:3])}")
@@ -275,6 +359,29 @@ def render_text(report: ScanReport, *, brief: bool = False) -> str:
             lines.append(f"    {mc.description}")
             lines.append(f"    Evidence  : {mc.evidence}")
             lines.append(f"    Remediate : {mc.remediation}")
+            if mc.mitre_techniques:
+                lines.append(f"    MITRE     : {', '.join(mc.mitre_techniques)}")
+            if mc.attack_scenario:
+                lines.append("    Attack    :")
+                lines.extend(_wrap_paragraphs(mc.attack_scenario))
+            lines.append("")
+
+    # --- Attack Chains ---
+    if report.attack_chains:
+        lines.append(_section("ATTACK CHAIN ANALYSIS"))
+        lines.append(
+            "  The following multi-step kill chains are possible given the combination\n"
+            "  of findings present. Each chain represents a realistic attacker workflow."
+        )
+        for chain in report.attack_chains:
+            lines.append(f"\n  CHAIN: {chain.name}")
+            lines.append(f"  {'-' * (len(chain.name) + 7)}")
+            lines.append(f"    {chain.description}")
+            lines.append("")
+            for i, step in enumerate(chain.steps, 1):
+                lines.append(f"    Step {i}: {step}")
+            if chain.mitre_techniques:
+                lines.append(f"\n    MITRE: {', '.join(chain.mitre_techniques)}")
             lines.append("")
 
     # --- Tool Reference Table ---
@@ -310,16 +417,18 @@ def _md_cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
 
 
-def render_markdown(report: ScanReport, *, brief: bool = False) -> str:
+def render_markdown(report: ScanReport, *, brief: bool = False, attacker_pov: bool = False) -> str:
     """Produce a GitHub-flavored Markdown report.
 
     Mirrors render_text's structure with real Markdown headings, tables, and
     inline code so it renders cleanly in PRs, issues, and Markdown viewers.
     """
     out: list[str] = []
+    pov = attacker_pov or bool(report.config and report.config.attacker_pov)
 
     # --- Banner / metadata ---
-    out.append("# Inquisition — Security Reconnaissance Report")
+    title = "Inquisition — Attacker's View Report" if pov else "Inquisition — Security Reconnaissance Report"
+    out.append(f"# {title}")
     out.append("")
     out.append(f"- **Target:** `{report.target}`")
     out.append(f"- **Started:** {report.started_at:%Y-%m-%d %H:%M:%S UTC}")
@@ -330,6 +439,8 @@ def render_markdown(report: ScanReport, *, brief: bool = False) -> str:
         mode = "dry-run" if report.config.dry_run else "safe" if report.config.safe_mode else "standard"
         out.append(f"- **Depth:** {report.config.depth.value}")
         out.append(f"- **Mode:** {mode}")
+    if pov:
+        out.append("- **View:** Attacker POV — ordered by exploitability")
     out.append("")
 
     # --- Executive Summary ---
@@ -351,31 +462,44 @@ def render_markdown(report: ScanReport, *, brief: bool = False) -> str:
     if report.errors:
         out.append(f"| Scan errors | {len(report.errors)} |")
     out.append("")
-    out.append(
-        "_Grade scale: A+ = clean, A/B = minor issues, C = moderate risk, "
-        "D = significant risk, F = critical exposure requiring immediate action._"
-    )
+
+    # --- What Could Happen ---
+    out.append("## What Could Happen — Consequence Assessment")
+    out.append("")
+    out.append("| Grade | Headline | Detail |")
+    out.append("| --- | --- | --- |")
+    for g, headline, detail in _CONSEQUENCE_LADDER:
+        marker = f"**{g}** ◀ current" if g == grade else g
+        out.append(f"| {marker} | {headline} | {_md_cell(detail)} |")
     out.append("")
 
     # --- Remediation Priority Matrix ---
     out.append("## Remediation Priority Matrix")
     out.append("")
     actionable = [f for f in report.findings if f.severity in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM)]
+    sort_key = _exploitability_key if pov else lambda x: (_SEV_ORDER.index(x.severity),)
     if actionable:
-        out.append("| # | Severity | Category | Title |")
-        out.append("| --- | --- | --- | --- |")
-        for idx, f in enumerate(sorted(actionable, key=lambda x: _SEV_ORDER.index(x.severity)), 1):
-            out.append(f"| {idx} | {_SEVERITY_LABEL[f.severity]} | {_md_cell(f.category.value)} | {_md_cell(f.title)} |")
+        poc_col = " PoC |" if pov else ""
+        out.append(f"| # | Severity | Category | Title |{poc_col}")
+        out.append(f"| --- | --- | --- | --- |{'--- |' if pov else ''}")
+        for idx, f in enumerate(sorted(actionable, key=sort_key), 1):
+            poc_flag = "✓" if f.poc_command else ""
+            row = f"| {idx} | {_SEVERITY_LABEL[f.severity]} | {_md_cell(f.category.value)} | {_md_cell(f.title)} |"
+            if pov:
+                row += f" {poc_flag} |"
+            out.append(row)
     else:
         out.append("_No actionable findings._")
     out.append("")
 
     # --- Detailed Findings ---
-    out.append("## Detailed Findings")
+    header = "Detailed Findings — Attacker POV" if pov else "Detailed Findings"
+    out.append(f"## {header}")
     out.append("")
     any_findings = False
+    findings_ordered = sorted(report.findings, key=_exploitability_key) if pov else report.findings
     for sev in _SEV_ORDER:
-        group = [f for f in report.findings if f.severity == sev]
+        group = [f for f in findings_ordered if f.severity == sev]
         if not group:
             continue
         any_findings = True
@@ -388,6 +512,9 @@ def render_markdown(report: ScanReport, *, brief: bool = False) -> str:
             if f.confidence is not Confidence.CONFIRMED:
                 out.append(f"- **Confidence:** {f.confidence.value}")
             out.append(f"- **Evidence:** {f.evidence}")
+            if f.mitre_techniques:
+                links = ", ".join(f"[{t}]({_mitre_url(t)})" for t in f.mitre_techniques)
+                out.append(f"- **MITRE ATT&CK:** {links}")
             if f.impact:
                 out.append(f"- **Impact:** {f.impact}")
             if f.remediation:
@@ -403,6 +530,14 @@ def render_markdown(report: ScanReport, *, brief: bool = False) -> str:
             tools = tools_for_category(f.category)
             if tools:
                 out.append(f"- **Tools:** {', '.join(tools)}")
+            if f.attack_scenario:
+                out.append("")
+                out.append(f"> **How an attacker exploits this:** {f.attack_scenario}")
+            if f.poc_command:
+                out.append("")
+                out.append("```bash")
+                out.append(f.poc_command)
+                out.append("```")
             out.append("")
     if not any_findings:
         out.append("_No findings recorded._")
@@ -446,10 +581,17 @@ def render_markdown(report: ScanReport, *, brief: bool = False) -> str:
                     kb = analysis_kb.lookup(f.title)
                     remediation_text = (kb["remediation"] if kb else f.remediation) or \
                         f.remediation or "No specific remediation guidance available."
+                    poc = f.poc_command or (kb.get("poc_command", "") if kb else "")
                     out.append(f"#### {f.title}")
                     out.append("")
                     out.append(remediation_text)
                     out.append("")
+                    if poc:
+                        out.append("**Verify the fix (should now fail/return 403):**")
+                        out.append("```bash")
+                        out.append(poc)
+                        out.append("```")
+                        out.append("")
                     if f.verification:
                         out.append(f"**Verification:** {f.verification}")
                         out.append("")
@@ -461,14 +603,13 @@ def render_markdown(report: ScanReport, *, brief: bool = False) -> str:
     if report.cve_records:
         out.append("## CVE Correlation")
         out.append("")
+        out.append("| CVE ID | CVSS | Severity | KEV | Days Old | Description |")
+        out.append("| --- | --- | --- | --- | --- | --- |")
         for cve in sorted(report.cve_records, key=lambda c: c.cvss_score, reverse=True):
-            out.append(f"### {cve.cve_id} (CVSS {cve.cvss_score:.1f} / {_SEVERITY_LABEL[cve.severity]})")
-            out.append("")
-            out.append(cve.description[:200])
-            out.append("")
-            if cve.references:
-                out.append(f"**References:** {', '.join(cve.references[:3])}")
-                out.append("")
+            kev = "⚠️ **KEV**" if cve.in_cisa_kev else "—"
+            age = f"{cve.days_since_disclosure}d" if cve.days_since_disclosure else "—"
+            out.append(f"| {cve.cve_id} | {cve.cvss_score:.1f} | {_SEVERITY_LABEL[cve.severity]} | {kev} | {age} | {_md_cell(cve.description[:120])} |")
+        out.append("")
 
     # --- Misconfiguration Summary ---
     if report.misconfigurations:
@@ -481,7 +622,36 @@ def render_markdown(report: ScanReport, *, brief: bool = False) -> str:
             out.append("")
             out.append(f"- **Evidence:** {mc.evidence}")
             out.append(f"- **Remediate:** {mc.remediation}")
+            if mc.mitre_techniques:
+                links = ", ".join(f"[{t}]({_mitre_url(t)})" for t in mc.mitre_techniques)
+                out.append(f"- **MITRE ATT&CK:** {links}")
+            if mc.attack_scenario:
+                out.append(f"- **Attack scenario:** {mc.attack_scenario}")
+            if mc.poc_command:
+                out.append("")
+                out.append("```bash")
+                out.append(mc.poc_command)
+                out.append("```")
             out.append("")
+
+    # --- Attack Chains ---
+    if report.attack_chains:
+        out.append("## Attack Chain Analysis")
+        out.append("")
+        out.append("The following multi-step kill chains are possible given the combination of findings present.")
+        out.append("")
+        for chain in report.attack_chains:
+            out.append(f"### {chain.name}")
+            out.append("")
+            out.append(f"> {chain.description}")
+            out.append("")
+            for i, step in enumerate(chain.steps, 1):
+                out.append(f"{i}. {step}")
+            out.append("")
+            if chain.mitre_techniques:
+                links = ", ".join(f"[{t}]({_mitre_url(t)})" for t in chain.mitre_techniques)
+                out.append(f"**MITRE ATT&CK:** {links}")
+                out.append("")
 
     # --- Tool Reference Table ---
     out.append("## Tool Reference Table")
@@ -761,8 +931,45 @@ def _trend_sparkline_html(report: ScanReport) -> str:
     )
 
 
-def render_html(report: ScanReport) -> str:
+def _attack_chain_svg(chain_steps: list[str]) -> str:
+    """Render an attack chain as a simple inline SVG flowchart."""
+    box_w, box_h, gap = 220, 44, 28
+    total_h = len(chain_steps) * (box_h + gap) - gap + 20
+    total_w = box_w + 40
+    svg_lines = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{total_w}" height="{total_h}" '
+        f'viewBox="0 0 {total_w} {total_h}" role="img" aria-label="attack chain flowchart">'
+    ]
+    for i, step in enumerate(chain_steps):
+        y = i * (box_h + gap) + 10
+        cx = total_w / 2
+        text = step[:38] + ("…" if len(step) > 38 else "")
+        color = "#dc2626" if i == 0 else "#ea580c" if i == 1 else "#ca8a04" if i < len(chain_steps) - 1 else "#7c3aed"
+        svg_lines.append(
+            f'<rect x="{cx - box_w/2:.0f}" y="{y}" width="{box_w}" height="{box_h}" rx="6" '
+            f'fill="{color}18" stroke="{color}" stroke-width="1.5"/>'
+            f'<text x="{cx:.0f}" y="{y + box_h/2 + 5:.0f}" text-anchor="middle" '
+            f'font-family="system-ui,sans-serif" font-size="11" fill="{color}" font-weight="600">'
+            f'<tspan x="{cx:.0f}">{_e(f"Step {i+1}: {text}")}</tspan></text>'
+        )
+        if i < len(chain_steps) - 1:
+            arrow_y = y + box_h
+            svg_lines.append(
+                f'<line x1="{cx:.0f}" y1="{arrow_y}" x2="{cx:.0f}" y2="{arrow_y + gap}" '
+                f'stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>'
+            )
+    # Arrow marker definition
+    svg_lines.insert(1,
+        '<defs><marker id="arr" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">'
+        '<path d="M0,0 L8,4 L0,8 Z" fill="#94a3b8"/></marker></defs>'
+    )
+    svg_lines.append("</svg>")
+    return "\n".join(svg_lines)
+
+
+def render_html(report: ScanReport, *, attacker_pov: bool = False) -> str:
     """Produce a self-contained HTML security report."""
+    pov = attacker_pov or bool(report.config and report.config.attacker_pov)
     counts = report.summary_counts()
     score, grade = _risk_score(counts)
     grade_color = _GRADE_CSS.get(grade, "#dc2626")
@@ -787,26 +994,50 @@ def render_html(report: ScanReport) -> str:
         if n:
             summary_chips += f'<span style="margin-right:8px">{_badge(sev)} &nbsp;{n}</span>'
 
+    # ---- consequence ladder ----
+    consequence_rows = ""
+    for g, headline, detail in _CONSEQUENCE_LADDER:
+        is_current = g == grade
+        bg = "#fef2f2" if is_current and grade in ("D", "F") else \
+             "#fffbeb" if is_current and grade in ("B", "C") else \
+             "#f0fdf4" if is_current and grade in ("A+", "A") else \
+             "#f8fafc"
+        border_left = f"4px solid {_GRADE_CSS.get(g, '#64748b')}" if is_current else "4px solid transparent"
+        badge_color = _GRADE_CSS.get(g, "#64748b")
+        current_label = " ← YOUR SITE" if is_current else ""
+        consequence_rows += (
+            f"<tr style='background:{bg};border-left:{border_left}'>"
+            f"<td style='padding:8px 12px;font-weight:800;color:{badge_color};white-space:nowrap'>"
+            f"{_e(g)}{_e(current_label)}</td>"
+            f"<td style='padding:8px 12px;font-weight:600'>{_e(headline)}</td>"
+            f"<td style='padding:8px 12px;font-size:.9rem;color:#475569'>{_e(detail)}</td>"
+            f"</tr>\n"
+        )
+
     # ---- priority matrix rows ----
     actionable = [
         f for f in report.findings
         if f.severity in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM)
     ]
+    sort_key = _exploitability_key if pov else lambda x: (_SEV_ORDER.index(x.severity),)
     matrix_rows = ""
-    for idx, f in enumerate(sorted(actionable, key=lambda x: _SEV_ORDER.index(x.severity)), 1):
+    for idx, f in enumerate(sorted(actionable, key=sort_key), 1):
+        poc_cell = "<td style='padding:6px 10px;color:#16a34a;font-weight:700'>✓</td>" if f.poc_command else "<td style='padding:6px 10px;color:#cbd5e1'>—</td>"
         matrix_rows += (
             f"<tr>"
             f"<td style='padding:6px 10px;color:#64748b'>{idx}</td>"
             f"<td style='padding:6px 10px'>{_badge(f.severity)}</td>"
             f"<td style='padding:6px 10px;color:#64748b;font-size:.85rem'>{_e(f.category.value)}</td>"
             f"<td style='padding:6px 10px;font-weight:500'>{_e(f.title)}</td>"
+            f"{poc_cell}"
             f"</tr>\n"
         )
 
     # ---- finding cards ----
     finding_cards = ""
+    findings_ordered = sorted(report.findings, key=_exploitability_key) if pov else report.findings
     for sev in _SEV_ORDER:
-        group = [f for f in report.findings if f.severity == sev]
+        group = [f for f in findings_ordered if f.severity == sev]
         if not group:
             continue
         bg, fg, border = _SEV_CSS[sev]
@@ -817,11 +1048,22 @@ def render_html(report: ScanReport) -> str:
         for f in group:
             kb = analysis_kb.lookup(f.title)
             tools = tools_for_category(f.category)
+            mitre = f.mitre_techniques or (kb.get("mitre_techniques", []) if kb else [])
+            attack_scenario = f.attack_scenario or (kb.get("attack_scenario", "") if kb else "")
+            poc = f.poc_command or (kb.get("poc_command", "") if kb else "")
 
             rows = f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Category</td><td>{_e(f.category.value)}</td></tr>\n"
             if f.confidence is not Confidence.CONFIRMED:
                 rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Confidence</td><td>{_e(f.confidence.value)}</td></tr>\n"
             rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Evidence</td><td><code style='font-size:.85rem;background:#f1f5f9;padding:1px 4px;border-radius:3px'>{_e(f.evidence)}</code></td></tr>\n"
+            if mitre:
+                mitre_links = " ".join(
+                    f'<a href="{_e(_mitre_url(t))}" target="_blank" rel="noopener" '
+                    f'style="display:inline-block;margin:0 2px 2px 0;padding:1px 6px;border-radius:3px;'
+                    f'background:#dbeafe;color:#1d4ed8;font-size:.78rem;font-weight:600;text-decoration:none">{_e(t)}</a>'
+                    for t in mitre
+                )
+                rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>MITRE</td><td>{mitre_links}</td></tr>\n"
             if f.impact:
                 rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Impact</td><td>{_e(f.impact)}</td></tr>\n"
             if f.remediation:
@@ -835,6 +1077,27 @@ def render_html(report: ScanReport) -> str:
 
             analysis_section = ""
             if kb:
+                attack_html = ""
+                if attack_scenario:
+                    attack_html = (
+                        f'<details style="margin-top:8px">'
+                        f'<summary style="cursor:pointer;font-weight:600;color:#7c3aed;padding:4px 0">'
+                        f'&#128373; How an Attacker Exploits This</summary>'
+                        f'<div style="margin-top:8px;padding:12px;background:#faf5ff;border-radius:6px;'
+                        f'border-left:3px solid #7c3aed;font-size:.9rem;line-height:1.7;font-family:inherit">'
+                        f'{_nl2br(attack_scenario)}</div></details>'
+                    )
+                poc_html = ""
+                if poc:
+                    poc_html = (
+                        f'<details style="margin-top:8px">'
+                        f'<summary style="cursor:pointer;font-weight:600;color:#dc2626;padding:4px 0">'
+                        f'&#128192; Attacker\'s Command (PoC)</summary>'
+                        f'<pre style="margin-top:8px;padding:12px;background:#1e293b;color:#f8fafc;'
+                        f'border-radius:6px;font-size:.82rem;line-height:1.6;overflow-x:auto;'
+                        f'white-space:pre-wrap;font-family:\'SF Mono\',\'Fira Code\',monospace">'
+                        f'{_e(poc)}</pre></details>'
+                    )
                 analysis_section = (
                     f'<details style="margin-top:12px">'
                     f'<summary style="cursor:pointer;font-weight:600;color:#1e293b;padding:4px 0">'
@@ -842,12 +1105,14 @@ def render_html(report: ScanReport) -> str:
                     f'<div style="margin-top:8px;padding:12px;background:#f8fafc;border-radius:6px;'
                     f'font-size:.9rem;line-height:1.7;white-space:pre-wrap;font-family:inherit">'
                     f'{_e(kb["analysis"])}</div></details>'
+                    f'{attack_html}'
                     f'<details style="margin-top:8px">'
                     f'<summary style="cursor:pointer;font-weight:600;color:#1e293b;padding:4px 0">'
                     f'&#128295; Remediation Steps</summary>'
                     f'<div style="margin-top:8px;padding:12px;background:#f0fdf4;border-radius:6px;'
                     f'font-size:.9rem;line-height:1.7;white-space:pre-wrap;font-family:inherit">'
                     f'{_e(kb["remediation"])}</div></details>'
+                    f'{poc_html}'
                 )
 
             finding_cards += (
@@ -875,25 +1140,105 @@ def render_html(report: ScanReport) -> str:
                 f'<a href="{_e(r)}" style="color:#2563eb;font-size:.8rem" target="_blank" rel="noopener">[ref]</a>'
                 for r in cve.references[:3]
             )
+        kev_badge = (
+            '<span style="display:inline-block;padding:1px 6px;border-radius:3px;'
+            'background:#fef2f2;color:#dc2626;font-size:.75rem;font-weight:700;'
+            'border:1px solid #fca5a5">⚠ KEV</span>'
+            if cve.in_cisa_kev else ""
+        )
+        age_str = (
+            f'<span style="font-size:.8rem;color:#64748b">{cve.days_since_disclosure}d ago</span>'
+            if cve.days_since_disclosure else ""
+        )
         cve_rows += (
             f"<tr style='border-bottom:1px solid #e2e8f0'>"
             f"<td style='padding:8px 10px;font-weight:600;white-space:nowrap'>{_e(cve.cve_id)}</td>"
             f"<td style='padding:8px 10px'>{_badge(cve.severity)} {cve.cvss_score:.1f}</td>"
+            f"<td style='padding:8px 10px'>{kev_badge} {age_str}</td>"
             f"<td style='padding:8px 10px;font-size:.9rem'>{_e(cve.description[:200])}</td>"
             f"<td style='padding:8px 10px'>{refs_html}</td>"
             f"</tr>\n"
         )
 
-    # ---- misconfiguration rows ----
+    # ---- misconfiguration rows / cards ----
     mc_rows = ""
     for mc in sorted(report.misconfigurations, key=lambda m: _SEV_ORDER.index(m.severity)):
+        mitre_tags = ""
+        if mc.mitre_techniques:
+            mitre_tags = " ".join(
+                f'<a href="{_e(_mitre_url(t))}" target="_blank" rel="noopener" '
+                f'style="display:inline-block;margin:0 2px;padding:1px 6px;border-radius:3px;'
+                f'background:#dbeafe;color:#1d4ed8;font-size:.75rem;font-weight:600;text-decoration:none">{_e(t)}</a>'
+                for t in mc.mitre_techniques
+            )
+        scenario_html = ""
+        if mc.attack_scenario:
+            scenario_html = (
+                f'<details style="margin-top:6px">'
+                f'<summary style="cursor:pointer;font-size:.85rem;color:#7c3aed;font-weight:600">&#128373; Attack scenario</summary>'
+                f'<div style="margin-top:6px;padding:8px 12px;background:#faf5ff;border-radius:6px;'
+                f'font-size:.85rem;line-height:1.6">{_nl2br(mc.attack_scenario)}</div></details>'
+            )
+        poc_html = ""
+        if mc.poc_command:
+            poc_html = (
+                f'<details style="margin-top:6px">'
+                f'<summary style="cursor:pointer;font-size:.85rem;color:#dc2626;font-weight:600">&#128192; PoC command</summary>'
+                f'<pre style="margin-top:6px;padding:10px;background:#1e293b;color:#f8fafc;border-radius:6px;'
+                f'font-size:.8rem;overflow-x:auto;white-space:pre-wrap;font-family:\'SF Mono\',monospace">'
+                f'{_e(mc.poc_command)}</pre></details>'
+            )
         mc_rows += (
-            f"<tr style='border-bottom:1px solid #e2e8f0'>"
+            f"<tr style='border-bottom:1px solid #e2e8f0;vertical-align:top'>"
             f"<td style='padding:8px 10px'>{_badge(mc.severity)}</td>"
             f"<td style='padding:8px 10px;font-weight:500'>{_e(mc.name)}</td>"
             f"<td style='padding:8px 10px;font-size:.9rem'>{_e(mc.description)}</td>"
             f"<td style='padding:8px 10px;font-size:.9rem'>{_e(mc.remediation)}</td>"
+            f"<td style='padding:8px 10px'>{mitre_tags}{scenario_html}{poc_html}</td>"
             f"</tr>\n"
+        )
+
+    # ---- attack chain section ----
+    attack_chain_section = ""
+    if report.attack_chains:
+        chain_cards = ""
+        for chain in report.attack_chains:
+            steps_html = "".join(
+                f'<li style="margin-bottom:6px"><span style="color:#7c3aed;font-weight:700">Step {i}:</span> {_e(s)}</li>'
+                for i, s in enumerate(chain.steps, 1)
+            )
+            mitre_badges = " ".join(
+                f'<a href="{_e(_mitre_url(t))}" target="_blank" rel="noopener" '
+                f'style="display:inline-block;margin:0 2px;padding:1px 6px;border-radius:3px;'
+                f'background:#dbeafe;color:#1d4ed8;font-size:.75rem;font-weight:600;text-decoration:none">{_e(t)}</a>'
+                for t in chain.mitre_techniques
+            )
+            svg = _attack_chain_svg(chain.steps)
+            chain_cards += (
+                f'<div style="margin-bottom:20px;border:1px solid #e9d5ff;border-radius:8px;'
+                f'background:#faf5ff;overflow:hidden">'
+                f'<div style="padding:10px 16px;border-bottom:1px solid #e9d5ff;background:#f3e8ff">'
+                f'<span style="font-weight:700;color:#6d28d9">&#9888; {_e(chain.name)}</span>'
+                f'</div>'
+                f'<div style="padding:16px;display:flex;gap:24px;flex-wrap:wrap">'
+                f'<div style="flex:1;min-width:260px">'
+                f'<p style="color:#4b5563;margin:0 0 12px;font-size:.9rem">{_e(chain.description)}</p>'
+                f'<ol style="margin:0 0 12px;padding-left:20px;font-size:.9rem">{steps_html}</ol>'
+                f'<div style="font-size:.85rem">{mitre_badges}</div>'
+                f'</div>'
+                f'<div style="display:flex;align-items:flex-start">{svg}</div>'
+                f'</div>'
+                f'</div>\n'
+            )
+        attack_chain_section = (
+            f'<section style="margin-bottom:40px">'
+            f'<h2 style="font-size:1.1rem;font-weight:700;color:#6d28d9;border-bottom:2px solid #e9d5ff;'
+            f'padding-bottom:8px;margin-bottom:16px">&#9947; Attack Chain Analysis</h2>'
+            f'<p style="font-size:.85rem;color:#64748b;margin-top:-8px;margin-bottom:16px">'
+            f'Multi-step kill chains are possible given the combination of findings present. '
+            f'Each chain represents a realistic, end-to-end attacker workflow.</p>'
+            f'{chain_cards}'
+            f'</section>'
         )
 
     # ---- error list ----
@@ -906,11 +1251,12 @@ def render_html(report: ScanReport) -> str:
         if report.errors else ""
     )
 
-    finished_str = ""
-    if report.finished_at:
-        finished_str = f"<br>Finished: {report.finished_at:%Y-%m-%d %H:%M:%S UTC}{duration}"
-
     depth_str = report.config.depth.value if report.config else "unknown"
+    pov_banner = (
+        '<div style="background:#7c3aed;color:#fff;text-align:center;padding:8px;font-size:.85rem;font-weight:600">'
+        '&#128373; Attacker\'s View — findings ordered by exploitability</div>'
+        if pov else ""
+    )
 
     html_doc = f"""<!DOCTYPE html>
 <html lang="en">
@@ -928,6 +1274,8 @@ def render_html(report: ScanReport) -> str:
 </style>
 </head>
 <body>
+
+{pov_banner}
 
 <!-- Header -->
 <header style="background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);color:#f8fafc;padding:32px 40px">
@@ -973,12 +1321,25 @@ def render_html(report: ScanReport) -> str:
     Total findings: <strong>{sum(counts.values())}</strong>
   </div>
   {_trend_sparkline_html(report)}
-  <div style="margin-top:10px;font-size:.85rem;color:#64748b">
-    Grade scale: <strong>A+</strong> = clean &nbsp;·&nbsp;
-    <strong>A/B</strong> = minor issues &nbsp;·&nbsp;
-    <strong>C</strong> = moderate risk &nbsp;·&nbsp;
-    <strong>D</strong> = significant risk &nbsp;·&nbsp;
-    <strong>F</strong> = critical exposure
+</section>
+
+<!-- What Could Happen -->
+<section style="margin-bottom:40px">
+  <h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">&#9888; What Could Happen — Consequence Assessment</h2>
+  <p style="font-size:.85rem;color:#64748b;margin-top:-8px;margin-bottom:12px">
+    The highlighted row shows the actual risk level for this site based on findings detected.
+  </p>
+  <div style="overflow-x:auto">
+  <table style="width:100%;border-collapse:collapse;font-size:.9rem;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
+    <thead>
+      <tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0">
+        <th style="padding:8px 12px;text-align:left;color:#64748b;font-weight:600;width:120px">Grade</th>
+        <th style="padding:8px 12px;text-align:left;color:#64748b;font-weight:600">If Left Unresolved…</th>
+        <th style="padding:8px 12px;text-align:left;color:#64748b;font-weight:600">Detail</th>
+      </tr>
+    </thead>
+    <tbody>{consequence_rows}</tbody>
+  </table>
   </div>
 </section>
 
@@ -994,31 +1355,40 @@ def render_html(report: ScanReport) -> str:
         <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Severity</th>
         <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Category</th>
         <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Title</th>
+        <th style="padding:8px 10px;text-align:center;color:#64748b;font-weight:600" title="Proof-of-concept command available">PoC</th>
       </tr>
     </thead>
-    <tbody>{matrix_rows}</tbody>
+    <tbody>{{matrix_rows}}</tbody>
   </table>
-  </div>'''}
+  </div>'''.format(matrix_rows=matrix_rows)}
 </section>
 
 <!-- Detailed Findings -->
 <section style="margin-bottom:40px">
   <h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">Detailed Findings</h2>
   <p style="font-size:.85rem;color:#64748b;margin-top:-8px;margin-bottom:16px">
-    Click <em>Issue Analysis</em> or <em>Remediation Steps</em> on any card to expand the deep-dive content.
+    Expand <em>&#128373; How an Attacker Exploits This</em> to see the realistic attack scenario.
+    Expand <em>&#128192; Attacker's Command</em> for a proof-of-concept command.
+    Click MITRE technique badges to open the MITRE ATT&amp;CK knowledge base.
   </p>
   {finding_cards if finding_cards else '<p style="color:#64748b">No findings.</p>'}
 </section>
 
+{attack_chain_section}
+
 <!-- CVE Correlation -->
 {f'''<section style="margin-bottom:40px">
   <h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">CVE Correlation</h2>
+  <p style="font-size:.85rem;color:#64748b;margin-top:-8px;margin-bottom:12px">
+    <strong>KEV</strong> = CISA Known Exploited Vulnerabilities catalog — active exploitation confirmed in the wild.
+  </p>
   <div style="overflow-x:auto">
   <table style="width:100%;border-collapse:collapse;font-size:.9rem">
     <thead>
       <tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0">
         <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">CVE ID</th>
         <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Severity / CVSS</th>
+        <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">KEV / Age</th>
         <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Description</th>
         <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Refs</th>
       </tr>
@@ -1039,6 +1409,7 @@ def render_html(report: ScanReport) -> str:
         <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Name</th>
         <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Description</th>
         <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Remediation</th>
+        <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Attack Context</th>
       </tr>
     </thead>
     <tbody>{mc_rows}</tbody>
@@ -1060,16 +1431,16 @@ def render_html(report: ScanReport) -> str:
     return html_doc
 
 
-def render(report: ScanReport, fmt: ReportFormat, *, brief: bool = False) -> str:
+def render(report: ScanReport, fmt: ReportFormat, *, brief: bool = False, attacker_pov: bool = False) -> str:
     if fmt == ReportFormat.JSON:
         return render_json(report)
     if fmt == ReportFormat.HTML:
-        return render_html(report)
+        return render_html(report, attacker_pov=attacker_pov)
     if fmt == ReportFormat.SARIF:
         return render_sarif(report)
     if fmt == ReportFormat.MARKDOWN:
-        return render_markdown(report, brief=brief)
-    return render_text(report, brief=brief)
+        return render_markdown(report, brief=brief, attacker_pov=attacker_pov)
+    return render_text(report, brief=brief, attacker_pov=attacker_pov)
 
 
 # ---------------------------------------------------------------------------
@@ -1208,7 +1579,7 @@ def render_fleet_dashboard(reports: list[ScanReport]) -> str:
 </html>"""
 
 
-def render_combined(reports: list[ScanReport], fmt: ReportFormat, *, brief: bool = False) -> str:
+def render_combined(reports: list[ScanReport], fmt: ReportFormat, *, brief: bool = False, attacker_pov: bool = False) -> str:
     """Render several reports into a single combined artifact.
 
     JSON and SARIF produce structured merges (a fleet object / multi-run SARIF).
@@ -1222,7 +1593,7 @@ def render_combined(reports: list[ScanReport], fmt: ReportFormat, *, brief: bool
         return render_fleet_dashboard(reports)
     if fmt == ReportFormat.MARKDOWN:
         return "\n\n---\n\n".join(
-            f"# Fleet report {idx}/{len(reports)} — {r.target}\n\n{render_markdown(r, brief=brief)}"
+            f"# Fleet report {idx}/{len(reports)} — {r.target}\n\n{render_markdown(r, brief=brief, attacker_pov=attacker_pov)}"
             for idx, r in enumerate(reports, 1)
         )
     banner = "\n\n" + _hr("#") + "\n"

@@ -130,6 +130,8 @@ class ScanConfig:
     # per-severity thresholds (e.g. critical=2); the global value is the fallback.
     sla_max_age: int = 0
     sla_severity_overrides: tuple[tuple[str, int], ...] = ()
+    # Report rendering options
+    attacker_pov: bool = False  # reorder findings by exploitability for attacker perspective
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +156,10 @@ class Finding:
     # Cross-scan age, populated from the persisted state on non-dry-run scans.
     first_seen: str = ""   # ISO timestamp this finding was first observed
     age_scans: int = 0     # consecutive scans this finding has been present (incl. current)
+    # Attack-context fields populated from the knowledge base.
+    attack_scenario: str = ""          # step-by-step attacker exploitation narrative
+    mitre_techniques: list[str] = field(default_factory=list)  # e.g. ["T1557", "T1040"]
+    poc_command: str = ""              # illustrative command/payload an attacker would use
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +173,8 @@ class CVERecord:
     severity: Severity
     cvss_score: float = 0.0
     references: list[str] = field(default_factory=list)
+    days_since_disclosure: int = 0  # days between published date and scan date
+    in_cisa_kev: bool = False        # True when CVE appears in CISA Known Exploited Vulnerabilities catalog
 
 
 @dataclass
@@ -178,6 +186,9 @@ class MisconfigurationCheck:
     severity: Severity
     evidence: str
     remediation: str
+    attack_scenario: str = ""
+    mitre_techniques: list[str] = field(default_factory=list)
+    poc_command: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +227,8 @@ class ScanReport:
     # Rolling trend window for this target (chronological compact snapshots:
     # {taken_at, total, counts}). Empty on dry runs / first scan.
     history: list[dict[str, Any]] = field(default_factory=list)
+    # Attack chains detected from the combination of misconfigurations present.
+    attack_chains: list[Any] = field(default_factory=list)
 
     # Convenience helpers -----------------------------------------------
 

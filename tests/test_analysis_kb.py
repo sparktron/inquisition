@@ -16,9 +16,16 @@ class AnalysisKbTests(unittest.TestCase):
                 self.assertEqual(keyword, keyword.lower())
                 self.assertNotIn(keyword, seen_keywords)
                 seen_keywords.add(keyword)
-                self.assertEqual(set(entry), {"analysis", "remediation"})
+                self.assertLessEqual(
+                    {"analysis", "remediation"},
+                    set(entry),
+                    msg="entry must contain at least 'analysis' and 'remediation'",
+                )
                 self.assertTrue(entry["analysis"].strip())
                 self.assertTrue(entry["remediation"].strip())
+                self.assertIsInstance(entry.get("attack_scenario", ""), str)
+                self.assertIsInstance(entry.get("mitre_techniques", []), list)
+                self.assertIsInstance(entry.get("poc_command", ""), str)
 
     def test_lookup_matches_first_keyword_in_order(self) -> None:
         exact = analysis_kb.lookup("Certificate EXPIRED")

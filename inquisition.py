@@ -320,6 +320,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Omit verbose deep-analysis and remediation guide from text/HTML report",
     )
 
+    parser.add_argument(
+        "--attacker-pov",
+        action="store_true",
+        dest="attacker_pov",
+        help=(
+            "Render findings from an attacker's perspective: ordered by exploitability "
+            "(easiest-to-exploit first), with PoC commands highlighted and kill chains "
+            "annotated. Useful for prioritising patching under time pressure."
+        ),
+    )
+
 
     parser.add_argument(
         "--threads",
@@ -675,6 +686,7 @@ def main(argv: list[str] | None = None) -> None:
                 config_by_target[target],
                 skip_auth=args.authorized or args.dry_run,
                 brief=args.brief,
+                attacker_pov=args.attacker_pov,
                 # In combined mode, suppress per-target files; one artifact is written below.
                 output_path=None if combined else _output_path_for(args.output, target, report_format, multi),
                 notify_url=args.notify_url,
@@ -708,7 +720,7 @@ def main(argv: list[str] | None = None) -> None:
         # --- Combined artifact spanning all targets ---
         if combined:
             from report import render_combined
-            artifact = render_combined(reports, report_format, brief=args.brief)
+            artifact = render_combined(reports, report_format, brief=args.brief, attacker_pov=args.attacker_pov)
             try:
                 with open(args.combined_output, "w", encoding="utf-8") as fh:
                     fh.write(artifact)

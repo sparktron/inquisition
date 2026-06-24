@@ -7,7 +7,7 @@
 
 **A comprehensive, read-only security reconnaissance scanner for identifying misconfigurations, exposed services, and known vulnerabilities on authorised targets.**
 
-Inquisition probes your target across DNS, network, TLS, HTTP, and application layers — then generates a detailed analysis of every issue found, explaining *why* it matters and *exactly how* to fix it. Reports include risk scoring, remediation priority matrices, and deep-dive guidance with platform-specific configuration examples.
+Inquisition probes your target across DNS, network, TLS, HTTP, and application layers — then generates a detailed analysis of every issue found, explaining *why* it matters, *how an attacker would exploit it*, and *exactly how* to fix it. Reports include risk scoring, remediation priority matrices, deep-dive guidance with platform-specific configuration examples, MITRE ATT&CK technique mappings, proof-of-concept attacker commands, and attack chain visualisations.
 
 **Read-only active reconnaissance by design.** No exploit payloads, authentication bypasses, injection attacks, login attempts, or data-modifying requests are sent. Inquisition does send non-mutating reconnaissance probes such as DNS lookups, TCP connects, HTTP `GET`/`OPTIONS`, CORS preflights, and GraphQL introspection checks, so only scan targets you are authorized to assess.
 
@@ -29,17 +29,24 @@ Inquisition probes your target across DNS, network, TLS, HTTP, and application l
 - **Content discovery** — **security.txt validation (RFC 9116)**, **robots.txt path leakage**, admin panels (Kibana, Grafana, Jenkins, Jupyter, Portainer, etc.), backup files, sensitive configs (`.env`, `docker-compose.yml`, `.htpasswd`)
 
 ### Vulnerability Analysis
-- **CVE correlation** — CPE-based lookup against the National Vulnerability Database (NVD) with CVSS scoring and references
+- **CVE correlation** — CPE-based lookup against the National Vulnerability Database (NVD) with CVSS scoring, days-since-disclosure, CISA KEV flag, and references
 - **Subdomain takeover detection** — Identifies dangling CNAMEs pointing to unclaimed Heroku apps, GitHub Pages, S3 buckets, etc.
 - **Misconfiguration detection** — 30+ pattern-matched rules for common security weaknesses (expired certs, legacy TLS, missing HSTS, exposed credentials, etc.)
+- **Attack chain detection** — Automatically derives multi-step kill chains from the combination of misconfigurations detected
 
 ### Reporting & Analysis
 - **Deep issue analysis** — Multi-paragraph explanations of what each vulnerability is, why it's dangerous, named CVE references, and real-world attack scenarios
+- **Attack scenarios** — Step-by-step attacker narratives for every finding and misconfiguration (e.g. sslstrip on a shared network, session token harvesting after HSTS bypass)
+- **MITRE ATT&CK mapping** — Every finding is tagged with relevant technique IDs (e.g. T1557, T1040) linking directly to the ATT&CK knowledge base
+- **Proof-of-concept commands** — Illustrative attacker commands (Bettercap, Nmap, Metasploit, sqlmap, etc.) show what exploitation looks like in practice
+- **Exploitability timeline** — CVEs display days-since-disclosure and a `⚠ KEV` badge when CISA has confirmed active exploitation in the wild
+- **Consequence ladder** — Plain-language table maps your security grade to real-world outcomes (data exfiltration, account takeover, full compromise)
+- **Attack chain visualisation** — HTML reports render inline SVG flowcharts for each detected multi-step kill chain
 - **Remediation guidance** — Step-by-step fix instructions with platform-specific examples (nginx, Apache, IIS, Docker, Kubernetes, AWS, Azure)
 - **Risk scoring & grading** — Weighted numeric score (0–∞) and security grade (A+ to F) derived from all findings
-- **Priority matrix** — Ranked table of CRITICAL/HIGH/MEDIUM findings sorted by severity
+- **Priority matrix** — Ranked table of CRITICAL/HIGH/MEDIUM findings sorted by severity (or exploitability in `--attacker-pov` mode)
 - **Finding deduplication** — Overlapping probes automatically collapsed to eliminate noise
-- **Text, JSON, and HTML output** — HTML reports are self-contained with collapsible sections for deep dives and remediation
+- **Text, Markdown, JSON, SARIF, and HTML output** — HTML reports are self-contained with collapsible attack scenario / PoC panels and inline SVG chain diagrams
 
 ---
 
@@ -141,6 +148,9 @@ python inquisition.py example.com -o report.html
 # 5. Brief text report (no remediation steps) to stdout
 python inquisition.py example.com --brief
 
+# 5a. Attacker's-eye-view — findings ordered by exploitability, PoC commands highlighted
+python inquisition.py example.com --attacker-pov -o report.html
+
 # 6. Internal hostname on custom port (standard scan)
 python inquisition.py internal.company.local --depth standard
 
@@ -203,20 +213,24 @@ The deep scan includes all ports 1–1024 plus a curated list of 133 additional 
 
 ### Output Formats
 
-Inquisition supports three output formats:
+Inquisition supports five output formats:
 
 ```bash
-python inquisition.py example.com -f text    # Human-readable (default)
-python inquisition.py example.com -f html    # Self-contained HTML with collapsible sections
-python inquisition.py example.com -f json    # Machine-readable JSON for parsing/integration
+python inquisition.py example.com -f text      # Human-readable (default)
+python inquisition.py example.com -f html      # Self-contained HTML with collapsible panels, SVG attack chains
+python inquisition.py example.com -f markdown  # GitHub-flavoured Markdown
+python inquisition.py example.com -f json      # Machine-readable JSON for parsing/integration
+python inquisition.py example.com -f sarif     # SARIF 2.1.0 for GitHub code scanning / CI gates
 ```
 
 When using `--output`, the format is inferred from the file extension:
 
 ```bash
 python inquisition.py example.com -o report.html   # → HTML format
+python inquisition.py example.com -o report.md     # → Markdown format
 python inquisition.py example.com -o report.json   # → JSON format
 python inquisition.py example.com -o report.txt    # → Text format
+python inquisition.py example.com -o report.sarif  # → SARIF format
 ```
 
 ### Options Reference
@@ -241,10 +255,11 @@ inquisition --targets-file hosts.txt --format sarif \
 #### Output & Reporting
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `-f`, `--format` | `text` \| `json` \| `html` \| `sarif` | `text` | Report output format |
+| `-f`, `--format` | `text` \| `json` \| `html` \| `sarif` \| `markdown` | `text` | Report output format |
 | `-o`, `--output` | path | stdout | Write report to file (for multiple targets, a per-target directory) |
 | `--combined-output` | path | none | Write a single artifact spanning all targets instead of per-target files |
 | `--brief` | flag | off | Omit deep-dive analysis and remediation sections |
+| `--attacker-pov` | flag | off | Render from an attacker's perspective: findings sorted by exploitability (easiest first), PoC commands highlighted, kill chains annotated |
 
 #### Concurrency & Timing
 | Option | Type | Default | Description |
@@ -407,12 +422,16 @@ Every completed scan produces the following sections:
 | Section | Description |
 |---|---|
 | **Executive Summary** | Finding counts by severity, CVE count, misconfiguration count, risk score, and security grade (A+–F) |
-| **Remediation Priority Matrix** | Ranked table of CRITICAL/HIGH/MEDIUM findings in severity order |
-| **Detailed Findings** | Per-finding evidence, brief impact statement, quick fix, CPE, and recommended tools |
-| **Deep Issue Analysis** | Multi-paragraph explanation of what each issue is, why it is dangerous, relevant CVEs, and real-world attack scenarios *(text/HTML only; omitted with `--brief`)* |
+| **What Could Happen** | Consequence ladder: plain-language table mapping your security grade to real-world outcomes, with the current grade highlighted |
+| **Remediation Priority Matrix** | Ranked table of CRITICAL/HIGH/MEDIUM findings in severity order (exploitability order with `--attacker-pov`), with PoC availability indicator |
+| **Detailed Findings** | Per-finding evidence, MITRE ATT&CK technique badges, impact, quick fix, CPE, and recommended tools |
+| **Attack Scenario** | Realistic step-by-step narrative of how an attacker would exploit each finding *(expandable panel in HTML; block-quote in Markdown)* |
+| **PoC Command** | Illustrative attacker command for each finding showing exploitation in practice *(expandable code panel in HTML; fenced code block in Markdown)* |
+| **Attack Chain Analysis** | Multi-step kill chains inferred from the combination of misconfigurations present, with inline SVG flowcharts (HTML) and MITRE technique tags |
+| **Deep Issue Analysis** | Multi-paragraph explanation of what each issue is, why it is dangerous, and relevant CVEs *(text/HTML only; omitted with `--brief`)* |
 | **Remediation Guide** | Step-by-step fix instructions with configuration examples for common platforms and verification commands *(text/HTML only; omitted with `--brief`)* |
-| **CVE Correlation** | CVEs matched to detected CPEs via the NVD API, with CVSS scores |
-| **Misconfiguration Summary** | Higher-level pattern analysis derived from the raw findings |
+| **CVE Correlation** | CVEs matched to detected CPEs via the NVD API, with CVSS scores, days since public disclosure, and CISA KEV badge for actively exploited CVEs |
+| **Misconfiguration Summary** | Higher-level pattern analysis derived from raw findings, with MITRE tags, attack scenarios, and PoC commands per entry |
 | **Tool Reference** | Recommended open-source tools for deeper investigation by category |
 
 ### Risk Score and Grade
@@ -438,7 +457,14 @@ The risk score is a weighted sum of finding severities:
 
 ### HTML Report
 
-The HTML report is a self-contained single file (no external dependencies). Each finding is rendered as a severity-coloured card. Click **Issue Analysis** or **Remediation Steps** on any card to expand the full deep-dive content inline.
+The HTML report is a self-contained single file (no external dependencies). Each finding is rendered as a severity-coloured card with expandable panels:
+
+- **Issue Analysis** — multi-paragraph deep-dive into what the issue is and why it matters
+- **How an Attacker Exploits This** — step-by-step realistic attack scenario (purple panel)
+- **Attacker's Command (PoC)** — illustrative exploitation command in a dark code block (red panel)
+- **Remediation Steps** — fix instructions with platform-specific examples
+
+The "What Could Happen" consequence table highlights your site's current grade row. CVEs include a red `⚠ KEV` badge when in the CISA Known Exploited Vulnerabilities catalog and a days-since-disclosure counter. Each attack chain is visualised as an inline SVG flowchart. Add `--attacker-pov` to get a purple banner and exploitability-sorted findings.
 
 ### Example Output (text)
 
@@ -791,7 +817,15 @@ python inquisition.py example.com -o report.html --depth deep
 # [*] Report saved to: report.html
 ```
 
-The generated HTML report includes severity-coloured finding cards, collapsible "Issue Analysis" and "Remediation Steps" sections, a CVE table with CVSS scores, and no external dependencies.
+The generated HTML report includes severity-coloured finding cards with collapsible "How an Attacker Exploits This" and "Attacker's Command (PoC)" panels; a consequence table showing your grade against real-world outcomes; a CVE table with CVSS scores, CISA KEV badges, and days-since-disclosure; attack chain SVG flowcharts; and zero external dependencies.
+
+### Example 2a: Attacker's-Eye-View Report
+
+```bash
+python inquisition.py example.com --attacker-pov -o report.html
+```
+
+Findings are reordered by exploitability (easiest first), proof-of-concept commands are highlighted, kill chains are annotated, and a purple "Attacker's View" banner appears at the top.
 
 ### Example 3: JSON Export for Automation
 
@@ -882,7 +916,7 @@ python inquisition.py example.com --dry-run --format json --output /tmp/inquisit
 
 The test suite includes deterministic recorded HTTP/DNS/socket fixtures for network-facing modules; tests should not require live external targets.
 
-Deep remediation text is stored as structured package data in `modules/data/analysis_kb.json` and loaded through `analysis_kb.py`. Keep the schema test passing whenever adding or editing knowledge-base entries.
+The knowledge base (`modules/data/analysis_kb.json`) is the single source of truth for deep-dive content. Every entry must contain `analysis`, `remediation`, `attack_scenario`, `mitre_techniques`, and `poc_command`. The schema test (`test_analysis_kb.py`) verifies this — keep it green whenever adding or editing entries.
 
 For bug reports or feature requests, provide:
 - Description of the issue
@@ -892,4 +926,4 @@ For bug reports or feature requests, provide:
 
 ---
 
-**Last updated:** June 2026
+**Last updated:** June 2026 — added MITRE ATT&CK tags, attack scenarios, PoC commands, CISA KEV enrichment, attack chain detection and SVG visualisation, consequence ladder, and `--attacker-pov` mode
