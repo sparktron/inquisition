@@ -209,6 +209,9 @@ class TlsAnalysisModule(BaseModule):
                 category=FindingCategory.TLS,
                 severity=Severity.INFO,
                 evidence=f"SHA-256: {sha256}",
+                # Structured copy so consumers (e.g. fleet_correlation) read a
+                # stable field instead of regex-parsing the evidence prose.
+                metadata={"cert_sha256": sha256},
             ))
 
         if cert:

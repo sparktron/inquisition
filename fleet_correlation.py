@@ -106,24 +106,44 @@ class CrossTargetLink:
 
 
 def _target_ips(report: "ScanReport") -> set[str]:
-    """Resolved IP addresses for a target, parsed from its DNS findings."""
+    """Resolved IP addresses for a target.
+
+    Prefers the structured ``metadata['resolved_ips']`` stamped by ``dns_recon``;
+    falls back to regex-parsing the evidence prose for legacy snapshots that
+    predate the structured field.
+    """
     ips: set[str] = set()
     for f in report.findings:
-        if f.title == "DNS A/AAAA records":
-            m = _RESOLVES_RE.search(f.evidence)
-            if m:
-                ips.update(p.strip() for p in m.group(1).split(",") if p.strip())
+        if f.title != "DNS A/AAAA records":
+            continue
+        structured = f.metadata.get("resolved_ips")
+        if isinstance(structured, list):
+            ips.update(str(ip).strip() for ip in structured if str(ip).strip())
+            continue
+        m = _RESOLVES_RE.search(f.evidence)
+        if m:
+            ips.update(p.strip() for p in m.group(1).split(",") if p.strip())
     return ips
 
 
 def _target_cert_fingerprints(report: "ScanReport") -> set[str]:
-    """SHA-256 certificate fingerprints presented by a target."""
+    """SHA-256 certificate fingerprints presented by a target.
+
+    Prefers the structured ``metadata['cert_sha256']`` stamped by
+    ``tls_analysis``; falls back to regex-parsing the evidence for legacy
+    snapshots.
+    """
     fps: set[str] = set()
     for f in report.findings:
-        if f.title == "Certificate fingerprint":
-            m = _SHA256_RE.search(f.evidence)
-            if m:
-                fps.add(m.group(1).lower())
+        if f.title != "Certificate fingerprint":
+            continue
+        structured = f.metadata.get("cert_sha256")
+        if isinstance(structured, str) and structured.strip():
+            fps.add(structured.strip().lower())
+            continue
+        m = _SHA256_RE.search(f.evidence)
+        if m:
+            fps.add(m.group(1).lower())
     return fps
 
 

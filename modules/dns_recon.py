@@ -103,6 +103,9 @@ class DnsReconModule(BaseModule):
                 category=FindingCategory.DNS,
                 severity=Severity.INFO,
                 evidence=f"{target} resolves to: {', '.join(sorted(ips))}",
+                # Structured copy so consumers (e.g. fleet_correlation) read a
+                # stable field instead of regex-parsing the evidence prose.
+                metadata={"resolved_ips": sorted(ips)},
             ))
         else:
             findings.append(Finding(

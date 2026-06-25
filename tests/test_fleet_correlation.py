@@ -44,6 +44,53 @@ _FP_A = "a" * 64
 _FP_B = "b" * 64
 
 
+def _dns_structured(target: str, ips: list[str], *, evidence: str = "reworded prose") -> Finding:
+    # Carries the structured metadata dns_recon now stamps, with deliberately
+    # reworded evidence prose the legacy regex would NOT match.
+    return Finding(
+        title="DNS A/AAAA records", category=FindingCategory.DNS,
+        severity=Severity.INFO, evidence=evidence,
+        metadata={"resolved_ips": ips},
+    )
+
+
+def _cert_structured(fp: str, *, evidence: str = "reworded prose") -> Finding:
+    return Finding(
+        title="Certificate fingerprint", category=FindingCategory.TLS,
+        severity=Severity.INFO, evidence=evidence,
+        metadata={"cert_sha256": fp},
+    )
+
+
+class StructuredMetadataTests(unittest.TestCase):
+    def test_shared_ip_from_metadata_ignores_prose(self) -> None:
+        reports = [
+            _report("a.com", [_dns_structured("a.com", ["203.0.113.5"])]),
+            _report("b.com", [_dns_structured("b.com", ["203.0.113.5"])]),
+        ]
+        links = fleet_correlation.correlate_fleet(reports)
+        self.assertEqual([l.kind for l in links], ["shared_ip"])
+        self.assertEqual(links[0].shared, "203.0.113.5")
+
+    def test_shared_cert_from_metadata_ignores_prose(self) -> None:
+        reports = [
+            _report("a.com", [_cert_structured(_FP_A)]),
+            _report("b.com", [_cert_structured(_FP_A.upper())]),
+        ]
+        links = fleet_correlation.correlate_fleet(reports)
+        self.assertEqual([l.kind for l in links], ["shared_cert"])
+        self.assertEqual(links[0].shared, _FP_A)
+
+    def test_legacy_prose_still_parsed_without_metadata(self) -> None:
+        # No metadata → falls back to regex over the legacy evidence string.
+        reports = [
+            _report("a.com", [_dns("a.com", "203.0.113.5")]),
+            _report("b.com", [_dns("b.com", "203.0.113.5")]),
+        ]
+        links = fleet_correlation.correlate_fleet(reports)
+        self.assertEqual([l.kind for l in links], ["shared_ip"])
+
+
 class CorrelateFleetTests(unittest.TestCase):
     def test_single_target_has_no_links(self) -> None:
         self.assertEqual(fleet_correlation.correlate_fleet([_report("a.com", [])]), [])
