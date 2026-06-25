@@ -274,7 +274,27 @@ def _path_to(state: str, predecessor: dict[str, Edge]) -> list[Edge]:
 
 
 def build_attack_graph(report: "ScanReport") -> AttackGraph:
-    """Build the attacker-state graph for a scan report."""
+    """Build the attacker-state graph for a scan report.
+
+    Memoized on the report instance: the renderers build this graph more than
+    once per render (text + html), and it is a pure function of the report's
+    misconfigurations and findings. The cache key includes the identity and
+    length of both lists so it self-invalidates if either is replaced or grown.
+    """
+    token = (
+        id(report.misconfigurations), len(report.misconfigurations),
+        id(report.findings), len(report.findings),
+    )
+    cached = getattr(report, "_attack_graph_cache", None)
+    if cached is not None and cached[0] == token:
+        graph: AttackGraph = cached[1]
+        return graph
+    result = _compute_attack_graph(report)
+    setattr(report, "_attack_graph_cache", (token, result))
+    return result
+
+
+def _compute_attack_graph(report: "ScanReport") -> AttackGraph:
     active_names = {mc.name for mc in report.misconfigurations}
     candidates = _all_candidate_edges(active_names)
     candidates += _active_finding_edges(report)

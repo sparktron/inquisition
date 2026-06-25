@@ -152,7 +152,22 @@ def exposure_index(report: "ScanReport") -> int:
     Measures *how much door is open* (open services, exposed files, weak
     transport, missing controls) rather than severity. Repeated signals of the
     same kind add with diminishing returns so one noisy category cannot dominate.
+
+    The result is memoized on the report instance — the renderers call this
+    several times per render (text/markdown/json/html), and the score is a pure
+    function of the findings. The cache key includes the findings-list identity
+    and length so it self-invalidates if the findings are replaced or appended.
     """
+    token = (id(report.findings), len(report.findings))
+    cached = getattr(report, "_exposure_index_cache", None)
+    if cached is not None and cached[0] == token:
+        return int(cached[1])
+    value = _compute_exposure_index(report)
+    setattr(report, "_exposure_index_cache", (token, value))
+    return value
+
+
+def _compute_exposure_index(report: "ScanReport") -> int:
     buckets: dict[str, int] = {}
     for f in report.findings:
         kind = _classify_exposure(f)

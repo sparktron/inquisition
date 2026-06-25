@@ -193,5 +193,37 @@ class AttackStoryTests(unittest.TestCase):
         self.assertIn("Objective:", captured["prompt"])
 
 
+class BuildAttackGraphMemoTests(unittest.TestCase):
+    def test_repeat_calls_compute_once(self) -> None:
+        from unittest import mock
+        r = _report("exposed_git_directory")
+        with mock.patch.object(
+            attack_graph, "_compute_attack_graph",
+            wraps=attack_graph._compute_attack_graph,
+        ) as spy:
+            g1 = attack_graph.build_attack_graph(r)
+            g2 = attack_graph.build_attack_graph(r)
+            attack_graph.attack_story(r)  # also builds the graph internally
+        self.assertIs(g1, g2)
+        self.assertEqual(spy.call_count, 1)  # cached on the report instance
+
+    def test_cache_invalidates_on_misconfig_change(self) -> None:
+        from unittest import mock
+        r = _report("exposed_git_directory")
+        attack_graph.build_attack_graph(r)
+        r.misconfigurations = list(r.misconfigurations) + [
+            MisconfigurationCheck(
+                name="exposed_env_file", description="d", severity=Severity.HIGH,
+                evidence="e", remediation="r", attack_scenario="",
+            )
+        ]
+        with mock.patch.object(
+            attack_graph, "_compute_attack_graph",
+            wraps=attack_graph._compute_attack_graph,
+        ) as spy:
+            attack_graph.build_attack_graph(r)
+        self.assertEqual(spy.call_count, 1)  # recomputed after the change
+
+
 if __name__ == "__main__":
     unittest.main()

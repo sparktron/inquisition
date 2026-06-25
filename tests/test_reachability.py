@@ -79,5 +79,31 @@ class ExposureIndexTests(unittest.TestCase):
         self.assertEqual(reachability.exposure_index(self._report(*findings)), 100)
 
 
+class ExposureIndexMemoTests(unittest.TestCase):
+    def _report(self, *findings: Finding) -> ScanReport:
+        r = ScanReport(target="example.com", started_at=datetime.now(timezone.utc))
+        r.findings = list(findings)
+        return r
+
+    def test_repeat_calls_compute_once(self) -> None:
+        from unittest import mock
+        r = self._report(_f("Redis exposed to internet", FindingCategory.PORT))
+        with mock.patch.object(
+            reachability, "_compute_exposure_index",
+            wraps=reachability._compute_exposure_index,
+        ) as spy:
+            first = reachability.exposure_index(r)
+            second = reachability.exposure_index(r)
+        self.assertEqual(first, second)
+        self.assertEqual(spy.call_count, 1)  # cached on the report instance
+
+    def test_cache_invalidates_on_findings_change(self) -> None:
+        r = self._report(_f("Redis exposed to internet", FindingCategory.PORT))
+        before = reachability.exposure_index(r)
+        r.findings.append(_f(".env file exposed", FindingCategory.TECH_STACK))
+        after = reachability.exposure_index(r)
+        self.assertGreater(after, before)  # recomputed, not stale
+
+
 if __name__ == "__main__":
     unittest.main()
