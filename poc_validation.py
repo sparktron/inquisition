@@ -68,6 +68,17 @@ _CURL_MUTATING_FLAGS: frozenset[str] = frozenset(
 
 _CURL_SAFE_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
 
+# curl reads these as a config file that can itself declare mutating options
+# (-d, -o, -X POST, …), so an apparently read-only command could smuggle a write
+# past the flag scan. Reject them outright.
+_CURL_CONFIG_FLAGS: frozenset[str] = frozenset({"-K", "--config"})
+
+# Only web schemes are in scope for a read-only probe. ``file://``, ``gopher://``,
+# ``dict://`` etc. can read local files or reach internal services, so a curl
+# carrying any non-web scheme is rejected.
+_CURL_SAFE_SCHEMES: frozenset[str] = frozenset({"http", "https"})
+_URL_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.\-]*)://")
+
 # curl flags that already make the exit code reflect HTTP success, so we don't
 # inject our own. ``--fail`` / ``-f`` make curl exit non-zero on HTTP >= 400.
 _CURL_FAIL_FLAGS: frozenset[str] = frozenset({"-f", "--fail", "--fail-with-body", "--fail-early"})
@@ -172,6 +183,8 @@ def _classify_curl(tokens: list[str]) -> tuple[bool, str]:
         flag = tok.split("=", 1)[0]
         if flag in _CURL_MUTATING_FLAGS:
             return False, f"curl flag '{flag}' sends data or writes a file"
+        if flag in _CURL_CONFIG_FLAGS:
+            return False, f"curl flag '{flag}' reads a config file that can declare mutating options"
         if flag in ("-X", "--request"):
             method = ""
             if "=" in tok:
@@ -180,6 +193,11 @@ def _classify_curl(tokens: list[str]) -> tuple[bool, str]:
                 method = tokens[i + 1]
             if method.upper() not in _CURL_SAFE_METHODS:
                 return False, f"curl uses mutating method '{method}'"
+        # Any token carrying an explicit URL scheme must be a web scheme; reject
+        # file://, gopher://, dict:// etc. that read local files or reach inward.
+        scheme_match = _URL_SCHEME_RE.match(tok)
+        if scheme_match and scheme_match.group(1).lower() not in _CURL_SAFE_SCHEMES:
+            return False, f"curl URL scheme '{scheme_match.group(1)}' is not http(s)"
     return True, ""
 
 

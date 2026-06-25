@@ -89,6 +89,30 @@ class ClassifyTests(unittest.TestCase):
     def test_empty_rejected(self) -> None:
         self.assertFalse(poc_validation.classify_command("   ")[0])
 
+    def test_curl_config_flag_rejected(self) -> None:
+        # -K/--config reads a file that can itself declare mutating options.
+        safe, reason = poc_validation.classify_command("curl -K /tmp/c https://x")
+        self.assertFalse(safe)
+        self.assertIn("config", reason)
+        self.assertFalse(
+            poc_validation.classify_command("curl --config=/tmp/c https://x")[0]
+        )
+
+    def test_curl_file_scheme_rejected(self) -> None:
+        safe, reason = poc_validation.classify_command("curl -s file:///etc/passwd")
+        self.assertFalse(safe)
+        self.assertIn("scheme", reason)
+
+    def test_curl_gopher_scheme_rejected(self) -> None:
+        self.assertFalse(
+            poc_validation.classify_command("curl -s gopher://127.0.0.1:6379/_INFO")[0]
+        )
+
+    def test_curl_https_scheme_allowed(self) -> None:
+        self.assertTrue(
+            poc_validation.classify_command("curl -s https://example.com/.env")[0]
+        )
+
 
 class ValidateFindingTests(unittest.TestCase):
     def test_no_poc_returns_none(self) -> None:
