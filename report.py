@@ -1762,10 +1762,12 @@ def _fleet_summary(reports: list[ScanReport]) -> dict[str, Any]:
 
 def render_json_combined(reports: list[ScanReport]) -> str:
     """One JSON document holding every target's report plus a fleet summary."""
+    import fleet_correlation
     data: dict[str, Any] = {
         "tool": "inquisition",
         "report_type": "fleet",
         "fleet_summary": _fleet_summary(reports),
+        "cross_target_correlation": fleet_correlation.analyze(reports).as_dict(),
         "reports": [_json_report_dict(r) for r in reports],
         "tool_reference": {cat.value: tools for cat, tools in TOOL_REFERENCE.items()},
     }
@@ -1842,6 +1844,8 @@ def render_fleet_dashboard(reports: list[ScanReport]) -> str:
         "<th style='padding:10px 12px;text-align:left'>Trend</th>"
     )
 
+    correlation_section = _fleet_correlation_html(reports)
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1873,9 +1877,46 @@ def render_fleet_dashboard(reports: list[ScanReport]) -> str:
   <p style="margin-top:16px;font-size:.8rem;color:#94a3b8">
     Sorted by risk score (highest first). Trend sparkline shows total findings across each target's recent scans.
   </p>
-</main>
+{correlation_section}</main>
 </body>
 </html>"""
+
+
+def _fleet_correlation_html(reports: list[ScanReport]) -> str:
+    """Cross-target attack-path section for the fleet dashboard (Theme D / D1)."""
+    import fleet_correlation
+    links = fleet_correlation.correlate_fleet(reports)
+    if not links:
+        return ""
+
+    rows = ""
+    for link in links:
+        bg, fg, _ = _SEV_CSS[link.severity]
+        targets = ", ".join(_e(t) for t in link.targets)
+        rows += (
+            "<tr style='border-bottom:1px solid #e2e8f0;vertical-align:top'>"
+            f"<td style='padding:10px 12px;white-space:nowrap'>"
+            f"<span style='display:inline-block;padding:1px 7px;border-radius:4px;font-size:.72rem;"
+            f"font-weight:700;background:{bg};color:{fg}'>{_e(link.label)}</span></td>"
+            f"<td style='padding:10px 12px;font-weight:600'>{targets}</td>"
+            f"<td style='padding:10px 12px;font-size:.85rem;color:#475569'>"
+            f"{_e(link.detail)}<br><span style='color:#b91c1c'>{_e(link.attack_note)}</span></td>"
+            "</tr>\n"
+        )
+
+    return (
+        "<section style='margin-top:32px'>"
+        "<h2 style='font-size:1.1rem;font-weight:700;color:#b91c1c;border-bottom:2px solid #fecaca;"
+        "padding-bottom:8px;margin-bottom:8px'>&#128279; Cross-Target Attack Paths</h2>"
+        "<p style='font-size:.8rem;color:#64748b;margin-top:0;margin-bottom:16px'>"
+        "Shared infrastructure and trust relationships that let one weak host endanger the rest of the fleet.</p>"
+        "<table style='width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden'>"
+        "<thead style='background:#f1f5f9;font-size:.8rem;color:#475569;text-align:left'><tr>"
+        "<th style='padding:10px 12px'>Relationship</th>"
+        "<th style='padding:10px 12px'>Targets</th>"
+        "<th style='padding:10px 12px'>Detail &amp; attacker abuse</th>"
+        f"</tr></thead><tbody>\n{rows}</tbody></table></section>\n"
+    )
 
 
 def render_combined(reports: list[ScanReport], fmt: ReportFormat, *, brief: bool = False, attacker_pov: bool = False) -> str:

@@ -127,12 +127,19 @@ Turns a long scroll into an explorable model.
 ## Theme D — Fleet-Level Attack Paths
 *"How does one weak host endanger the rest?"* — leverages the existing fleet mode.
 
-**D1. Cross-target correlation**
+**D1. Cross-target correlation** — ✅ DONE
 The fleet already scans many targets (`fleet_config.py`, `_run_targets`). Connect
 them: a subdomain-takeover on `dev.target.com` that bypasses CSP on
 `www.target.com`; shared TLS certs / shared origin IPs / trust relationships;
 one compromised host as a pivot. Produce an **org-level attack graph** spanning
-targets, not just per-target graphs.
+targets, not just per-target graphs. `fleet_correlation.py` derives cross-target
+links purely from signals already in the findings (no new traffic): **shared
+origin IP** (co-hosted → one box yields many sites + pivot), **shared TLS
+certificate** (shared key → impersonation), and **subdomain-takeover pivot**
+(trusted-origin phishing/trust abuse against siblings). Links carry an attacker
+value, are ranked worst-first, embedded in the combined JSON
+(`cross_target_correlation`) and rendered as a "Cross-Target Attack Paths"
+section in the fleet HTML dashboard.
 
 **D2. Blast-radius & crown-jewel analysis**
 Let users tag targets by value (in `fleet_config.yaml`); compute which low-value
