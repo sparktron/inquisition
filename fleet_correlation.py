@@ -58,6 +58,17 @@ _LINK_LABEL: dict[str, str] = {
 _SHA256_RE = re.compile(r"SHA-?256:\s*([0-9a-fA-F]{64})")
 _RESOLVES_RE = re.compile(r"resolves to:\s*(.+)$")
 
+# Business value of a target, set via ``asset_value`` in the fleet config
+# (Theme D / D2). Untagged targets get a modest baseline so an all-untagged
+# fleet still produces a sensible blast-radius ranking.
+_ASSET_WEIGHT: dict[str, int] = {
+    "crown": 100,
+    "high": 70,
+    "medium": 40,
+    "low": 15,
+    "": 30,  # untagged baseline
+}
+
 
 @dataclass(frozen=True)
 class CrossTargetLink:
@@ -204,20 +215,116 @@ def correlate_fleet(reports: list["ScanReport"]) -> list[CrossTargetLink]:
     return links
 
 
+def _asset_value(report: "ScanReport") -> str:
+    """The configured business-value tier of a target ('' when untagged)."""
+    cfg = report.config
+    tier = getattr(cfg, "asset_value", "") if cfg is not None else ""
+    return tier if tier in _ASSET_WEIGHT else ""
+
+
+@dataclass(frozen=True)
+class BlastRadius:
+    """How much *other* asset value a single target's compromise endangers."""
+
+    target: str
+    value: str                          # this target's own asset-value tier
+    endangered: tuple[str, ...]         # other targets reachable via links
+    endangered_value: int               # summed weight of the endangered targets
+    via: tuple[str, ...]                # link kinds that connect this target out
+
+    @property
+    def own_weight(self) -> int:
+        return _ASSET_WEIGHT.get(self.value, _ASSET_WEIGHT[""])
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "target": self.target,
+            "value": self.value or "untagged",
+            "endangered": list(self.endangered),
+            "endangered_value": self.endangered_value,
+            "via": list(self.via),
+        }
+
+
+def blast_radius(reports: list["ScanReport"]) -> list[BlastRadius]:
+    """Rank targets by the high-value assets their compromise would endanger.
+
+    Correlation links are treated as undirected edges; targets in the same
+    connected component can pivot to one another. A target's blast radius is the
+    total asset value of the *other* targets in its component — so a low-value
+    host bridged to a crown jewel ranks high, pointing remediation at the cheap
+    pivot rather than only at locally-severe findings. Returns worst-first;
+    empty when there are no cross-target links.
+    """
+    links = correlate_fleet(reports)
+    if not links:
+        return []
+
+    adjacency: dict[str, set[str]] = {}
+    via: dict[str, set[str]] = {}
+    for link in links:
+        for a in link.targets:
+            for b in link.targets:
+                if a != b:
+                    adjacency.setdefault(a, set()).add(b)
+            via.setdefault(a, set()).add(link.kind)
+
+    weights = {r.target: _ASSET_WEIGHT[_asset_value(r)] for r in reports}
+    values = {r.target: _asset_value(r) for r in reports}
+
+    # Connected components via BFS over the undirected link graph.
+    components: list[set[str]] = []
+    unseen = set(adjacency)
+    while unseen:
+        start = next(iter(unseen))
+        comp: set[str] = set()
+        stack = [start]
+        while stack:
+            node = stack.pop()
+            if node in comp:
+                continue
+            comp.add(node)
+            stack.extend(adjacency.get(node, set()) - comp)
+        components.append(comp)
+        unseen -= comp
+
+    results: list[BlastRadius] = []
+    for comp in components:
+        for target in comp:
+            endangered = sorted(comp - {target})
+            results.append(BlastRadius(
+                target=target,
+                value=values.get(target, ""),
+                endangered=tuple(endangered),
+                endangered_value=sum(weights.get(t, _ASSET_WEIGHT[""]) for t in endangered),
+                via=tuple(sorted(via.get(target, set()))),
+            ))
+
+    results.sort(key=lambda b: (-b.endangered_value, b.target))
+    return results
+
+
 @dataclass
 class FleetCorrelation:
     """Container for the cross-target analysis of a fleet run."""
 
     links: list[CrossTargetLink] = field(default_factory=list)
+    blast_radius: list[BlastRadius] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
         return not self.links
 
     def as_dict(self) -> dict[str, object]:
-        return {"links": [link.as_dict() for link in self.links]}
+        return {
+            "links": [link.as_dict() for link in self.links],
+            "blast_radius": [b.as_dict() for b in self.blast_radius],
+        }
 
 
 def analyze(reports: list["ScanReport"]) -> FleetCorrelation:
     """Convenience wrapper returning a :class:`FleetCorrelation`."""
-    return FleetCorrelation(links=correlate_fleet(reports))
+    return FleetCorrelation(
+        links=correlate_fleet(reports),
+        blast_radius=blast_radius(reports),
+    )

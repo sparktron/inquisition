@@ -137,6 +137,10 @@ class ScanConfig:
     sla_severity_overrides: tuple[tuple[str, int], ...] = ()
     # Report rendering options
     attacker_pov: bool = False  # reorder findings by exploitability for attacker perspective
+    # Fleet crown-jewel tagging (Theme D / D2): the business value of this target,
+    # one of crown/high/medium/low (or "" = unset). Drives blast-radius analysis,
+    # which ranks remediation by the high-value assets a weak host endangers.
+    asset_value: str = ""
 
 
 # ---------------------------------------------------------------------------

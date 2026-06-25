@@ -1845,6 +1845,7 @@ def render_fleet_dashboard(reports: list[ScanReport]) -> str:
     )
 
     correlation_section = _fleet_correlation_html(reports)
+    blast_section = _fleet_blast_radius_html(reports)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1877,9 +1878,55 @@ def render_fleet_dashboard(reports: list[ScanReport]) -> str:
   <p style="margin-top:16px;font-size:.8rem;color:#94a3b8">
     Sorted by risk score (highest first). Trend sparkline shows total findings across each target's recent scans.
   </p>
-{correlation_section}</main>
+{correlation_section}{blast_section}</main>
 </body>
 </html>"""
+
+
+_ASSET_TIER_CSS: dict[str, str] = {
+    "crown": "#7c3aed", "high": "#dc2626", "medium": "#ca8a04",
+    "low": "#16a34a", "untagged": "#64748b",
+}
+
+
+def _fleet_blast_radius_html(reports: list[ScanReport]) -> str:
+    """Blast-radius / crown-jewel section for the fleet dashboard (Theme D / D2)."""
+    import fleet_correlation
+    ranked = fleet_correlation.blast_radius(reports)
+    if not ranked:
+        return ""
+
+    rows = ""
+    for b in ranked:
+        tier = b.value or "untagged"
+        tier_color = _ASSET_TIER_CSS.get(tier, "#64748b")
+        endangered = ", ".join(_e(t) for t in b.endangered) or "—"
+        rows += (
+            "<tr style='border-bottom:1px solid #e2e8f0;vertical-align:top'>"
+            f"<td style='padding:10px 12px;font-weight:600'>{_e(b.target)}</td>"
+            f"<td style='padding:10px 12px'><span style='color:{tier_color};font-weight:700;"
+            f"text-transform:capitalize'>{_e(tier)}</span></td>"
+            f"<td style='padding:10px 12px;text-align:center;font-weight:800;color:#b91c1c'>{b.endangered_value}</td>"
+            f"<td style='padding:10px 12px;font-size:.85rem;color:#475569'>{endangered}</td>"
+            "</tr>\n"
+        )
+
+    return (
+        "<section style='margin-top:32px'>"
+        "<h2 style='font-size:1.1rem;font-weight:700;color:#7c3aed;border-bottom:2px solid #ddd6fe;"
+        "padding-bottom:8px;margin-bottom:8px'>&#128081; Blast Radius &amp; Crown Jewels</h2>"
+        "<p style='font-size:.8rem;color:#64748b;margin-top:0;margin-bottom:16px'>"
+        "Remediation priority by the asset value a host's compromise would endanger across the fleet "
+        "(a cheap pivot bridged to a crown jewel ranks above a locally-severe but isolated host). "
+        "Tag targets with <code>asset_value: crown|high|medium|low</code> in the fleet config.</p>"
+        "<table style='width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden'>"
+        "<thead style='background:#f1f5f9;font-size:.8rem;color:#475569;text-align:left'><tr>"
+        "<th style='padding:10px 12px'>Target</th>"
+        "<th style='padding:10px 12px'>Asset value</th>"
+        "<th style='padding:10px 12px;text-align:center'>Endangered value</th>"
+        "<th style='padding:10px 12px'>Endangers</th>"
+        f"</tr></thead><tbody>\n{rows}</tbody></table></section>\n"
+    )
 
 
 def _fleet_correlation_html(reports: list[ScanReport]) -> str:

@@ -5,16 +5,17 @@ import unittest
 from datetime import datetime, timezone
 
 import fleet_correlation
-from models import Finding, FindingCategory, ScanReport, Severity
+from models import Finding, FindingCategory, ScanConfig, ScanReport, Severity
 from report import render_fleet_dashboard, render_json_combined
 
 
-def _report(target: str, findings: list[Finding]) -> ScanReport:
+def _report(target: str, findings: list[Finding], *, asset_value: str = "") -> ScanReport:
     return ScanReport(
         target=target,
         started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         finished_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         findings=findings,
+        config=ScanConfig(target=target, asset_value=asset_value),
     )
 
 
@@ -99,6 +100,50 @@ class CorrelateFleetTests(unittest.TestCase):
         self.assertEqual(fleet_correlation.correlate_fleet(reports), [])
 
 
+class BlastRadiusTests(unittest.TestCase):
+    def test_empty_without_links(self) -> None:
+        reports = [
+            _report("a.com", [_dns("a.com", "203.0.113.5")]),
+            _report("b.com", [_dns("b.com", "198.51.100.9")]),
+        ]
+        self.assertEqual(fleet_correlation.blast_radius(reports), [])
+
+    def test_low_value_pivot_to_crown_ranks_first(self) -> None:
+        # A low-value dev box co-hosted with a crown-jewel host: hardening the dev
+        # box removes the pivot, so it must rank as top remediation priority.
+        reports = [
+            _report("dev.x.com", [_dns("dev.x.com", "203.0.113.5")], asset_value="low"),
+            _report("crown.x.com", [_dns("crown.x.com", "203.0.113.5")], asset_value="crown"),
+            _report("isolated.x.com", [_dns("isolated.x.com", "10.0.0.1")], asset_value="high"),
+        ]
+        ranked = fleet_correlation.blast_radius(reports)
+        top = ranked[0]
+        # dev.x.com endangers the crown jewel (weight 100)
+        self.assertEqual(top.target, "dev.x.com")
+        self.assertEqual(top.endangered, ("crown.x.com",))
+        self.assertEqual(top.endangered_value, 100)
+        # the isolated host is not part of any link -> not ranked
+        self.assertNotIn("isolated.x.com", {b.target for b in ranked})
+
+    def test_value_reflects_tier_weights(self) -> None:
+        reports = [
+            _report("a.com", [_dns("a.com", "203.0.113.5")], asset_value="medium"),
+            _report("b.com", [_dns("b.com", "203.0.113.5")], asset_value="low"),
+        ]
+        by_target = {b.target: b for b in fleet_correlation.blast_radius(reports)}
+        self.assertEqual(by_target["a.com"].endangered_value, 15)   # endangers low
+        self.assertEqual(by_target["b.com"].endangered_value, 40)   # endangers medium
+
+    def test_untagged_uses_baseline_weight(self) -> None:
+        reports = [
+            _report("a.com", [_dns("a.com", "203.0.113.5")]),
+            _report("b.com", [_dns("b.com", "203.0.113.5")]),
+        ]
+        b = fleet_correlation.blast_radius(reports)[0]
+        self.assertEqual(b.value, "")
+        self.assertEqual(b.endangered_value, 30)  # baseline for one untagged peer
+
+
 class CorrelationRenderingTests(unittest.TestCase):
     def _fleet(self) -> list[ScanReport]:
         return [
@@ -108,10 +153,21 @@ class CorrelationRenderingTests(unittest.TestCase):
 
     def test_json_combined_embeds_correlation(self) -> None:
         doc = json.loads(render_json_combined(self._fleet()))
-        links = doc["cross_target_correlation"]["links"]
+        corr = doc["cross_target_correlation"]
+        links = corr["links"]
         self.assertEqual(len(links), 1)
         self.assertEqual(links[0]["kind"], "shared_ip")
         self.assertEqual(links[0]["targets"], ["a.com", "b.com"])
+        self.assertEqual(len(corr["blast_radius"]), 2)
+
+    def test_dashboard_shows_blast_radius_section(self) -> None:
+        reports = [
+            _report("dev.com", [_dns("dev.com", "203.0.113.5")], asset_value="low"),
+            _report("crown.com", [_dns("crown.com", "203.0.113.5")], asset_value="crown"),
+        ]
+        html = render_fleet_dashboard(reports)
+        self.assertIn("Blast Radius &amp; Crown Jewels", html)
+        self.assertIn("Endangered value", html)
 
     def test_dashboard_shows_correlation_section(self) -> None:
         html = render_fleet_dashboard(self._fleet())

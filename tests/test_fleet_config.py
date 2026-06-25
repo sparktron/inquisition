@@ -50,6 +50,12 @@ class ResolveTests(unittest.TestCase):
         c = resolved_configs(cfg, _base())[0]
         self.assertEqual(dict(c.sla_severity_overrides), {"critical": 1, "high": 3})
 
+    def test_asset_value_coerced_and_validated(self) -> None:
+        cfg = {"targets": [{"target": "a.com", "asset_value": "Crown"}]}
+        self.assertEqual(resolved_configs(cfg, _base())[0].asset_value, "crown")
+        with self.assertRaises(FleetConfigError):
+            resolved_configs({"targets": [{"target": "a.com", "asset_value": "vital"}]}, _base())
+
     def test_unknown_field_raises(self) -> None:
         with self.assertRaises(FleetConfigError):
             resolved_configs({"targets": [{"target": "a.com", "bogus": 1}]}, _base())

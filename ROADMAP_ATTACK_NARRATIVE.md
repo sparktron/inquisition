@@ -141,10 +141,18 @@ value, are ranked worst-first, embedded in the combined JSON
 (`cross_target_correlation`) and rendered as a "Cross-Target Attack Paths"
 section in the fleet HTML dashboard.
 
-**D2. Blast-radius & crown-jewel analysis**
+**D2. Blast-radius & crown-jewel analysis** — ✅ DONE
 Let users tag targets by value (in `fleet_config.yaml`); compute which low-value
 exposures provide paths to high-value assets. Rank remediation by *blast radius
 reduced*, not just local severity. Surface in `render_fleet_dashboard`.
+`ScanConfig.asset_value` (crown/high/medium/low; settable per target via the
+fleet config, validated in `fleet_config._coerce`) feeds
+`fleet_correlation.blast_radius(reports)`: it treats the D1 cross-target links as
+an undirected graph, and a target's blast radius is the total asset value of the
+*other* targets in its connected component — so a cheap pivot bridged to a crown
+jewel ranks above a locally-severe but isolated host. Ranked worst-first, embedded
+in the combined JSON (`cross_target_correlation.blast_radius`) and rendered as a
+"Blast Radius & Crown Jewels" section in the fleet HTML dashboard.
 
 ---
 

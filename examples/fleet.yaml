@@ -7,15 +7,21 @@ defaults:
   sla_max_age: 5
 
 targets:
-  - marketing.example.com
+  - target: marketing.example.com
+    asset_value: low
 
+  # asset_value (crown|high|medium|low) drives blast-radius / crown-jewel
+  # analysis: a low-value host bridged (shared IP/cert, takeover) to a crown
+  # jewel ranks high for remediation because hardening it protects the jewel.
   - target: api.example.com
     depth: deep
+    asset_value: crown
     sla_by_severity:
       critical: 1
       high: 3
     auth_header: "Authorization: Bearer ${API_TOKEN}"
 
   - target: legacy.example.com
+    asset_value: medium
     ports: [80, 443, 8080, 8443]
     timeout: 20

@@ -31,6 +31,8 @@ from models import ScanConfig, ScanDepth, Severity
 _ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 _STR_FIELDS = {"auth_header", "auth_cookie", "active_engine"}
+# Valid crown-jewel asset-value tiers (Theme D / D2).
+_ASSET_VALUES = {"crown", "high", "medium", "low"}
 _INT_FIELDS = {"max_threads", "sla_max_age"}
 _FLOAT_FIELDS = {"rate_limit", "timeout", "connect_timeout"}
 _BOOL_FIELDS = {"active", "validate_poc"}
@@ -114,6 +116,13 @@ def _coerce(key: str, value: Any) -> tuple[str, Any]:
             raise FleetConfigError("ports must be a list of integers") from None
     if key == "sla_by_severity":
         return "sla_severity_overrides", _coerce_sla(value)
+    if key == "asset_value":
+        tier = str(value).lower()
+        if tier not in _ASSET_VALUES:
+            raise FleetConfigError(
+                f"invalid asset_value: {value!r} (use crown/high/medium/low)"
+            )
+        return "asset_value", tier
     if key in _INT_FIELDS:
         return key, int(value)
     if key in _FLOAT_FIELDS:
