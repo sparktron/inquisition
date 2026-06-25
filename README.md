@@ -7,11 +7,11 @@
 
 **A comprehensive, read-only security reconnaissance scanner for identifying misconfigurations, exposed services, and known vulnerabilities on authorised targets.**
 
-Inquisition probes your target across DNS, network, TLS, HTTP, and application layers — then generates a detailed analysis of every issue found, explaining *why* it matters, *how an attacker would exploit it*, and *exactly how* to fix it. Reports include risk scoring, remediation priority matrices, deep-dive guidance with platform-specific configuration examples, MITRE ATT&CK technique mappings, proof-of-concept attacker commands, and attack chain visualisations.
+Inquisition probes your target across DNS, network, TLS, HTTP, and application layers — then generates a detailed analysis of every issue found, explaining *why* it matters, *how an attacker would exploit it*, and *exactly how* to fix it. Reports include risk scoring, remediation priority matrices, deep-dive guidance with platform-specific configuration examples, MITRE ATT&CK technique mappings (with Navigator export), proof-of-concept attacker commands, and attack-chain visualisations. Beyond a flat finding list, it builds a **dynamic attack graph** of reachable attacker objectives, narrates the single most dangerous path in plain English, prioritizes CVEs by real-world exploit probability (KEV + EPSS + public-exploit availability), can **safely auto-validate** read-only proofs into confirmed evidence, labels every claim with its provenance, and — across a fleet — connects targets into org-level attack paths with blast-radius / crown-jewel ranking.
 
 **Read-only active reconnaissance by design.** No exploit payloads, authentication bypasses, injection attacks, login attempts, or data-modifying requests are sent. Inquisition does send non-mutating reconnaissance probes such as DNS lookups, TCP connects, HTTP `GET`/`OPTIONS`, CORS preflights, and GraphQL introspection checks, so only scan targets you are authorized to assess.
 
-> **Current review status:** Inquisition is a useful external reconnaissance baseline, but it is not yet a complete "all clear" security assurance tool. A June 2026 code review fixed the first correctness issues and tracks remaining coverage gaps in [ROADMAP.md](ROADMAP.md). Do not rely on reports alone for production security sign-off.
+> **Current status:** Inquisition is a strong external reconnaissance and attack-narrative tool, but external recon alone is not a complete "all clear" for production sign-off. The original correctness/coverage roadmap ([ROADMAP.md](ROADMAP.md), phases 0–4) and the attack-narrative roadmap ([ROADMAP_ATTACK_NARRATIVE.md](ROADMAP_ATTACK_NARRATIVE.md), themes A–F: exploitability scoring, dynamic attack graph, holistic reporting, fleet attack paths, safe validation, and intel freshness) are both complete. Active payload testing still requires the external Nuclei/ZAP engines, and authenticated/internal assessment remains out of scope.
 
 ## Key Features
 
@@ -29,7 +29,8 @@ Inquisition probes your target across DNS, network, TLS, HTTP, and application l
 - **Content discovery** — **security.txt validation (RFC 9116)**, **robots.txt path leakage**, admin panels (Kibana, Grafana, Jenkins, Jupyter, Portainer, etc.), backup files, sensitive configs (`.env`, `docker-compose.yml`, `.htpasswd`)
 
 ### Vulnerability Analysis
-- **CVE correlation** — CPE-based lookup against the National Vulnerability Database (NVD) with CVSS scoring, days-since-disclosure, CISA KEV flag, and references
+- **CVE correlation** — CPE-based lookup against the National Vulnerability Database (NVD) with CVSS scoring, days-since-disclosure, and references
+- **Real-world exploitation triage** — every CVE is ranked by the industry-standard triad: **CISA KEV** (exploited now) > **public exploit available** (local Nuclei template) > **FIRST.org EPSS** probability (exploited soon) > CVSS (how bad)
 - **Subdomain takeover detection** — Identifies dangling CNAMEs pointing to unclaimed Heroku apps, GitHub Pages, S3 buckets, etc.
 - **Misconfiguration detection** — 30+ pattern-matched rules for common security weaknesses (expired certs, legacy TLS, missing HSTS, exposed credentials, etc.)
 - **Attack chain detection** — Automatically derives multi-step kill chains from the combination of misconfigurations detected
@@ -47,6 +48,23 @@ Inquisition probes your target across DNS, network, TLS, HTTP, and application l
 - **Priority matrix** — Ranked table of CRITICAL/HIGH/MEDIUM findings sorted by severity (or exploitability in `--attacker-pov` mode)
 - **Finding deduplication** — Overlapping probes automatically collapsed to eliminate noise
 - **Text, Markdown, JSON, SARIF, and HTML output** — HTML reports are self-contained with collapsible attack scenario / PoC panels and inline SVG chain diagrams
+
+### Attack-Narrative Intelligence
+*Turns a flat list of findings into a connected, prioritized, evidence-backed picture of how an attacker actually compromises the target.*
+- **Dynamic attack graph** — models attacker *states* (external → on-path → credentials → code-execution → data-access → cloud-account → …) with findings as the edges between them; a traversal from an external position reveals every reachable objective and the shortest path to each, ranked by **feasibility-discounted value** and rendered as a Mermaid diagram
+- **Executive attack story** — a plain-English narrative of the single most dangerous reachable path, end to end (optional LLM-assisted phrasing, deterministic template fallback so the tool stays offline-capable)
+- **Exposure index (0–100)** — a measure of *how much door is open* (reachable unauthenticated services, admin panels, secret files, weak transport, missing controls), distinct from the severity-weighted risk score
+- **Reachability modeling** — every finding is tagged with the attacker preconditions it implies (network position, auth required, victim interaction) that weight the graph
+- **MITRE ATT&CK Navigator export** — `--attack-navigator` emits a `layer.json` overlaying observed techniques on the standard ATT&CK matrix
+- **Safe PoC auto-validation** — `--validate` runs only the read-only verification probes attached to findings (`curl -sI`, `dig`, `openssl s_client`, status checks) to capture **live evidence** and upgrade a finding from *modeled* to *confirmed*; the captured output is attached as an evidence bundle in JSON/HTML/SARIF (mutating PoCs are never run)
+- **Provenance on every claim** — each attacker claim is labelled by where it came from — *modeled* (knowledge base) vs *confirmed* (live PoC validation or active-scan payload match) — so a hypothesis is never mistaken for proof
+- **Threat-intel freshness** — reports show when each external feed is current as of (CISA KEV catalog version/date, FIRST.org EPSS, NVD, local Nuclei templates) and flag stale intel, since stale data in a security tool is a silent false-negative
+
+### Fleet & Attack-Path Intelligence
+- **Multi-target fleet mode** — scan many related hosts in one run (positional targets, `--targets-file`, or a `--fleet-config`), concurrently with `--jobs`, into per-target reports or one combined artifact
+- **Cross-target correlation** — connects the fleet into an org-level view from signals already in the findings: **shared origin IP** (co-hosted — one box yields many sites + a pivot), **shared TLS certificate** (shared private key → impersonation), and **subdomain-takeover pivots** (trusted-origin phishing against siblings)
+- **Blast-radius & crown-jewel analysis** — tag targets by business value (`asset_value: crown|high|medium|low`) and Inquisition ranks remediation by the high-value assets a weak host endangers, so a cheap pivot bridged to a crown jewel rises above a locally-severe but isolated host
+- **Fleet HTML dashboard** — one page ranking every target by risk with grade, severity counts, trend sparkline, Δ-vs-last-scan, the cross-target attack paths, and the blast-radius ranking
 
 ---
 
@@ -323,7 +341,7 @@ Each scan is diffed against the previous run for the same target (state is kept 
 - **Fleet HTML dashboard** — a fleet run with `--combined-output report.html` renders one dashboard page ranking every target by risk, with grade, severity counts, a per-target trend sparkline, and a Δ-vs-last-scan column.
 - **Prometheus/OpenMetrics** — `--metrics-output metrics.prom` writes scrape-able gauges (findings by severity, risk score, CVE/misconfig counts, oldest finding age, scan duration) for every target. `--metrics-push http://gateway:9091` pushes the current gauges to a Pushgateway, and `--metrics-history` adds the findings trend as timestamped samples (for backfill; not pushed, since the Pushgateway rejects timestamps). `--metrics-serve 9092` exposes the latest metrics at `http://HOST:9092/metrics` for Prometheus to **scrape** (refreshed after each scan) — the natural pairing with `--watch` — and serves `/healthz` (liveness) and `/readyz` (readiness, 503 until the first cycle completes) for orchestrators.
 - **Audit log** — `--audit-log audit.jsonl` appends one structured JSON line per scan cycle (targets, severity counts, highest severity, durations, fail-on status) for ingestion into a log pipeline or SIEM. Rotation is controlled by **size** (`--audit-max-bytes`) or **age** (`--audit-max-age-days` — rotates when the oldest record in the log exceeds the given number of days), keeping `--audit-backups` files to bound disk use. Both triggers can be combined.
-- **Fleet config** — `--fleet-config fleet.json` (or `.yaml`) defines the target list and per-target overrides (depth, ports, auth, SLA, …) so a single run can scan many targets with different settings. Per-target settings override a `defaults` block, which overrides the CLI flags. String values may reference environment variables as `${VAR}` (an undefined variable is an error, so secrets fail loudly rather than leak a literal placeholder).
+- **Fleet config** — `--fleet-config fleet.json` (or `.yaml`) defines the target list and per-target overrides (depth, ports, auth, SLA, `asset_value`, …) so a single run can scan many targets with different settings. Per-target settings override a `defaults` block, which overrides the CLI flags. String values may reference environment variables as `${VAR}` (an undefined variable is an error, so secrets fail loudly rather than leak a literal placeholder). Tag a target's business value with `asset_value: crown|high|medium|low` to drive the blast-radius / crown-jewel ranking in the fleet dashboard.
 - **Watch / daemon mode** — `--watch SECONDS` re-scans every target on an interval until interrupted, pairing naturally with `--fleet-config`, `--notify`, and `--metrics-push`/`--metrics-serve` for continuous monitoring. In watch mode `--fail-on` only warns (it does not exit the loop), `--watch-jitter` staggers targets to spread load, and the daemon responds to signals: **SIGHUP** reloads the fleet config without restarting, **SIGUSR1** triggers an immediate scan cycle (skipping the rest of the interval), **SIGTERM** drains (finishes the in-flight cycle, then exits 0), and Ctrl-C/SIGINT stops immediately.
 - **History retention** — `--history-max-age-days` prunes the trend window by age in addition to the `--history-size` count cap.
 
@@ -429,17 +447,19 @@ Every completed scan produces the following sections:
 | **Executive Summary** | Finding counts by severity, CVE count, misconfiguration count, risk score, and security grade (A+–F) |
 | **What Could Happen** | Consequence ladder: plain-language table mapping your security grade to real-world outcomes, with the current grade highlighted |
 | **Remediation Priority Matrix** | Ranked table of CRITICAL/HIGH/MEDIUM findings in severity order (exploitability order with `--attacker-pov`), with PoC availability indicator |
-| **Detailed Findings** | Per-finding evidence, MITRE ATT&CK technique badges, impact, quick fix, CPE, and recommended tools |
+| **Detailed Findings** | Per-finding evidence, MITRE ATT&CK technique badges, impact, quick fix, CPE, confidence, **provenance** (modeled vs confirmed), and recommended tools |
 | **Attack Scenario** | Realistic step-by-step narrative of how an attacker would exploit each finding *(expandable panel in HTML; block-quote in Markdown)* |
 | **PoC Command** | Illustrative attacker command for each finding showing exploitation in practice *(expandable code panel in HTML; fenced code block in Markdown)* |
+| **Live Validation Evidence** | When `--validate` is used, the captured output of the read-only verification probe that *confirmed* a finding — attached as a green panel in HTML, a `poc_validation` bundle in JSON, and `result.properties` in SARIF |
 | **Attack Chain Analysis** | Multi-step kill chains inferred from the combination of findings present (data-driven rules in `modules/data/attack_chains.yaml`, matched by a predicate DSL), with inline SVG flowcharts (HTML) and MITRE technique tags |
 | **Executive Attack Story** | A plain-English narrative of the single most dangerous reachable attack path (top objective, the steps to reach it, and the concrete scenario behind the first weakness) — a red callout in HTML, a section in text/markdown |
-| **Attack Graph — Reachable Objectives** | Emergent attacker-state graph: each finding is an edge between attacker states, and a traversal from an external position reveals every objective an attacker can reach (RCE, data access, cloud takeover, lateral movement, …), ranked by **feasibility-discounted value** (a remote/unauth route outranks one needing an on-path position) with the shortest path to each — rendered as a Mermaid diagram in HTML |
+| **Attack Graph — Reachable Objectives** | Emergent attacker-state graph: each finding is an edge between attacker states, and a traversal from an external position reveals every objective an attacker can reach (RCE, data access, cloud takeover, lateral movement, …), ranked by **feasibility-discounted value** (a remote/unauth route outranks one needing an on-path position) with the shortest path to each — rendered as a Mermaid diagram in HTML. With `--active`, confirmed Nuclei/ZAP vulns enter the graph as **confirmed edges** (thick, ✓-flagged) that outrank merely-modeled paths |
 | **MITRE ATT&CK Coverage** | Every finding mapped to ATT&CK techniques (explicit or category-level fallback), grouped by tactic in kill-chain order; exportable as a Navigator layer with `--attack-navigator` |
 | **Deep Issue Analysis** | Multi-paragraph explanation of what each issue is, why it is dangerous, and relevant CVEs *(text/HTML only; omitted with `--brief`)* |
 | **Remediation Guide** | Step-by-step fix instructions with configuration examples for common platforms and verification commands *(text/HTML only; omitted with `--brief`)* |
 | **CVE Correlation** | CVEs matched to detected CPEs via the NVD API, **ranked by real-world exploitation risk** — CISA KEV (actively exploited) > public exploit available (local Nuclei template) > FIRST.org EPSS probability > CVSS — with EPSS percentile and exploit badges |
 | **Misconfiguration Summary** | Higher-level pattern analysis derived from raw findings, with MITRE tags, attack scenarios, and PoC commands per entry |
+| **Threat Intelligence** | Freshness/provenance of every external feed consulted (CISA KEV catalog version + date, FIRST.org EPSS, NVD, local Nuclei templates), with a fresh/stale status — stale intel is a silent false-negative |
 | **Tool Reference** | Recommended open-source tools for deeper investigation by category |
 
 ### Risk Score and Grade
@@ -476,9 +496,19 @@ The HTML report is a self-contained single file (the only optional external depe
 - **Issue Analysis** — multi-paragraph deep-dive into what the issue is and why it matters
 - **How an Attacker Exploits This** — step-by-step realistic attack scenario (purple panel)
 - **Attacker's Command (PoC)** — illustrative exploitation command in a dark code block (red panel)
+- **Live Validation Evidence** — when `--validate` confirmed the finding, the captured probe output (green panel)
 - **Remediation Steps** — fix instructions with platform-specific examples
 
-The "What Could Happen" consequence table highlights your site's current grade row. CVEs include a red `⚠ KEV` badge when in the CISA Known Exploited Vulnerabilities catalog and a days-since-disclosure counter. Each attack chain is visualised as an inline SVG flowchart. Add `--attacker-pov` to get a purple banner and exploitability-sorted findings.
+Each card also carries a **provenance** badge (green *confirmed* via live validation / active scan, grey *modeled* from the knowledge base) so a proven issue is visually distinct from a hypothesis. The "What Could Happen" consequence table highlights your site's current grade row. CVEs include a red `⚠ KEV` badge when in the CISA Known Exploited Vulnerabilities catalog and a days-since-disclosure counter. Each attack chain is visualised as an inline SVG flowchart. Add `--attacker-pov` to get a purple banner and exploitability-sorted findings.
+
+### Fleet Reporting
+
+A multi-target run can emit one **fleet dashboard** (`--combined-output report.html`) that ranks every target by risk and adds two org-level views:
+
+- **Cross-Target Attack Paths** — relationships that let one weak host endanger the rest, derived from signals already in the findings (no extra traffic): shared origin IP (co-hosting), shared TLS certificate (shared key), and subdomain-takeover pivots into the trusted org perimeter.
+- **Blast Radius & Crown Jewels** — when targets are tagged with `asset_value` (`crown`/`high`/`medium`/`low`) in the fleet config, remediation is ranked by the asset value a host's compromise would endanger across the fleet — surfacing the cheap pivot bridged to a crown jewel ahead of a locally-severe but isolated host.
+
+The same cross-target correlation and blast-radius data is embedded under `cross_target_correlation` in the combined JSON artifact.
 
 ### Example Output (text)
 
@@ -780,6 +810,8 @@ By default, Inquisition is entirely **read-only**. The standard scan (without `-
 | Side effects on the target | None | May trigger WAF alerts, appear in access logs, consume rate-limit quota |
 | Needs explicit authorization | Yes (one prompt) | Yes (a second, separate prompt specifically for active scanning) |
 | Finds | Misconfigurations, missing headers, weak crypto | Same as passive, plus exploitable injection points, exposed panels, template-matched CVEs |
+
+Confirmed active findings are also **fed back into the attack graph** as confirmed edges: a verified XSS, SQLi, RCE, SSRF, or access-control bypass is mapped to the attacker state it grants and elevated above merely-modeled paths, so the most dangerous *proven* objective rises to the top of the reachable-objectives ranking.
 
 ### How Nuclei integration works
 
