@@ -21,6 +21,11 @@ and annotates the finding:
 Anything that mutates state — a POST/PUT, an upload, a shell pipeline, an
 injection payload — is **never executed**; it stays display-only. The classifier
 fails closed: when in doubt, a command is rejected.
+
+A probe only *confirms* a finding when it exits cleanly with **evidence of a
+successful response**. ``curl`` is therefore run with ``--fail`` injected so its
+exit code reflects the HTTP status (>= 400 → non-zero); without it curl exits 0
+on a 404 and a missing resource would masquerade as confirmation.
 """
 
 from __future__ import annotations
@@ -62,6 +67,10 @@ _CURL_MUTATING_FLAGS: frozenset[str] = frozenset(
 )
 
 _CURL_SAFE_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
+
+# curl flags that already make the exit code reflect HTTP success, so we don't
+# inject our own. ``--fail`` / ``-f`` make curl exit non-zero on HTTP >= 400.
+_CURL_FAIL_FLAGS: frozenset[str] = frozenset({"-f", "--fail", "--fail-with-body", "--fail-early"})
 
 # Cap captured output so a chatty probe can't bloat the report / state file.
 _MAX_OUTPUT_CHARS = 4000
@@ -183,6 +192,28 @@ def _classify_openssl(tokens: list[str]) -> tuple[bool, str]:
     return True, ""
 
 
+def _harden_curl(argv: list[str]) -> list[str]:
+    """Make a curl probe's exit code reflect HTTP success.
+
+    Without ``--fail``, ``curl`` exits 0 even on a 4xx/5xx response — it only
+    fails on transport errors. That means a probe hitting a **404** (e.g. the
+    ``.env`` an attacker hoped to read is gone) would still exit 0 and be
+    treated as confirmation, falsely promoting the finding to *confirmed*.
+    Injecting ``--fail`` makes curl exit non-zero on HTTP >= 400, so an exit 0
+    genuinely means the resource responded successfully.
+
+    Leaves non-curl argv untouched, and respects a ``--fail`` the author already
+    supplied. (A 3xx redirect still exits 0 without ``-L``; that is an accepted
+    limitation — the resource did respond.)
+    """
+    if not argv or os.path.basename(argv[0]) != "curl":
+        return argv
+    flags = {tok.split("=", 1)[0] for tok in argv[1:]}
+    if flags & _CURL_FAIL_FLAGS:
+        return argv
+    return [argv[0], "--fail", *argv[1:]]
+
+
 def _candidate_commands(poc_command: str) -> list[str]:
     """Split a possibly multi-line ``poc_command`` into individual commands."""
     return [line.strip() for line in poc_command.splitlines() if line.strip()]
@@ -242,6 +273,10 @@ def _run_check(
         check.skipped_reason = f"unparseable at run time ({exc})"
         check.safe = False
         return
+    # Harden curl so exit 0 means a successful HTTP response, not just a
+    # completed request (see _harden_curl). check.command keeps the original
+    # text for display; only the executed argv is adjusted.
+    argv = _harden_curl(argv)
     try:
         proc = runner(argv, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:

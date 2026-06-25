@@ -159,6 +159,40 @@ class ValidateFindingTests(unittest.TestCase):
         self.assertEqual(len(runner.calls), 1)  # type: ignore[attr-defined]
         self.assertEqual(len(result.checks), 3)
 
+    def test_curl_run_injects_fail(self) -> None:
+        # curl must run with --fail so its exit code reflects HTTP status.
+        f = _f("curl -sI https://example.com/.env")
+        runner = _runner(returncode=0, stdout="HTTP/2 200")
+        poc_validation.validate_finding(f, runner=runner)
+        argv = runner.calls[0]  # type: ignore[attr-defined]
+        self.assertEqual(argv[0], "curl")
+        self.assertIn("--fail", argv)
+
+    def test_curl_existing_fail_not_doubled(self) -> None:
+        f = _f("curl --fail -sI https://example.com")
+        runner = _runner()
+        poc_validation.validate_finding(f, runner=runner)
+        argv = runner.calls[0]  # type: ignore[attr-defined]
+        self.assertEqual(argv.count("--fail"), 1)
+
+    def test_non_curl_not_hardened(self) -> None:
+        f = _f("dig +short example.com")
+        runner = _runner()
+        poc_validation.validate_finding(f, runner=runner)
+        self.assertNotIn("--fail", runner.calls[0])  # type: ignore[attr-defined]
+
+    def test_curl_http_error_does_not_confirm(self) -> None:
+        # A 404 under --fail makes curl exit 22 — the resource is gone, so the
+        # finding must NOT be promoted to confirmed (regression: P0 overclaim).
+        f = _f("curl -sI https://example.com/.env", confidence=Confidence.MEDIUM)
+        runner = _runner(returncode=22, stdout="", stderr="curl: (22) 404")
+        result = poc_validation.validate_finding(f, runner=runner)
+        assert result is not None
+        self.assertTrue(result.attempted)
+        self.assertFalse(result.confirmed)
+        self.assertEqual(f.confidence, Confidence.MEDIUM)  # not promoted
+        self.assertIn("Attempted validation", f.verification)
+
     def test_output_truncated(self) -> None:
         f = _f("curl -sI https://x")
         runner = _runner(stdout="A" * 9000)
