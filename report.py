@@ -24,6 +24,7 @@ import analysis_kb
 import mitre
 import attack_graph
 import reachability
+import provenance
 
 _SEV_ORDER = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO]
 
@@ -402,6 +403,7 @@ def render_text(report: ScanReport, *, brief: bool = False, attacker_pov: bool =
                 lines.append(f"    Step {i}: {step}")
             if chain.mitre_techniques:
                 lines.append(f"\n    MITRE: {', '.join(chain.mitre_techniques)}")
+            lines.append("    Provenance: Modeled — knowledge-base rule")
             lines.append("")
 
     # --- Attack Graph (reachable objectives) ---
@@ -428,6 +430,17 @@ def render_text(report: ScanReport, *, brief: bool = False, attacker_pov: bool =
                 current_tactic = hit.tactic
                 lines.append(f"  {current_tactic}")
             lines.append(f"    {hit.technique_id:<12s} {hit.name}  (x{hit.count})")
+        lines.append("")
+
+    # --- Threat-intel freshness (F1) ---
+    if report.intel_sources:
+        lines.append(_section("THREAT INTELLIGENCE"))
+        lines.append("  Freshness of the external feeds consulted for this scan.\n")
+        for s in report.intel_sources:
+            as_of = f"as of {s.as_of}" if s.as_of else "date unknown"
+            stale = "  [STALE — refresh recommended]" if s.stale else ""
+            count_str = f", {s.item_count} records" if s.item_count else ""
+            lines.append(f"  {s.name:<22s} {as_of} ({s.detail}{count_str}){stale}")
         lines.append("")
 
     # --- Tool Reference Table ---
@@ -751,6 +764,9 @@ def _finding_to_dict(f: Finding) -> dict[str, Any]:
         d["verification"] = f.verification
     if isinstance(f.metadata.get("poc_validation"), dict):
         d["poc_validation"] = f.metadata["poc_validation"]
+    prov = provenance.finding_provenance(f)
+    if prov:
+        d["provenance"] = {"tier": prov.tier, "source": prov.source}
     if f.cpe:
         d["cpe"] = f.cpe
     if f.age_scans:
@@ -802,6 +818,17 @@ def _json_report_dict(report: ScanReport) -> dict[str, Any]:
         ],
         "errors": report.errors,
     }
+    if report.intel_sources:
+        data["threat_intel"] = [
+            {
+                "name": s.name,
+                "as_of": s.as_of,
+                "detail": s.detail,
+                "item_count": s.item_count,
+                "stale": s.stale,
+            }
+            for s in report.intel_sources
+        ]
     if report.history:
         trend = compute_trend(report.history)
         data["history"] = report.history
@@ -1190,6 +1217,14 @@ def render_html(report: ScanReport, *, attacker_pov: bool = False) -> str:
             rows = f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Category</td><td>{_e(f.category.value)}</td></tr>\n"
             if f.confidence is not Confidence.CONFIRMED:
                 rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Confidence</td><td>{_e(f.confidence.value)}</td></tr>\n"
+            prov = provenance.finding_provenance(f)
+            if prov:
+                pc = "#16a34a" if prov.confirmed else "#64748b"
+                rows += (
+                    "<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Provenance</td>"
+                    f"<td><span style='display:inline-block;padding:1px 7px;border-radius:4px;font-size:.72rem;"
+                    f"font-weight:700;background:{pc}1a;color:{pc}'>{_e(prov.label)}</span></td></tr>\n"
+                )
             rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Evidence</td><td><code style='font-size:.85rem;background:#f1f5f9;padding:1px 4px;border-radius:3px'>{_e(f.evidence)}</code></td></tr>\n"
             if mitre_ids:
                 mitre_links = " ".join(
@@ -1538,6 +1573,40 @@ def render_html(report: ScanReport, *, attacker_pov: bool = False) -> str:
         if report.errors else ""
     )
 
+    # ---- threat-intel freshness (F1) ----
+    intel_section = ""
+    if report.intel_sources:
+        intel_rows = ""
+        for s in report.intel_sources:
+            as_of = _e(s.as_of) if s.as_of else "<span style='color:#94a3b8'>unknown</span>"
+            flag = (
+                "<span style='color:#dc2626;font-weight:600'>stale — refresh</span>"
+                if s.stale else "<span style='color:#16a34a'>fresh</span>"
+            )
+            count = str(s.item_count) if s.item_count else "—"
+            intel_rows += (
+                "<tr style='border-bottom:1px solid #e2e8f0'>"
+                f"<td style='padding:6px 10px;font-weight:600'>{_e(s.name)}</td>"
+                f"<td style='padding:6px 10px'>{as_of}</td>"
+                f"<td style='padding:6px 10px;color:#475569'>{_e(s.detail)}</td>"
+                f"<td style='padding:6px 10px;text-align:right'>{count}</td>"
+                f"<td style='padding:6px 10px'>{flag}</td></tr>\n"
+            )
+        intel_section = (
+            '<section style="margin-bottom:40px">'
+            '<h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">Threat Intelligence</h2>'
+            '<p style="font-size:.85rem;color:#64748b;margin-top:-8px;margin-bottom:12px">'
+            'Freshness of the external feeds consulted for this scan — stale intel is a silent false-negative.</p>'
+            '<table style="width:100%;border-collapse:collapse;font-size:.9rem">'
+            '<thead><tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0">'
+            '<th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Source</th>'
+            '<th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">As of</th>'
+            '<th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Detail</th>'
+            '<th style="padding:8px 10px;text-align:right;color:#64748b;font-weight:600">Records</th>'
+            '<th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Status</th>'
+            f"</tr></thead><tbody>{intel_rows}</tbody></table></section>"
+        )
+
     depth_str = report.config.depth.value if report.config else "unknown"
     pov_banner = (
         '<div style="background:#7c3aed;color:#fff;text-align:center;padding:8px;font-size:.85rem;font-weight:600">'
@@ -1714,6 +1783,8 @@ def render_html(report: ScanReport, *, attacker_pov: bool = False) -> str:
   </table>
   </div>
 </section>''' if report.misconfigurations else ''}
+
+{intel_section}
 
 {errors_section}
 

@@ -272,6 +272,11 @@ def run_scan(
                 if not quiet:
                     print_cve_error(cpe)
 
+    # --- Threat-intel freshness/provenance (F1) ---
+    if not config.dry_run:
+        from vuln_correlation import intel_provenance
+        report.intel_sources = intel_provenance()
+
     # --- Deduplicate findings ---
     before = len(report.findings)
     report.findings = _deduplicate(report.findings)

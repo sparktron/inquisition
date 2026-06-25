@@ -219,6 +219,22 @@ def cve_priority(cve: "CVERecord") -> tuple[int, int, float, float]:
 
 
 @dataclass
+class IntelSource:
+    """Freshness/provenance of one threat-intel feed used during a scan (F1).
+
+    Stale intel in a security tool is a silent false-negative, so each external
+    source records when its data is current as of, plus a short detail (catalog
+    version, item count) for the report's "Threat Intelligence" section.
+    """
+
+    name: str                # e.g. "CISA KEV", "FIRST.org EPSS", "Nuclei templates"
+    as_of: str = ""          # human date/time the data is current as of ("" = unknown)
+    detail: str = ""         # e.g. "catalog 2026.06.01", "fetched live"
+    item_count: int = 0      # number of records the source contributed
+    stale: bool = False      # True when the data is older than its freshness budget
+
+
+@dataclass
 class MisconfigurationCheck:
     """A detected misconfiguration with a risk rating."""
 
@@ -270,6 +286,8 @@ class ScanReport:
     history: list[dict[str, Any]] = field(default_factory=list)
     # Attack chains detected from the combination of misconfigurations present.
     attack_chains: list[Any] = field(default_factory=list)
+    # Threat-intel freshness/provenance for the feeds consulted this scan (F1).
+    intel_sources: list[IntelSource] = field(default_factory=list)
 
     # Convenience helpers -----------------------------------------------
 

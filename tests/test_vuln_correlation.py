@@ -39,6 +39,34 @@ class VulenCorrelationTests(unittest.TestCase):
         )
 
 
+class IntelProvenanceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        vuln_correlation._kev_cache = None
+        vuln_correlation._intel_provenance.clear()
+
+    def test_kev_load_records_catalog_provenance(self) -> None:
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {
+            "catalogVersion": "2026.06.20",
+            "dateReleased": "2026-06-20T12:00:00.000Z",
+            "vulnerabilities": [{"cveID": "CVE-2021-44228"}, {"cveID": "CVE-2020-0001"}],
+        }
+        with patch("vuln_correlation.requests.get", return_value=response):
+            vuln_correlation._load_cisa_kev(timeout=1.0)
+        prov = {s.name: s for s in vuln_correlation.intel_provenance()}
+        self.assertIn("CISA KEV", prov)
+        self.assertEqual(prov["CISA KEV"].item_count, 2)
+        self.assertIn("2026.06.20", prov["CISA KEV"].detail)
+        self.assertEqual(prov["CISA KEV"].as_of, "2026-06-20T12:00:00.000Z")
+
+    def test_kev_failure_marks_unavailable_stale(self) -> None:
+        with patch("vuln_correlation.requests.get", side_effect=Exception("boom")):
+            vuln_correlation._load_cisa_kev(timeout=1.0)
+        prov = {s.name: s for s in vuln_correlation.intel_provenance()}
+        self.assertTrue(prov["CISA KEV"].stale)
+
+
 class ExploitabilityTests(unittest.TestCase):
     def setUp(self) -> None:
         vuln_correlation._epss_cache.clear()

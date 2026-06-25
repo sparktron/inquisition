@@ -196,15 +196,29 @@ text summary, and the executive story notes when the top path is live-proven.
 ## Theme F — Knowledge & Data Freshness
 *Keep the intelligence current and trustworthy.*
 
-**F1. Threat-intel auto-refresh + provenance**
+**F1. Threat-intel auto-refresh + provenance** — ✅ DONE
 KEV, EPSS, exploit-availability, and Nuclei templates should self-update on a
 cadence with timestamps shown in reports ("KEV catalog as of …"). Stale intel in
-a security tool is a silent false-negative.
+a security tool is a silent false-negative. `models.IntelSource` +
+`ScanReport.intel_sources`: each feed loader in `vuln_correlation.py` records
+provenance as it runs (`_record_intel` / `intel_provenance()`) — CISA KEV
+(catalogVersion + dateReleased), FIRST.org EPSS (fetch date), NVD (query date),
+and the local Nuclei template library (`.checksum` mtime, flagged stale past 7
+days). The scanner captures it onto the report after the CVE phase; rendered as a
+"Threat Intelligence" section in text/HTML (with a fresh/stale status) and a
+`threat_intel` array in JSON. (Watch/daemon mode already re-runs scans on a
+cadence, rebuilding the feeds per cycle.)
 
-**F2. Confidence + provenance on attacker claims**
+**F2. Confidence + provenance on attacker claims** — ✅ DONE
 Every attack-scenario/chain assertion should carry where it came from (KB rule
 id, live validation, active scan) so readers can distinguish *modeled* from
-*confirmed*. Pairs with E2.
+*confirmed*. Pairs with E2. New `provenance.py`: `finding_provenance(finding)`
+classifies each finding's attacker claim as **confirmed** (live PoC validation →
+strongest, then active-scan match) or **modeled** (knowledge base), returning
+`None` when there is no claim. Rendered as a provenance badge on HTML finding
+cards (green confirmed / grey modeled) and a `provenance` object in JSON;
+attack-chain steps are labelled "Modeled — knowledge-base rule" in the text
+report.
 
 ---
 
@@ -220,6 +234,16 @@ id, live validation, active scan) so readers can distinguish *modeled* from
 5. **A3/A4, C3/C4** — round out scoring and the report experience.
 6. **E1–E3 (validation & evidence)** — turn the model into proof.
 7. **D1/D2 (fleet attack paths)** and **F1/F2 (freshness)** — scale and trust.
+
+## Status
+
+All six themes (A–F) are now complete. Theme A (EPSS/exploit/exposure/reachability),
+Theme B (predicate DSL, externalized YAML KB, attack graph, per-finding ATT&CK),
+Theme C (Mermaid diagram, Navigator export, executive story, interactive report),
+Theme D (D1 cross-target correlation, D2 blast-radius/crown-jewels), Theme E
+(E1 PoC auto-validation, E2 evidence bundles incl. SARIF, E3 active vulns into the
+graph), and Theme F (F1 intel freshness/provenance, F2 provenance on attacker
+claims) have all shipped. The definition of done below is met.
 
 ## Definition of done for the theme
 A user runs one scan and gets: a ranked list of *reachable* attacker goals, an

@@ -16,12 +16,17 @@ from models import (
     CVERecord,
     Finding,
     FindingCategory,
+    IntelSource,
     MisconfigurationCheck,
     Severity,
     TOOL_REFERENCE,
 )
 
 logger = logging.getLogger(__name__)
+
+# Nuclei template library is a silent false-negative source once it lags the CVE
+# feed; flag it stale past this age (mirrors active_scan._TEMPLATE_STALE_DAYS).
+_NUCLEI_STALE_DAYS = 7
 
 # ---------------------------------------------------------------------------
 # NVD API CVE lookup (public, rate-limited)
@@ -46,6 +51,24 @@ _kev_cache: set[str] | None = None
 _epss_cache: dict[str, tuple[float, float]] = {}
 # Nuclei template CVE coverage (local templates dir), loaded lazily.
 _nuclei_cve_cache: set[str] | None = None
+# Threat-intel provenance (F1): source name -> IntelSource, populated as each feed
+# is consulted this process. Read via intel_provenance().
+_intel_provenance: dict[str, IntelSource] = {}
+
+
+def _record_intel(source: IntelSource) -> None:
+    """Record (or refresh) the freshness/provenance of one intel feed."""
+    _intel_provenance[source.name] = source
+
+
+def intel_provenance() -> list[IntelSource]:
+    """Freshness/provenance of every intel feed consulted so far this process.
+
+    Ordered by source name for stable rendering. Captured into the report by the
+    scanner after the CVE-correlation phase so it serializes and is shown in
+    reports ("KEV catalog as of …").
+    """
+    return [_intel_provenance[name] for name in sorted(_intel_provenance)]
 
 
 def _normalize_cpe23(cpe: str) -> str:
@@ -89,11 +112,19 @@ def _load_cisa_kev(timeout: float = 10.0) -> set[str]:
         if resp.status_code == 200:
             data = resp.json()
             _kev_cache = {v["cveID"] for v in data.get("vulnerabilities", [])}
+            version = str(data.get("catalogVersion", "")).strip()
+            _record_intel(IntelSource(
+                name="CISA KEV",
+                as_of=str(data.get("dateReleased", "")).strip(),
+                detail=f"catalog {version}" if version else "fetched live",
+                item_count=len(_kev_cache),
+            ))
             logger.info("Loaded %d CVEs from CISA KEV catalog", len(_kev_cache))
             return _kev_cache
     except Exception as exc:
         logger.warning("Could not fetch CISA KEV catalog: %s", exc)
     _kev_cache = set()
+    _record_intel(IntelSource(name="CISA KEV", detail="unavailable", stale=True))
     return _kev_cache
 
 
@@ -135,6 +166,13 @@ def _load_epss(cve_ids: list[str], timeout: float = 10.0) -> dict[str, tuple[flo
                 result[cid] = pair
         except (requests.RequestException, ValueError) as exc:
             logger.warning("EPSS lookup failed: %s — exploit probability unavailable", exc)
+    if result:
+        _record_intel(IntelSource(
+            name="FIRST.org EPSS",
+            as_of=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            detail="fetched live",
+            item_count=len(result),
+        ))
     return result
 
 
@@ -159,15 +197,30 @@ def _load_nuclei_cve_ids() -> set[str]:
     if _nuclei_cve_cache is not None:
         return _nuclei_cve_cache
     found: set[str] = set()
+    as_of = ""
+    stale = False
     for base in _nuclei_template_dirs():
         try:
             if not base.is_dir():
                 continue
             for path in base.rglob("CVE-*.yaml"):
                 found.add(path.stem.upper())
+            checksum = base / ".checksum"
+            if checksum.exists():
+                mtime = checksum.stat().st_mtime
+                as_of = datetime.fromtimestamp(mtime, timezone.utc).strftime("%Y-%m-%d")
+                stale = (time.time() - mtime) / 86400 > _NUCLEI_STALE_DAYS
         except OSError as exc:
             logger.warning("Could not scan Nuclei templates in %s: %s", base, exc)
     _nuclei_cve_cache = found
+    if found:
+        _record_intel(IntelSource(
+            name="Nuclei templates",
+            as_of=as_of,
+            detail="local template library",
+            item_count=len(found),
+            stale=stale,
+        ))
     return found
 
 
@@ -279,6 +332,13 @@ def lookup_cves_for_cpe(cpe: str, timeout: float = 15.0) -> list[CVERecord]:
         ))
 
     enrich_exploitability(records, timeout=timeout)
+
+    _record_intel(IntelSource(
+        name="NVD CVE database",
+        as_of=now.strftime("%Y-%m-%d"),
+        detail="queried live",
+        item_count=len(records),
+    ))
 
     _cve_cache[cpe_match] = records
     return records
