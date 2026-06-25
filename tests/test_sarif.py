@@ -69,6 +69,53 @@ class SarifReportTests(unittest.TestCase):
         out = render(report, ReportFormat.SARIF)
         self.assertEqual(json.loads(out)["version"], "2.1.0")
 
+    def test_poc_validation_evidence_in_properties(self) -> None:
+        f = Finding(
+            title="Open Redis port",
+            category=FindingCategory.PORT,
+            severity=Severity.HIGH,
+            evidence="6379 open",
+        )
+        f.metadata["poc_validation"] = {
+            "confirmed": True,
+            "checks": [
+                {
+                    "command": "curl -sI https://example.com/",
+                    "ran": True,
+                    "exit_code": 0,
+                    "stdout": "HTTP/2 200",
+                    "stderr": "",
+                    "safe": True,
+                    "skipped_reason": "",
+                },
+                {
+                    "command": "curl -X POST https://example.com/",
+                    "ran": False,
+                    "exit_code": None,
+                    "stdout": "",
+                    "stderr": "",
+                    "safe": False,
+                    "skipped_reason": "mutating method",
+                },
+            ],
+        }
+        result = json.loads(render_sarif(_report([f])))["runs"][0]["results"][0]
+        props = result["properties"]
+        self.assertTrue(props["confirmed"])
+        # Only the executed (ran) check is carried as evidence.
+        self.assertEqual(len(props["pocValidation"]), 1)
+        self.assertEqual(props["pocValidation"][0]["exitCode"], 0)
+        self.assertIn("HTTP/2 200", props["pocValidation"][0]["output"])
+        self.assertTrue(result["message"]["text"].startswith("[CONFIRMED"))
+
+    def test_no_properties_without_validation(self) -> None:
+        f = Finding(
+            title="Plain", category=FindingCategory.DNS,
+            severity=Severity.LOW, evidence="e",
+        )
+        result = json.loads(render_sarif(_report([f])))["runs"][0]["results"][0]
+        self.assertNotIn("properties", result)
+
     def test_duplicate_titles_share_one_rule(self) -> None:
         report = _report([
             Finding(title="Same", category=FindingCategory.DNS, severity=Severity.LOW, evidence="e1"),

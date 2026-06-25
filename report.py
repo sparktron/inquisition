@@ -878,7 +878,29 @@ def _sarif_run(report: ScanReport) -> dict[str, Any]:
         message = f.evidence or f.title
         if f.remediation:
             message = f"{message}\nRemediation: {f.remediation}"
-        results.append({
+
+        # Carry live PoC-validation evidence (Theme E / E2) into SARIF
+        # properties so confirmed findings are auditable in code scanning.
+        props: dict[str, Any] = {}
+        checks = _poc_validation_checks(f)
+        if checks:
+            bundle = f.metadata.get("poc_validation")
+            confirmed = bool(isinstance(bundle, dict) and bundle.get("confirmed"))
+            props["confirmed"] = confirmed
+            props["pocValidation"] = [
+                {
+                    "command": c.get("command", ""),
+                    "exitCode": c.get("exit_code"),
+                    "output": (
+                        str(c.get("stdout", "")) + str(c.get("stderr", ""))
+                    ).strip(),
+                }
+                for c in checks
+            ]
+            if confirmed:
+                message = f"[CONFIRMED via live validation] {message}"
+
+        result: dict[str, Any] = {
             "ruleId": rule_id,
             "level": _SARIF_LEVEL[f.severity],
             "message": {"text": message},
@@ -888,7 +910,10 @@ def _sarif_run(report: ScanReport) -> dict[str, Any]:
                 }
             }],
             "partialFingerprints": {"inquisitionFingerprint": rule_id},
-        })
+        }
+        if props:
+            result["properties"] = props
+        results.append(result)
 
     return {
         "tool": {
@@ -1462,10 +1487,17 @@ def render_html(report: ScanReport, *, attacker_pov: bool = False) -> str:
     mermaid_script = ""
     graph = attack_graph.build_attack_graph(report)
     if not graph.empty:
+        _confirmed_badge = (
+            '<span style="display:inline-block;margin-left:8px;padding:1px 6px;'
+            'border-radius:4px;font-size:.7rem;font-weight:700;background:#dc2626;'
+            'color:#fff;vertical-align:middle">CONFIRMED</span>'
+        )
         goal_rows = "".join(
             f'<tr style="border-bottom:1px solid #fecaca">'
             f'<td style="padding:6px 10px;font-weight:700;color:#b91c1c;white-space:nowrap">{g.value}</td>'
-            f'<td style="padding:6px 10px;font-weight:600">{_e(g.label)}</td>'
+            f'<td style="padding:6px 10px;font-weight:600">{_e(g.label)}'
+            + (_confirmed_badge if g.confirmed else "")
+            + "</td>"
             f'<td style="padding:6px 10px;font-size:.85rem;color:#475569">'
             + _e(" → ".join(["External"] + [attack_graph.STATE_LABEL.get(e.to, e.to) for e in g.path]))
             + "</td></tr>"

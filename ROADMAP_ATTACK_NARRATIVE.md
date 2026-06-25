@@ -153,15 +153,28 @@ existing authorization gating (`safety.confirm_active_scan`) and the
 `active_scan.py` injectable-runner pattern for testability. Mutating PoCs stay
 display-only.
 
-**E2. Evidence bundles**
+**E2. Evidence bundles** — ✅ DONE
 Attach the captured request/response (or command output) to each confirmed
 finding; include in JSON/HTML reports and SARIF. Makes findings auditable and
-defensible — the difference between "you might have X" and "here is X."
+defensible — the difference between "you might have X" and "here is X." The
+captured PoC-validation bundle is embedded in JSON (`finding.poc_validation`),
+rendered as a collapsible evidence block in HTML (`_poc_evidence_html`), and now
+carried into SARIF `result.properties` (`confirmed` + `pocValidation` with the
+executed command, exit code, and captured output) so confirmed findings are
+auditable in GitHub code scanning.
 
-**E3. Link active-scan results into chains**
+**E3. Link active-scan results into chains** — ✅ DONE
 When `--active` runs Nuclei/ZAP, feed confirmed vulns (XSS/SQLi/etc.) back into
 the Theme-B graph as *confirmed* edges, elevating any chain they complete (e.g.
 confirmed XSS + no-HttpOnly cookie → confirmed account-takeover path).
+`attack_graph._classify_active` maps each active (`FindingCategory.VULNERABILITY`)
+finding to the attacker state it grants — by title keyword first, MITRE technique
+ID as fallback (RCE→code_exec, SQLi/LFI→data_access, SSRF→recon, XSS→session_hijack,
+auth-bypass/IDOR & secret-exposure→credentials). These become confirmed
+external→objective edges at full feasibility; confirmed objectives rank above
+merely-modeled ones, render as thick ✓-flagged edges in the Mermaid diagram, carry
+a CONFIRMED badge in the HTML goal table and `[CONFIRMED via active scan]` in the
+text summary, and the executive story notes when the top path is live-proven.
 
 ---
 

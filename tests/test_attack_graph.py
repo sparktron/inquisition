@@ -4,7 +4,13 @@ import unittest
 from datetime import datetime, timezone
 
 import attack_graph
-from models import MisconfigurationCheck, ScanReport, Severity
+from models import (
+    Finding,
+    FindingCategory,
+    MisconfigurationCheck,
+    ScanReport,
+    Severity,
+)
 
 
 def _report(*names: str, scenarios: dict[str, str] | None = None) -> ScanReport:
@@ -18,6 +24,16 @@ def _report(*names: str, scenarios: dict[str, str] | None = None) -> ScanReport:
         for n in names
     ]
     return r
+
+
+def _active(title: str, *, mitre: list[str] | None = None) -> Finding:
+    return Finding(
+        title=title,
+        category=FindingCategory.VULNERABILITY,
+        severity=Severity.HIGH,
+        evidence="matched",
+        mitre_techniques=mitre or [],
+    )
 
 
 class AttackGraphTests(unittest.TestCase):
@@ -90,6 +106,65 @@ class AttackGraphTests(unittest.TestCase):
         # Remote unauth RCE (feasibility 1.0) is the top objective.
         self.assertEqual(g.goals[0].state, "code_exec")
         self.assertEqual(g.goals[0].feasibility, 1.0)
+
+
+class ActiveScanEdgeTests(unittest.TestCase):
+    def test_confirmed_xss_creates_session_hijack_goal(self) -> None:
+        r = _report()
+        r.findings = [_active("[active] Reflected XSS in search")]
+        g = attack_graph.build_attack_graph(r)
+        hijack = next(goal for goal in g.goals if goal.state == "session_hijack")
+        self.assertTrue(hijack.confirmed)
+        self.assertEqual(hijack.feasibility, 1.0)
+
+    def test_classify_by_mitre_when_title_is_opaque(self) -> None:
+        # No keyword in the title; class falls back to the MITRE technique.
+        r = _report()
+        r.findings = [_active("[active] CVE-2021-1234", mitre=["T1059"])]
+        g = attack_graph.build_attack_graph(r)
+        self.assertIn("code_exec", {goal.state for goal in g.goals})
+
+    def test_confirmed_path_outranks_modeled_higher_value(self) -> None:
+        # A modeled RCE (value 100) vs a confirmed XSS (value 60): the proven
+        # path must surface first even though its raw value is lower.
+        r = _report("Redis exposed to internet")
+        r.findings = [_active("[active] Stored XSS")]
+        g = attack_graph.build_attack_graph(r)
+        self.assertTrue(g.goals[0].confirmed)
+        self.assertEqual(g.goals[0].state, "session_hijack")
+
+    def test_confirmed_edge_renders_thick_in_mermaid(self) -> None:
+        r = _report()
+        r.findings = [_active("[active] SQL injection")]
+        mer = attack_graph.to_mermaid(attack_graph.build_attack_graph(r))
+        self.assertIn("==>", mer)
+        self.assertIn("✓", mer)  # ✓ marker
+
+    def test_summary_flags_confirmed_objective(self) -> None:
+        r = _report()
+        r.findings = [_active("[active] Remote Code Execution")]
+        text = "\n".join(attack_graph.summary_lines(attack_graph.build_attack_graph(r)))
+        self.assertIn("CONFIRMED via active scan", text)
+
+    def test_non_active_findings_are_ignored(self) -> None:
+        r = _report()
+        r.findings = [
+            Finding(title="Reflected XSS hint", category=FindingCategory.HTTP_HEADER,
+                    severity=Severity.LOW, evidence="e"),
+        ]
+        self.assertTrue(attack_graph.build_attack_graph(r).empty)
+
+    def test_duplicate_active_class_adds_one_edge(self) -> None:
+        r = _report()
+        r.findings = [_active("[active] XSS on /a"), _active("[active] XSS on /b")]
+        g = attack_graph.build_attack_graph(r)
+        xss_edges = [e for e in g.edges if e.confirmed and e.to == "session_hijack"]
+        self.assertEqual(len(xss_edges), 1)
+
+    def test_story_notes_confirmed_path(self) -> None:
+        r = _report()
+        r.findings = [_active("[active] Remote Code Execution")]
+        self.assertIn("confirmed exploitable", attack_graph.attack_story(r))
 
 
 class AttackStoryTests(unittest.TestCase):

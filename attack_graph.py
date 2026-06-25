@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from models import ScanReport
+    from models import Finding, ScanReport
 
 START = "external"
 
@@ -93,6 +93,33 @@ _CONSEQUENCE_EDGES: list[tuple[str, str, str]] = [
 ]
 
 
+# Confirmed active-scan vuln classes (Theme E / E3). When the active engine
+# (Nuclei/ZAP) *sends a payload and it matches*, the resulting finding is proof,
+# not theory — so it becomes a **confirmed** edge that walks at full feasibility
+# and outranks merely-modeled paths. Each class lists title-keyword markers
+# (matched first) and MITRE technique IDs (exact-match fallback), then the
+# attacker state it grants and the edge label. Order is precedence.
+_ACTIVE_VULN_CLASSES: list[tuple[tuple[str, ...], tuple[str, ...], str, str]] = [
+    (("rce", "remote code", "code execution", "command injection", "ssti",
+      "template injection", "deserial", "log4j", "spring4shell"),
+     ("T1059",), "code_exec", "confirmed RCE"),
+    (("sql injection", "sqli"),
+     ("T1059.003",), "data_access", "confirmed SQL injection"),
+    (("lfi", "local file", "path traversal", "directory traversal",
+      "file read", "arbitrary file", "xxe"),
+     ("T1083",), "data_access", "confirmed file read"),
+    (("ssrf", "server-side request"),
+     ("T1090.002",), "recon", "confirmed SSRF (internal reach)"),
+    (("xss", "cross-site scripting", "cross site scripting"),
+     ("T1059.007",), "session_hijack", "confirmed XSS → cookie/session theft"),
+    (("auth bypass", "authentication bypass", "default login",
+      "default credential", "idor", "insecure direct object"),
+     ("T1078",), "credentials", "confirmed access-control bypass"),
+    (("exposure", "disclosure", "secret", "credential leak", "api key"),
+     ("T1552",), "credentials", "confirmed secret exposure"),
+]
+
+
 # How feasible an edge is for an external attacker (1.0 = trivial). Edges that
 # require an on-path position or a victim's interaction are harder, so paths that
 # rely on them rank below remote/unauthenticated routes to the same objective.
@@ -112,8 +139,9 @@ class Edge:
     frm: str
     to: str
     label: str
-    via: str = ""  # the misconfiguration name that created the edge (if any)
+    via: str = ""  # the misconfiguration/finding name that created the edge (if any)
     feasibility: float = 1.0
+    confirmed: bool = False  # backed by a live active-scan match, not just modeled
 
 
 @dataclass
@@ -141,6 +169,11 @@ class GoalPath:
         """Objective value discounted by how feasible the path is to walk."""
         return round(self.value * self.feasibility)
 
+    @property
+    def confirmed(self) -> bool:
+        """True when any edge on the path was proven by a live active-scan match."""
+        return any(edge.confirmed for edge in self.path)
+
 
 @dataclass
 class AttackGraph:
@@ -163,6 +196,51 @@ def _all_candidate_edges(active_names: set[str]) -> list[Edge]:
             edges.append(Edge(frm, to, label, via=" + ".join(names), feasibility=_edge_feasibility(frm, to, label)))
     for frm, to, label in _CONSEQUENCE_EDGES:
         edges.append(Edge(frm, to, label, feasibility=_edge_feasibility(frm, to, label)))
+    return edges
+
+
+def _classify_active(finding: "Finding") -> tuple[str, str] | None:
+    """Map a confirmed active-scan finding to the (state, label) it grants.
+
+    Title keywords take precedence over MITRE technique IDs so the strongest
+    available signal wins. Returns ``None`` for findings that don't correspond to
+    a modeled attacker capability.
+    """
+    title = finding.title.lower()
+    for title_markers, _mitre, to_state, label in _ACTIVE_VULN_CLASSES:
+        if any(marker in title for marker in title_markers):
+            return to_state, label
+    techniques = set(finding.mitre_techniques)
+    for _title, mitre_markers, to_state, label in _ACTIVE_VULN_CLASSES:
+        if any(tech in techniques for tech in mitre_markers):
+            return to_state, label
+    return None
+
+
+def _active_finding_edges(report: "ScanReport") -> list[Edge]:
+    """Confirmed edges contributed by active-scan (Nuclei/ZAP) findings.
+
+    Active findings exist only because an external engine sent a payload and it
+    matched, so each becomes a confirmed external→objective edge at full
+    feasibility. Deduplicated by (state, label) so one template matched on many
+    URLs adds a single edge.
+    """
+    from models import FindingCategory
+
+    edges: list[Edge] = []
+    seen: set[tuple[str, str]] = set()
+    for f in report.findings:
+        if f.category != FindingCategory.VULNERABILITY:
+            continue
+        classified = _classify_active(f)
+        if classified is None:
+            continue
+        to_state, label = classified
+        key = (to_state, label)
+        if key in seen:
+            continue
+        seen.add(key)
+        edges.append(Edge("external", to_state, label, via=f.title, feasibility=1.0, confirmed=True))
     return edges
 
 
@@ -199,6 +277,10 @@ def build_attack_graph(report: "ScanReport") -> AttackGraph:
     """Build the attacker-state graph for a scan report."""
     active_names = {mc.name for mc in report.misconfigurations}
     candidates = _all_candidate_edges(active_names)
+    candidates += _active_finding_edges(report)
+    # Prefer confirmed edges as BFS predecessors so a proven route to a state is
+    # the one reported (stable sort keeps modeled-edge ordering otherwise).
+    candidates.sort(key=lambda e: not e.confirmed)
     reachable, predecessor = _bfs_reachable(candidates)
 
     # Only keep edges whose source state is actually reachable.
@@ -209,9 +291,10 @@ def build_attack_graph(report: "ScanReport") -> AttackGraph:
         for state in reachable
         if state in GOAL_VALUE
     ]
-    # Rank by feasibility-discounted value: a remote/unauth route to a high-value
-    # objective beats one that needs an on-path position or victim interaction.
-    goals.sort(key=lambda g: (-g.priority, -g.value, len(g.path)))
+    # Confirmed (live-proven) objectives rank above merely-modeled ones; within
+    # each tier, by feasibility-discounted value — a remote/unauth route to a
+    # high-value objective beats one needing an on-path position or victim action.
+    goals.sort(key=lambda g: (0 if g.confirmed else 1, -g.priority, -g.value, len(g.path)))
 
     return AttackGraph(edges=active_edges, reachable=reachable, goals=goals)
 
@@ -236,7 +319,10 @@ def to_mermaid(graph: AttackGraph) -> str:
     for e in graph.edges:
         if e.frm in graph.reachable and e.to in graph.reachable:
             safe = e.label.replace('"', "'")
-            lines.append(f'    {_mermaid_id(e.frm)} -->|"{safe}"| {_mermaid_id(e.to)}')
+            # Confirmed (live-proven) edges render thick and flagged.
+            arrow = "==>" if e.confirmed else "-->"
+            prefix = "✓ " if e.confirmed else ""
+            lines.append(f'    {_mermaid_id(e.frm)} {arrow}|"{prefix}{safe}"| {_mermaid_id(e.to)}')
     # Style start and goal nodes.
     lines.append(f"    style {_mermaid_id(START)} fill:#e2e8f0,stroke:#475569")
     for goal in graph.goals:
@@ -273,6 +359,11 @@ def attack_story(report: "ScanReport", *, narrator: "object | None" = None) -> s
         f"Against {report.target}, the most dangerous reachable objective is "
         f"\"{top.label}\" (attacker value {top.value}/100, {effort} to carry out)."
     ]
+    if top.confirmed:
+        parts.append(
+            "This path is confirmed exploitable — an active-scan payload matched "
+            "it live, so it is proven, not merely modeled."
+        )
     if top.path:
         steps: list[str] = []
         for i, edge in enumerate(top.path):
@@ -311,7 +402,8 @@ def summary_lines(graph: AttackGraph) -> list[str]:
     out: list[str] = []
     for goal in graph.goals:
         effort = reachability.feasibility_label(goal.feasibility)
-        out.append(f"  [priority {goal.priority:>3}] {goal.label}  (value {goal.value}, {effort} to reach)")
+        proven = "  [CONFIRMED via active scan]" if goal.confirmed else ""
+        out.append(f"  [priority {goal.priority:>3}] {goal.label}  (value {goal.value}, {effort} to reach){proven}")
         if goal.path:
             chain = "external"
             for edge in goal.path:
