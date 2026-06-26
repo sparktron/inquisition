@@ -193,6 +193,43 @@ class AttackStoryTests(unittest.TestCase):
         self.assertIn("Objective:", captured["prompt"])
 
 
+class FleetPivotStoryTests(unittest.TestCase):
+    def _host(self, target: str, *, asset_value: str, ip: str, with_objective: bool) -> ScanReport:
+        from models import ScanConfig
+        findings = [Finding(
+            title="DNS A/AAAA records", category=FindingCategory.DNS,
+            severity=Severity.INFO, evidence="resolved",
+            metadata={"resolved_ips": [ip]},
+        )]
+        if with_objective:
+            findings.append(Finding(
+                title="[active] Remote Code Execution", category=FindingCategory.VULNERABILITY,
+                severity=Severity.CRITICAL, evidence="matched",
+                metadata={"active_scan": True},
+            ))
+        return ScanReport(
+            target=target, started_at=datetime.now(timezone.utc), findings=findings,
+            config=ScanConfig(target=target, asset_value=asset_value),
+        )
+
+    def test_pivot_note_names_crown_jewel(self) -> None:
+        dev = self._host("dev.example.com", asset_value="low", ip="203.0.113.5", with_objective=True)
+        crown = self._host("api.example.com", asset_value="crown", ip="203.0.113.5", with_objective=False)
+        story = attack_graph.attack_story(dev, fleet=[dev, crown])
+        self.assertIn("blast radius extends across the fleet", story)
+        self.assertIn("api.example.com", story)
+        self.assertIn("crown-value", story)
+
+    def test_no_pivot_note_without_fleet(self) -> None:
+        dev = self._host("dev.example.com", asset_value="low", ip="203.0.113.5", with_objective=True)
+        self.assertNotIn("blast radius", attack_graph.attack_story(dev))
+
+    def test_no_pivot_note_when_isolated(self) -> None:
+        dev = self._host("dev.example.com", asset_value="low", ip="203.0.113.5", with_objective=True)
+        other = self._host("other.example.com", asset_value="crown", ip="198.51.100.9", with_objective=False)
+        self.assertNotIn("blast radius", attack_graph.attack_story(dev, fleet=[dev, other]))
+
+
 class BuildAttackGraphMemoTests(unittest.TestCase):
     def test_repeat_calls_compute_once(self) -> None:
         from unittest import mock

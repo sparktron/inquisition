@@ -175,13 +175,18 @@ def _attack_chain_svg(chain_steps: list[str]) -> str:
     return "\n".join(svg_lines)
 
 
-def render_html(report: ScanReport, *, attacker_pov: bool = False) -> str:
+def render_html(
+    report: ScanReport,
+    *,
+    attacker_pov: bool = False,
+    fleet: "list[ScanReport] | None" = None,
+) -> str:
     """Produce a self-contained HTML security report."""
     pov = attacker_pov or bool(report.config and report.config.attacker_pov)
     counts = report.summary_counts()
     score, grade = _risk_score(counts)
     exposure_idx = reachability.exposure_index(report)
-    story = attack_graph.attack_story(report)
+    story = attack_graph.attack_story(report, fleet=fleet)
     story_callout = (
         f'<div style="background:#fef2f2;border-left:4px solid #dc2626;border-radius:6px;'
         f'padding:14px 16px;margin-top:16px">'

@@ -135,7 +135,13 @@ def _render_remediation_guide(lines: list[str], report: ScanReport) -> None:
             lines.append("")
 
 
-def render_text(report: ScanReport, *, brief: bool = False, attacker_pov: bool = False) -> str:
+def render_text(
+    report: ScanReport,
+    *,
+    brief: bool = False,
+    attacker_pov: bool = False,
+    fleet: "list[ScanReport] | None" = None,
+) -> str:
     """Produce a human-readable text report."""
     lines: list[str] = []
 
@@ -186,7 +192,7 @@ def render_text(report: ScanReport, *, brief: bool = False, attacker_pov: bool =
     lines.append("")
 
     # --- Executive Attack Story ---
-    story = attack_graph.attack_story(report)
+    story = attack_graph.attack_story(report, fleet=fleet)
     if story:
         lines.append(_section("EXECUTIVE ATTACK STORY"))
         lines.extend(_wrap_paragraphs(story, indent="  "))

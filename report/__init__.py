@@ -53,7 +53,7 @@ def render_combined(reports: list[ScanReport], fmt: ReportFormat, *, brief: bool
         )
     banner = "\n\n" + _hr("#") + "\n"
     return banner.join(
-        f"  FLEET REPORT {idx}/{len(reports)} — {r.target}\n{render_text(r, brief=brief)}"
+        f"  FLEET REPORT {idx}/{len(reports)} — {r.target}\n{render_text(r, brief=brief, fleet=reports)}"
         for idx, r in enumerate(reports, 1)
     )
 

@@ -352,14 +352,55 @@ def to_mermaid(graph: AttackGraph) -> str:
     return "\n".join(lines)
 
 
-def attack_story(report: "ScanReport", *, narrator: "object | None" = None) -> str:
+# Asset-tier ordering for naming the most valuable endangered sibling in a
+# fleet pivot note (highest first). Mirrors fleet_correlation._ASSET_WEIGHT.
+_ASSET_RANK: dict[str, int] = {"crown": 4, "high": 3, "medium": 2, "low": 1, "": 0}
+
+
+def _fleet_pivot_note(report: "ScanReport", fleet: "list[ScanReport]") -> str:
+    """One sentence on how compromising this host endangers the wider fleet.
+
+    Uses the D2 blast-radius graph: if this target is co-hosted with (or shares a
+    cert / takeover pivot to) higher-value siblings, name the most valuable one so
+    the single-host story makes its fleet consequences explicit. Empty when the
+    target has no cross-target reach.
+    """
+    import fleet_correlation
+
+    radius = {b.target: b for b in fleet_correlation.blast_radius(fleet)}.get(report.target)
+    if radius is None or not radius.endangered:
+        return ""
+
+    tier = {
+        r.target: (getattr(r.config, "asset_value", "") or "").lower()
+        for r in fleet if r.config is not None
+    }
+    crown = max(radius.endangered, key=lambda t: (_ASSET_RANK.get(tier.get(t, ""), 0), t))
+    crown_tier = tier.get(crown, "")
+    descriptor = f"the {crown_tier}-value asset `{crown}`" if crown_tier in ("crown", "high") else f"`{crown}`"
+    extra = len(radius.endangered) - 1
+    tail = f" (and {extra} other fleet host{'s' if extra > 1 else ''})" if extra else ""
+    bridge = ", ".join(radius.via) if radius.via else "shared infrastructure"
+    return (
+        f"This host does not stand alone: compromising it pivots to {descriptor}{tail} "
+        f"via {bridge}, so its blast radius extends across the fleet."
+    )
+
+
+def attack_story(
+    report: "ScanReport",
+    *,
+    narrator: "object | None" = None,
+    fleet: "list[ScanReport] | None" = None,
+) -> str:
     """Narrate the single most dangerous reachable attack path in plain English.
 
     Deterministic by default: stitches the top-priority objective's shortest path
     (from :func:`build_attack_graph`) together with the matching misconfiguration's
     attack scenario for color. Pass ``narrator`` (a callable taking a prompt
     string and returning prose) to delegate phrasing to an LLM; the tool stays
-    fully offline when it is omitted.
+    fully offline when it is omitted. Pass ``fleet`` (all reports in a multi-target
+    run) to append a cross-target pivot note when this host endangers siblings.
     """
     import reachability
 
@@ -398,6 +439,10 @@ def attack_story(report: "ScanReport", *, narrator: "object | None" = None) -> s
     if len(graph.goals) > 1:
         others = ", ".join(g.label.lower() for g in graph.goals[1:4])
         parts.append(f"Other reachable objectives include {others}.")
+    if fleet:
+        pivot = _fleet_pivot_note(report, fleet)
+        if pivot:
+            parts.append(pivot)
     return " ".join(parts)
 
 
