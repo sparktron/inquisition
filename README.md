@@ -1,21 +1,46 @@
-# Inquisition
+# Inquisition 🔍
+
+> *"Nobody expects the Inquisition."* — but your attack surface should.
 
 [![Publish image](https://github.com/sparktron/inquisition/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/sparktron/inquisition/actions/workflows/docker-publish.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Image on GHCR](https://img.shields.io/badge/ghcr.io-inquisition-blue)](https://github.com/sparktron/inquisition/pkgs/container/inquisition)
 
-**A comprehensive, read-only security reconnaissance scanner for identifying misconfigurations, exposed services, and known vulnerabilities on authorised targets.**
+> ### 🔍 Recon that reads like a threat report.
+> Point Inquisition at a host you're authorized to assess. It comes back with the **story of how that host gets compromised** — every weak point, the path an attacker actually walks, the proof, and the exact fix.
 
-Inquisition probes your target across DNS, network, TLS, HTTP, and application layers — then generates a detailed analysis of every issue found, explaining *why* it matters, *how an attacker would exploit it*, and *exactly how* to fix it. Reports include risk scoring, remediation priority matrices, deep-dive guidance with platform-specific configuration examples, MITRE ATT&CK technique mappings (with Navigator export), proof-of-concept attacker commands, and attack-chain visualisations. Beyond a flat finding list, it builds a **dynamic attack graph** of reachable attacker objectives, narrates the single most dangerous path in plain English, prioritizes CVEs by real-world exploit probability (KEV + EPSS + public-exploit availability), can **safely auto-validate** read-only proofs into confirmed evidence, labels every claim with its provenance, and — across a fleet — connects targets into org-level attack paths with blast-radius / crown-jewel ranking.
+Most scanners hand you a flat list of findings and wish you luck. Inquisition connects the dots.
 
-**Read-only active reconnaissance by design.** No exploit payloads, authentication bypasses, injection attacks, login attempts, or data-modifying requests are sent. Inquisition does send non-mutating reconnaissance probes such as DNS lookups, TCP connects, HTTP `GET`/`OPTIONS`, CORS preflights, and GraphQL introspection checks, so only scan targets you are authorized to assess.
+It sweeps your target across **DNS, network, TLS, HTTP, and the application layer**, then does the thing the others skip — it reasons about what those findings *mean together*. Issues become a **dynamic attack graph** of reachable objectives; the single most dangerous path gets **narrated in plain English**; CVEs are ranked by how likely they are to *actually* be exploited (CISA KEV + EPSS + public exploits, not just CVSS); read-only proofs are **safely auto-validated into hard evidence**; and every claim is stamped with where it came from, so a hypothesis is never mistaken for a fact. Run it across a whole fleet and it wires your hosts into **org-level attack paths** with blast-radius and crown-jewel ranking.
 
-> **Current status:** Inquisition is a strong external reconnaissance and attack-narrative tool, but external recon alone is not a complete "all clear" for production sign-off. The original correctness/coverage roadmap ([ROADMAP.md](ROADMAP.md), phases 0–4) and the attack-narrative roadmap ([ROADMAP_ATTACK_NARRATIVE.md](ROADMAP_ATTACK_NARRATIVE.md), themes A–F: exploitability scoring, dynamic attack graph, holistic reporting, fleet attack paths, safe validation, and intel freshness) are both complete. Active payload testing still requires the external Nuclei/ZAP engines, and authenticated/internal assessment remains out of scope.
+You get a polished, self-contained report — **text, Markdown, JSON, SARIF, or interactive HTML** — that explains *why each issue matters*, *how it's exploited*, and *exactly how to fix it*, with platform-specific config snippets and copy-paste commands.
 
-## Key Features
+### 🛡️ It knocks. It never kicks the door in.
 
-### Reconnaissance & Fingerprinting
+Inquisition is **read-only by design.** No exploit payloads, no auth bypasses, no injection, no login attempts, nothing that mutates the target — just non-mutating recon probes (DNS lookups, TCP connects, HTTP `GET`/`OPTIONS`, CORS preflights, GraphQL introspection). Real payload testing is **strictly opt-in** behind `--active` and a second authorization prompt. **Only scan what you're allowed to.**
+
+<sub>📦 Two roadmaps shipped and complete: correctness/coverage ([ROADMAP.md](ROADMAP.md), phases 0–4) and attack-narrative intelligence ([ROADMAP_ATTACK_NARRATIVE.md](ROADMAP_ATTACK_NARRATIVE.md), themes A–F). External recon is excellent — but it isn't a full production "all clear" on its own: active payload testing needs the external Nuclei/ZAP engines, and authenticated/internal assessment is out of scope.</sub>
+
+## ✨ Highlights
+
+The things that make Inquisition more than a checklist:
+
+| | |
+|---|---|
+| 🧠 **Dynamic attack graph** | Findings become edges between attacker *states* — one traversal reveals every reachable objective (RCE, data access, cloud takeover, lateral movement) and the shortest path to each, ranked by feasibility-discounted value and drawn as a Mermaid diagram. |
+| 📖 **Executive attack story** | The single most dangerous path, narrated end-to-end in plain English. Readable by an exec *and* an engineer. |
+| 🎯 **Exploitability-first CVE triage** | Ranks by CISA KEV → public exploit → EPSS probability → CVSS, so *"being exploited right now"* beats *"scary number."* |
+| 🧪 **Safe PoC auto-validation** | Runs only read-only proofs (`curl -sI`, `dig`, `openssl s_client`) to upgrade a finding from *modeled* to *confirmed* — captured HTTP status + output attached as evidence. Mutating PoCs never run. |
+| 🏷️ **Provenance on every claim** | *Modeled* (knowledge base) vs *confirmed* (live validation / active-scan hit), clearly labelled. A hypothesis is never dressed up as proof. |
+| 🛰️ **Fleet attack paths** | Correlates many hosts into org-level pivots (shared IP, shared cert, subdomain takeover) and ranks fixes by **blast radius** and **crown-jewel** value. |
+| 🚦 **CI & continuous monitoring** | SARIF, `--fail-on` gates, watch mode, Prometheus + Grafana, Slack/webhook alerts, JSONL audit log. |
+| 📄 **Reports that teach** | Every issue ships with why-it-matters, an attacker scenario, a PoC, MITRE ATT&CK tags, and platform-specific fixes. |
+
+<details>
+<summary><b>📋 The full feature catalog</b> (click to expand)</summary>
+
+### 🔍 Reconnaissance & fingerprinting
 - **DNS reconnaissance** — A/AAAA resolution, reverse DNS, subdomain enumeration, MX/NS/TXT records, SPF/DMARC presence and policy-strength checks, **DNS zone transfer (AXFR) detection**
 - **Port scanning** — TCP connect-scan with banner grabbing; enhanced service detection for Telnet, SMB, VNC, Redis, Elasticsearch, MongoDB, MySQL, PostgreSQL, RDP
 - **TLS/SSL analysis** — negotiated protocol/cipher, active protocol-version and weak-cipher-family enumeration, weak Diffie-Hellman (Logjam) parameter detection, certificate validity/expiration, self-signed detection, hostname mismatch, full chain validation, Certificate Transparency (embedded SCT) presence, and OCSP revocation lookup
@@ -23,19 +48,36 @@ Inquisition probes your target across DNS, network, TLS, HTTP, and application l
 - **Crawler-fed analysis** — Homepage, robots.txt, and sitemap.xml URL discovery feeds application, content, and technology checks
 - **Technology stack detection** — WordPress, Joomla, Drupal, Laravel, Django, PHP, nginx, Apache, IIS, Node.js, and more via body/header signatures, path probing, and discovered pages
 
-### Security Headers & Application Layer
+### 🧱 Security headers & application layer
 - **HTTP header audit** — HSTS policy and preload status, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, **SameSite cookie validation**, information disclosure headers
 - **Application checks** — CORS misconfiguration, XSS-Protection disabled, mixed content, missing Subresource Integrity, **GraphQL introspection**, **HTTP method Allow-header inspection**, debug endpoints, exposed API docs
 - **Content discovery** — **security.txt validation (RFC 9116)**, **robots.txt path leakage**, admin panels (Kibana, Grafana, Jenkins, Jupyter, Portainer, etc.), backup files, sensitive configs (`.env`, `docker-compose.yml`, `.htpasswd`)
 
-### Vulnerability Analysis
+### 🚨 Vulnerability analysis
 - **CVE correlation** — CPE-based lookup against the National Vulnerability Database (NVD) with CVSS scoring, days-since-disclosure, and references
 - **Real-world exploitation triage** — every CVE is ranked by the industry-standard triad: **CISA KEV** (exploited now) > **public exploit available** (local Nuclei template) > **FIRST.org EPSS** probability (exploited soon) > CVSS (how bad)
 - **Subdomain takeover detection** — Identifies dangling CNAMEs pointing to unclaimed Heroku apps, GitHub Pages, S3 buckets, etc.
 - **Misconfiguration detection** — 30+ pattern-matched rules for common security weaknesses (expired certs, legacy TLS, missing HSTS, exposed credentials, etc.)
 - **Attack chain detection** — Automatically derives multi-step kill chains from the combination of misconfigurations detected
 
-### Reporting & Analysis
+### 🧠 Attack-narrative intelligence
+*Turns a flat list of findings into a connected, prioritized, evidence-backed picture of how an attacker actually compromises the target.*
+- **Dynamic attack graph** — models attacker *states* (external → on-path → credentials → code-execution → data-access → cloud-account → …) with findings as the edges between them; a traversal from an external position reveals every reachable objective and the shortest path to each, ranked by **feasibility-discounted value** and rendered as a Mermaid diagram
+- **Executive attack story** — a plain-English narrative of the single most dangerous reachable path, end to end (optional LLM-assisted phrasing, deterministic template fallback so the tool stays offline-capable). In a fleet run it also notes when a host's compromise pivots to a higher-value sibling
+- **Exposure index (0–100)** — a measure of *how much door is open* (reachable unauthenticated services, admin panels, secret files, weak transport, missing controls), distinct from the severity-weighted risk score
+- **Reachability modeling** — every finding is tagged with the attacker preconditions it implies (network position, auth required, victim interaction) that weight the graph
+- **MITRE ATT&CK Navigator export** — `--attack-navigator` emits a `layer.json` overlaying observed techniques on the standard ATT&CK matrix
+- **Safe PoC auto-validation** — `--validate` runs only the read-only verification probes attached to findings (`curl -sI`, `dig`, `openssl s_client`, status checks) to capture **live evidence** (including the HTTP status) and upgrade a finding from *modeled* to *confirmed*; the captured output is attached as an evidence bundle in JSON/HTML/SARIF (mutating PoCs are never run)
+- **Provenance on every claim** — each attacker claim is labelled by where it came from — *modeled* (knowledge base) vs *confirmed* (live PoC validation or active-scan payload match) — so a hypothesis is never mistaken for proof
+- **Threat-intel freshness** — reports show when each external feed is current as of (CISA KEV catalog version/date, FIRST.org EPSS, NVD, local Nuclei templates) and flag stale intel, since stale data in a security tool is a silent false-negative
+
+### 🛰️ Fleet & attack-path intelligence
+- **Multi-target fleet mode** — scan many related hosts in one run (positional targets, `--targets-file`, or a `--fleet-config`), concurrently with `--jobs`, into per-target reports or one combined artifact
+- **Cross-target correlation** — connects the fleet into an org-level view from signals already in the findings: **shared origin IP** (co-hosted — one box yields many sites + a pivot), **shared TLS certificate** (shared private key → impersonation), and **subdomain-takeover pivots** (trusted-origin phishing against siblings)
+- **Blast-radius & crown-jewel analysis** — tag targets by business value (`asset_value: crown|high|medium|low`) and Inquisition ranks remediation by the high-value assets a weak host endangers, so a cheap pivot bridged to a crown jewel rises above a locally-severe but isolated host
+- **Fleet HTML dashboard** — one page ranking every target by risk with grade, severity counts, trend sparkline, Δ-vs-last-scan, a fleet-wide confirmed-vs-modeled objective rollup, the cross-target attack paths, and the blast-radius ranking
+
+### 📊 Reporting & output
 - **Deep issue analysis** — Multi-paragraph explanations of what each vulnerability is, why it's dangerous, named CVE references, and real-world attack scenarios
 - **Attack scenarios** — Step-by-step attacker narratives for every finding and misconfiguration (e.g. sslstrip on a shared network, session token harvesting after HSTS bypass)
 - **MITRE ATT&CK mapping** — Every finding is tagged with relevant technique IDs (e.g. T1557, T1040) linking directly to the ATT&CK knowledge base
@@ -49,65 +91,63 @@ Inquisition probes your target across DNS, network, TLS, HTTP, and application l
 - **Finding deduplication** — Overlapping probes automatically collapsed to eliminate noise
 - **Text, Markdown, JSON, SARIF, and HTML output** — HTML reports are self-contained with collapsible attack scenario / PoC panels and inline SVG chain diagrams
 
-### Attack-Narrative Intelligence
-*Turns a flat list of findings into a connected, prioritized, evidence-backed picture of how an attacker actually compromises the target.*
-- **Dynamic attack graph** — models attacker *states* (external → on-path → credentials → code-execution → data-access → cloud-account → …) with findings as the edges between them; a traversal from an external position reveals every reachable objective and the shortest path to each, ranked by **feasibility-discounted value** and rendered as a Mermaid diagram
-- **Executive attack story** — a plain-English narrative of the single most dangerous reachable path, end to end (optional LLM-assisted phrasing, deterministic template fallback so the tool stays offline-capable)
-- **Exposure index (0–100)** — a measure of *how much door is open* (reachable unauthenticated services, admin panels, secret files, weak transport, missing controls), distinct from the severity-weighted risk score
-- **Reachability modeling** — every finding is tagged with the attacker preconditions it implies (network position, auth required, victim interaction) that weight the graph
-- **MITRE ATT&CK Navigator export** — `--attack-navigator` emits a `layer.json` overlaying observed techniques on the standard ATT&CK matrix
-- **Safe PoC auto-validation** — `--validate` runs only the read-only verification probes attached to findings (`curl -sI`, `dig`, `openssl s_client`, status checks) to capture **live evidence** and upgrade a finding from *modeled* to *confirmed*; the captured output is attached as an evidence bundle in JSON/HTML/SARIF (mutating PoCs are never run)
-- **Provenance on every claim** — each attacker claim is labelled by where it came from — *modeled* (knowledge base) vs *confirmed* (live PoC validation or active-scan payload match) — so a hypothesis is never mistaken for proof
-- **Threat-intel freshness** — reports show when each external feed is current as of (CISA KEV catalog version/date, FIRST.org EPSS, NVD, local Nuclei templates) and flag stale intel, since stale data in a security tool is a silent false-negative
+</details>
 
-### Fleet & Attack-Path Intelligence
-- **Multi-target fleet mode** — scan many related hosts in one run (positional targets, `--targets-file`, or a `--fleet-config`), concurrently with `--jobs`, into per-target reports or one combined artifact
-- **Cross-target correlation** — connects the fleet into an org-level view from signals already in the findings: **shared origin IP** (co-hosted — one box yields many sites + a pivot), **shared TLS certificate** (shared private key → impersonation), and **subdomain-takeover pivots** (trusted-origin phishing against siblings)
-- **Blast-radius & crown-jewel analysis** — tag targets by business value (`asset_value: crown|high|medium|low`) and Inquisition ranks remediation by the high-value assets a weak host endangers, so a cheap pivot bridged to a crown jewel rises above a locally-severe but isolated host
-- **Fleet HTML dashboard** — one page ranking every target by risk with grade, severity counts, trend sparkline, Δ-vs-last-scan, the cross-target attack paths, and the blast-radius ranking
+---
+
+## How a scan flows
+
+```mermaid
+flowchart LR
+    A([🎯 Target]) --> B[🔍 Recon<br/>DNS · ports · TLS<br/>HTTP · app layer]
+    B --> C[🧩 Findings]
+    C --> D[🚨 CVE correlation<br/>+ misconfig rules]
+    D --> E[🧠 Enrich<br/>MITRE · PoC<br/>attack scenarios]
+    E --> F[🕸️ Attack graph<br/>+ executive story]
+    F --> G([📄 Report<br/>text · md · json<br/>sarif · html])
+```
+
+A crawler pre-discovers the URL surface first; the recon modules then run **concurrently**, their findings are correlated and enriched, and everything converges into the attack graph and the report. Add `--validate` to capture live evidence, `--active` to send real payloads, or extra targets to light up the fleet view.
 
 ---
 
 ## Table of Contents
 
-1. [Quick Start](#quick-start)
-2. [Installation](#installation)
-3. [Usage](#usage)
-4. [Container & Deployment](#container--deployment)
-5. [Report Structure](#report-structure)
-6. [Modules Reference](#modules-reference)
-7. [Misconfiguration Rules](#misconfiguration-rules)
-8. [Active Testing](#active-testing-1)
-9. [Examples](#examples)
-10. [Legal & Safety](#legal--safety)
-11. [License](#license)
+| Get going | Go deep |
+|---|---|
+| ⚡ [Quick Start](#quick-start) | 🧩 [Modules Reference](#modules-reference) |
+| 📥 [Installation](#installation) | 📜 [Misconfiguration Rules](#misconfiguration-rules) |
+| 🎛️ [Usage](#usage) | 💥 [Active Testing](#active-testing-1) |
+| 🐳 [Container & Deployment](#container--deployment) | 🧪 [Examples](#examples) |
+| 📄 [Report Structure](#report-structure) | ⚖️ [Legal & Safety](#legal--safety) · 📝 [License](#license) |
 
 ---
 
 ## Quick Start
 
+**Got Python?** Three lines to your first report:
+
 ```bash
-# Clone and install
-git clone https://github.com/sparktron/inquisition.git
-cd inquisition
+git clone https://github.com/sparktron/inquisition.git && cd inquisition
 pip install -r requirements.txt
-
-# Run a standard scan
-python inquisition.py example.com
-
-# Full deep scan
-python inquisition.py example.com --depth deep
-
-# Save HTML report
-python inquisition.py example.com -o report.html
+python inquisition.py example.com            # 👈 scan something you're allowed to
 ```
 
-Or pull the pre-built container image:
+**Prefer Docker?** Zero install:
 
 ```bash
-docker pull ghcr.io/sparktron/inquisition:latest
 docker run --rm ghcr.io/sparktron/inquisition example.com --depth quick
 ```
+
+### The three commands you'll actually use
+
+```bash
+python inquisition.py example.com                     # standard scan, printed to your terminal
+python inquisition.py example.com --depth deep -o report.html   # the works → shiny HTML report
+python inquisition.py example.com --attacker-pov -o report.html # same, sorted by "what gets popped first"
+```
+
+Open `report.html` in any browser — it's a single self-contained file (filter bar, expandable attacker scenarios, PoC commands, attack-graph diagram, and all). No server, no build step, no external assets. 🎉
 
 ---
 
@@ -440,7 +480,7 @@ git tag v0.1.0 && git push origin v0.1.0   # triggers the workflow
 
 ## Report Structure
 
-Every completed scan produces the following sections:
+A report isn't a data dump — it's organized to answer four questions in order: **How bad is it? What could happen? What do I fix first? And how exactly?** Every completed scan produces these sections:
 
 | Section | Description |
 |---|---|
@@ -579,7 +619,7 @@ The same cross-target correlation and blast-radius data is embedded under `cross
 
 ## Modules Reference
 
-Inquisition runs 9 specialised modules, beginning with crawler pre-discovery before the remaining modules run concurrently:
+Under the hood, Inquisition is 9 focused modules. The crawler runs first to map the URL surface, then the rest fan out **concurrently** — here's what each one looks for:
 
 ### 1. DNS Reconnaissance (`dns_recon`)
 **What it does:** Resolves DNS records, enumerates subdomains, checks email security.
@@ -1085,4 +1125,10 @@ For bug reports or feature requests, provide:
 
 ---
 
-**Last updated:** June 2026 — added MITRE ATT&CK tags, attack scenarios, PoC commands, CISA KEV enrichment, attack chain detection and SVG visualisation, consequence ladder, and `--attacker-pov` mode
+<div align="center">
+
+**Built for defenders. Use it on what you're allowed to. Go find the doors before someone else does.** 🔍
+
+<sub>Last updated June 2026 — full attack-narrative intelligence (dynamic attack graph, executive story, exploitability-first CVE triage, safe PoC auto-validation with captured HTTP status, claim provenance, intel-freshness header) and fleet attack-path intelligence (cross-target correlation, blast-radius / crown-jewel ranking, confirmed-vs-modeled dashboard rollup).</sub>
+
+</div>
