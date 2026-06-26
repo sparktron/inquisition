@@ -24,12 +24,62 @@ def _last_scan_delta_html(report: ScanReport) -> str:
     return "<span style='color:#64748b'>0</span>"
 
 
+def _fleet_objective_rollup(reports: list[ScanReport]) -> tuple[int, int, int]:
+    """Aggregate reachable attack-graph objectives across the fleet (Theme E / E3).
+
+    Returns ``(confirmed, modeled, targets_with_objectives)`` — how many
+    fleet-wide objectives are backed by a live active-scan match (proven) versus
+    merely modeled from the knowledge base, and on how many targets any objective
+    is reachable at all.
+    """
+    import attack_graph
+
+    confirmed = modeled = targets = 0
+    for r in reports:
+        goals = attack_graph.build_attack_graph(r).goals
+        if goals:
+            targets += 1
+        for goal in goals:
+            if goal.confirmed:
+                confirmed += 1
+            else:
+                modeled += 1
+    return confirmed, modeled, targets
+
+
+def _fleet_objective_rollup_html(reports: list[ScanReport]) -> str:
+    """Headline callout: N confirmed / M modeled objectives across the fleet."""
+    confirmed, modeled, targets = _fleet_objective_rollup(reports)
+    if confirmed == 0 and modeled == 0:
+        return ""
+    confirmed_color = "#b91c1c" if confirmed else "#94a3b8"
+    return (
+        "<div style='display:flex;gap:16px;margin-bottom:24px'>"
+        "<div style='flex:1;background:#fff;border:1px solid #e2e8f0;border-left:4px solid #b91c1c;"
+        "border-radius:8px;padding:16px 20px'>"
+        f"<div style='font-size:2rem;font-weight:800;color:{confirmed_color}'>{confirmed}</div>"
+        "<div style='font-size:.78rem;color:#64748b;text-transform:uppercase;letter-spacing:.03em'>"
+        "Confirmed objectives</div>"
+        "<div style='font-size:.78rem;color:#94a3b8;margin-top:2px'>proven via active scan</div>"
+        "</div>"
+        "<div style='flex:1;background:#fff;border:1px solid #e2e8f0;border-left:4px solid #64748b;"
+        "border-radius:8px;padding:16px 20px'>"
+        f"<div style='font-size:2rem;font-weight:800;color:#475569'>{modeled}</div>"
+        "<div style='font-size:.78rem;color:#64748b;text-transform:uppercase;letter-spacing:.03em'>"
+        "Modeled objectives</div>"
+        "<div style='font-size:.78rem;color:#94a3b8;margin-top:2px'>"
+        f"reachable across {targets} target(s)</div>"
+        "</div></div>"
+    )
+
+
 def render_fleet_dashboard(reports: list[ScanReport]) -> str:
     """A single self-contained HTML dashboard summarizing every target in a fleet run."""
     fleet = _fleet_summary(reports)
     overall_score, overall_grade = _risk_score(fleet["counts"])
     grade_color = _GRADE_CSS.get(overall_grade, "#dc2626")
     generated = datetime.now().strftime("%Y-%m-%d %H:%M")
+    objective_rollup = _fleet_objective_rollup_html(reports)
 
     rows = ""
     for r in sorted(reports, key=lambda x: _risk_score(x.summary_counts())[0], reverse=True):
@@ -95,7 +145,7 @@ def render_fleet_dashboard(reports: list[ScanReport]) -> str:
   </div>
 </header>
 <main style="max-width:1100px;margin:0 auto;padding:32px 24px">
-  <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
+  {objective_rollup}<table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
     <thead style="background:#f1f5f9;font-size:.8rem;color:#475569;text-align:center">
       <tr>{head}</tr>
     </thead>

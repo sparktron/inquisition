@@ -230,5 +230,27 @@ class CorrelationRenderingTests(unittest.TestCase):
         self.assertNotIn("Cross-Target Attack Paths", render_fleet_dashboard(reports))
 
 
+class ObjectiveRollupTests(unittest.TestCase):
+    def _active_rce(self) -> Finding:
+        return Finding(
+            title="[active] Remote Code Execution", category=FindingCategory.VULNERABILITY,
+            severity=Severity.CRITICAL, evidence="matched",
+            metadata={"active_scan": True},
+        )
+
+    def test_rollup_counts_confirmed_objective(self) -> None:
+        reports = [
+            _report("a.com", [self._active_rce()]),
+            _report("b.com", [_dns("b.com", "203.0.113.5")]),
+        ]
+        html = render_fleet_dashboard(reports)
+        self.assertIn("Confirmed objectives", html)
+        self.assertIn("Modeled objectives", html)
+
+    def test_rollup_omitted_when_no_objectives(self) -> None:
+        reports = [_report("a.com", [_dns("a.com", "203.0.113.5")])]
+        self.assertNotIn("Confirmed objectives", render_fleet_dashboard(reports))
+
+
 if __name__ == "__main__":
     unittest.main()
