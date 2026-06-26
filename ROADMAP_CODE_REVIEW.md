@@ -77,26 +77,32 @@ doesn't constrain URL **scheme** (`file://`, `gopher://`). PoCs are KB-authored
 
 ---
 
-## P2 — Polish & smaller cleanups
+## P2 — Polish & smaller cleanups  ✅ DONE (2026-06-25)
 
-### 6. Title-convention coupling for active-scan detection  *(provenance.py, attack_graph.py)*
+### 6. Title-convention coupling for active-scan detection  *(provenance.py, attack_graph.py)* ✅
 Both detect active-scan findings via `title.startswith("[active]")` +
 `FindingCategory.VULNERABILITY`. Prefer a structured signal —
 `finding.metadata["active_scan"] = True` set at creation in `active_scan.py` —
 and key the consumers off that.
+- **Done:** `active_scan.py` stamps `metadata["active_scan"] = True` on every
+  Nuclei/ZAP finding. New `models.is_active_scan_finding()` reads that flag and
+  falls back to the legacy `"[active] "` title prefix for old snapshots;
+  `provenance.py` and `attack_graph._active_finding_edges` both consume it.
 
-### 7. Cosmetic: authorization banner box is misaligned  *(safety.py)*
+### 7. Cosmetic: authorization banner box is misaligned  *(safety.py)* ✅
 `_AUTHORIZATION_BANNER` top/divider rows are wider than the content rows, so the
 right border doesn't line up. Recompute the box to a single width.
+- **Done:** rebuilt the box at a uniform 68-column width (interior 66); all rows
+  now align.
 
-### 8. Micro-nits
+### 8. Micro-nits ✅
 - `poc_validation._run_check`: `except (OSError, FileNotFoundError)` —
-  `FileNotFoundError ⊆ OSError`, drop the redundant member.
+  `FileNotFoundError ⊆ OSError`, drop the redundant member. **Done.**
 - `reachability.exposure_index`: `... if count else 0` is dead (buckets only
-  ever hold `count >= 1`).
+  ever hold `count >= 1`). **Done.**
 - `fleet_config._coerce`: `bool(value)` mis-coerces the JSON string `"false"`
   to `True`. Accept native bools / explicit `true|false` strings and reject
-  others. (YAML native booleans are fine.)
+  others. (YAML native booleans are fine.) **Done** via new `_coerce_bool`.
 
 ---
 

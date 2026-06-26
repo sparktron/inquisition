@@ -9,17 +9,17 @@ from models import ScanConfig
 
 _AUTHORIZATION_BANNER = """\
 ╔══════════════════════════════════════════════════════════════════╗
-║                    AUTHORIZATION REQUIRED                       ║
+║                      AUTHORIZATION REQUIRED                      ║
 ╠══════════════════════════════════════════════════════════════════╣
-║  Target : {target:<52s} ║
-║  Depth  : {depth:<52s} ║
-║  Mode   : {mode:<52s} ║
+║  Target : {target:<54s} ║
+║  Depth  : {depth:<54s} ║
+║  Mode   : {mode:<54s} ║
 ╠══════════════════════════════════════════════════════════════════╣
-║  This tool performs READ-ONLY reconnaissance against the target ║
-║  host.  No exploit payloads, authentication bypasses, or        ║
-║  injection attempts will be sent.                               ║
-║                                                                 ║
-║  You MUST have authorization to scan the target.                ║
+║  This tool performs READ-ONLY reconnaissance against the         ║
+║  target host.  No exploit payloads, authentication               ║
+║  bypasses, or injection attempts will be sent.                   ║
+║                                                                  ║
+║  You MUST have authorization to scan the target.                 ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 

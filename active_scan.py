@@ -292,6 +292,7 @@ def parse_nuclei_output(stdout: str) -> list[Finding]:
             mitre_techniques=mitre,
             poc_command=poc,
             attack_scenario=attack_scenario,
+            metadata={"active_scan": True},
         ))
 
     return findings
@@ -378,6 +379,7 @@ def parse_zap_output(stdout: str) -> list[Finding]:
                 remediation=_strip_markup(str(alert.get("solution", "")))
                 or "Review the matched ZAP alert and remediate the underlying issue.",
                 references=references,
+                metadata={"active_scan": True},
             ))
     return findings
 

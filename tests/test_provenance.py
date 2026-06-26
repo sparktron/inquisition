@@ -38,6 +38,16 @@ class FindingProvenanceTests(unittest.TestCase):
         self.assertTrue(p.confirmed)
         self.assertEqual(p.source, "active scan")
 
+    def test_active_scan_via_metadata_flag(self) -> None:
+        # Structured signal classifies even without the legacy "[active]" title.
+        p = provenance.finding_provenance(_f(
+            title="Stored XSS", category=FindingCategory.VULNERABILITY,
+            metadata={"active_scan": True},
+        ))
+        assert p is not None
+        self.assertTrue(p.confirmed)
+        self.assertEqual(p.source, "active scan")
+
     def test_live_validation_beats_active(self) -> None:
         f = _f(title="[active] thing", category=FindingCategory.VULNERABILITY)
         f.metadata["poc_validation"] = {"confirmed": True, "checks": []}

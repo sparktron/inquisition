@@ -56,6 +56,21 @@ class ResolveTests(unittest.TestCase):
         with self.assertRaises(FleetConfigError):
             resolved_configs({"targets": [{"target": "a.com", "asset_value": "vital"}]}, _base())
 
+    def test_bool_string_false_is_false(self) -> None:
+        # The JSON string "false" must not coerce to True (the old bool() bug).
+        c = resolved_configs({"targets": [{"target": "a.com", "active": "false"}]}, _base())[0]
+        self.assertFalse(c.active)
+
+    def test_bool_string_true_and_native(self) -> None:
+        c = resolved_configs({"targets": [{"target": "a.com", "active": "True"}]}, _base())[0]
+        self.assertTrue(c.active)
+        c2 = resolved_configs({"targets": [{"target": "a.com", "validate_poc": True}]}, _base())[0]
+        self.assertTrue(c2.validate_poc)
+
+    def test_non_bool_string_raises(self) -> None:
+        with self.assertRaises(FleetConfigError):
+            resolved_configs({"targets": [{"target": "a.com", "active": "yes"}]}, _base())
+
     def test_unknown_field_raises(self) -> None:
         with self.assertRaises(FleetConfigError):
             resolved_configs({"targets": [{"target": "a.com", "bogus": 1}]}, _base())

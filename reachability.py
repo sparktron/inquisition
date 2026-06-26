@@ -178,5 +178,6 @@ def _compute_exposure_index(report: "ScanReport") -> int:
     for kind, count in buckets.items():
         weight = _EXPOSURE_WEIGHTS[kind]
         # Diminishing returns: full weight for the first, half for each extra.
-        total += weight + weight * 0.5 * (count - 1) if count else 0
+        # buckets only ever holds count >= 1, so no zero guard is needed.
+        total += weight + weight * 0.5 * (count - 1)
     return min(100, round(total))

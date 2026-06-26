@@ -302,7 +302,7 @@ def _run_check(
         check.exit_code = None
         check.skipped_reason = "timed out"
         return
-    except (OSError, FileNotFoundError) as exc:
+    except OSError as exc:  # FileNotFoundError is an OSError subclass
         check.skipped_reason = f"could not execute ({exc})"
         return
 

@@ -225,12 +225,12 @@ def _active_finding_edges(report: "ScanReport") -> list[Edge]:
     feasibility. Deduplicated by (state, label) so one template matched on many
     URLs adds a single edge.
     """
-    from models import FindingCategory
+    from models import FindingCategory, is_active_scan_finding
 
     edges: list[Edge] = []
     seen: set[tuple[str, str]] = set()
     for f in report.findings:
-        if f.category != FindingCategory.VULNERABILITY:
+        if f.category != FindingCategory.VULNERABILITY or not is_active_scan_finding(f):
             continue
         classified = _classify_active(f)
         if classified is None:

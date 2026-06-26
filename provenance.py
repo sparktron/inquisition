@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from models import FindingCategory
+from models import FindingCategory, is_active_scan_finding
 
 if TYPE_CHECKING:
     from models import Finding
@@ -67,7 +67,7 @@ def finding_provenance(finding: "Finding") -> ClaimProvenance | None:
 
     if (
         finding.category == FindingCategory.VULNERABILITY
-        and finding.title.lower().startswith("[active]")
+        and is_active_scan_finding(finding)
     ):
         return _ACTIVE_SCAN
 

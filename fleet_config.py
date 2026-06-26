@@ -128,10 +128,27 @@ def _coerce(key: str, value: Any) -> tuple[str, Any]:
     if key in _FLOAT_FIELDS:
         return key, float(value)
     if key in _BOOL_FIELDS:
-        return key, bool(value)
+        return key, _coerce_bool(key, value)
     if key in _STR_FIELDS:
         return key, str(value)
     raise FleetConfigError(f"unknown fleet config field: {key!r}")
+
+
+def _coerce_bool(key: str, value: Any) -> bool:
+    """Coerce a config value to bool without ``bool("false") is True`` surprises.
+
+    YAML already yields native booleans, but JSON (and quoted YAML) hands us the
+    strings ``"true"``/``"false"``; ``bool()`` would treat any non-empty string —
+    including ``"false"`` — as True. Accept native bools and the explicit
+    ``true``/``false`` spellings (case-insensitive); reject everything else.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("true", "false"):
+            return lowered == "true"
+    raise FleetConfigError(f"{key} must be a boolean (true/false), got {value!r}")
 
 
 def _coerce_sla(value: Any) -> tuple[tuple[str, int], ...]:

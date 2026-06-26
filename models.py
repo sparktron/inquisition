@@ -179,6 +179,21 @@ class Finding:
     preconditions: list[str] = field(default_factory=list)  # free-form notes
 
 
+def is_active_scan_finding(finding: "Finding") -> bool:
+    """True when a finding was produced by the active-scan engine (Nuclei/ZAP).
+
+    Active findings are proof — an external engine sent a payload and it matched
+    — so consumers (provenance, the attack graph) treat them as confirmed rather
+    than modeled. The canonical signal is ``metadata["active_scan"]``, stamped at
+    creation in ``active_scan.py``. The legacy ``"[active] "`` title prefix is
+    accepted as a fallback so snapshots persisted before the flag existed still
+    classify correctly.
+    """
+    if finding.metadata.get("active_scan"):
+        return True
+    return finding.title.lower().startswith("[active]")
+
+
 # ---------------------------------------------------------------------------
 # Vulnerability / CVE correlation
 # ---------------------------------------------------------------------------
