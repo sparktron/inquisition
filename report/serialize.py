@@ -186,6 +186,7 @@ def _sarif_run(report: ScanReport) -> dict[str, Any]:
                 {
                     "command": c.get("command", ""),
                     "exitCode": c.get("exit_code"),
+                    "httpStatus": c.get("http_status"),
                     "output": (
                         str(c.get("stdout", "")) + str(c.get("stderr", ""))
                     ).strip(),

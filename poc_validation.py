@@ -83,6 +83,16 @@ _URL_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.\-]*)://")
 # inject our own. ``--fail`` / ``-f`` make curl exit non-zero on HTTP >= 400.
 _CURL_FAIL_FLAGS: frozenset[str] = frozenset({"-f", "--fail", "--fail-with-body", "--fail-early"})
 
+# curl flags that already declare a --write-out format; if the author supplied
+# one we leave it alone rather than appending our status sentinel.
+_CURL_WRITEOUT_FLAGS: frozenset[str] = frozenset({"-w", "--write-out"})
+
+# Appended to a curl probe via --write-out so the captured stdout carries the
+# final HTTP status. Parsed back out (and stripped) in _run_check so the status
+# is surfaced as evidence without leaking the sentinel into the report.
+_HTTP_STATUS_SENTINEL = "__INQ_HTTP_STATUS__"
+_HTTP_STATUS_RE = re.compile(rf"\n?{_HTTP_STATUS_SENTINEL}:(\d{{3}})\s*$")
+
 # Cap captured output so a chatty probe can't bloat the report / state file.
 _MAX_OUTPUT_CHARS = 4000
 
@@ -99,6 +109,7 @@ class PocCheck:
     safe: bool
     ran: bool = False
     exit_code: int | None = None
+    http_status: int | None = None  # captured HTTP status for curl probes
     stdout: str = ""
     stderr: str = ""
     skipped_reason: str = ""
@@ -134,6 +145,7 @@ class PocValidation:
                     "safe": c.safe,
                     "ran": c.ran,
                     "exit_code": c.exit_code,
+                    "http_status": c.http_status,
                     "stdout": c.stdout,
                     "stderr": c.stderr,
                     "skipped_reason": c.skipped_reason,
@@ -223,13 +235,20 @@ def _harden_curl(argv: list[str]) -> list[str]:
     Leaves non-curl argv untouched, and respects a ``--fail`` the author already
     supplied. (A 3xx redirect still exits 0 without ``-L``; that is an accepted
     limitation — the resource did respond.)
+
+    Also appends a ``--write-out`` sentinel so the probe's stdout carries the
+    final HTTP status (parsed back out in :func:`_run_check`), unless the author
+    already supplied their own ``-w``.
     """
     if not argv or os.path.basename(argv[0]) != "curl":
         return argv
     flags = {tok.split("=", 1)[0] for tok in argv[1:]}
-    if flags & _CURL_FAIL_FLAGS:
-        return argv
-    return [argv[0], "--fail", *argv[1:]]
+    hardened = list(argv)
+    if not (flags & _CURL_FAIL_FLAGS):
+        hardened = [hardened[0], "--fail", *hardened[1:]]
+    if not (flags & _CURL_WRITEOUT_FLAGS):
+        hardened += ["--write-out", f"\\n{_HTTP_STATUS_SENTINEL}:%{{http_code}}"]
+    return hardened
 
 
 def _candidate_commands(poc_command: str) -> list[str]:
@@ -308,8 +327,22 @@ def _run_check(
 
     check.ran = True
     check.exit_code = getattr(proc, "returncode", None)
-    check.stdout = _truncate(getattr(proc, "stdout", "") or "")
+    raw_stdout, check.http_status = _extract_http_status(getattr(proc, "stdout", "") or "")
+    check.stdout = _truncate(raw_stdout)
     check.stderr = _truncate(getattr(proc, "stderr", "") or "")
+
+
+def _extract_http_status(stdout: str) -> tuple[str, int | None]:
+    """Pull the injected status sentinel off a curl probe's stdout.
+
+    Returns ``(stdout_without_sentinel, status)``. When no sentinel is present
+    (non-curl probe, author-supplied ``-w``, or a fake test runner), the stdout
+    is returned unchanged and the status is ``None``.
+    """
+    match = _HTTP_STATUS_RE.search(stdout)
+    if not match:
+        return stdout, None
+    return stdout[: match.start()], int(match.group(1))
 
 
 def _annotate(finding: Finding, validation: PocValidation) -> None:
@@ -318,8 +351,9 @@ def _annotate(finding: Finding, validation: PocValidation) -> None:
     if validation.confirmed:
         finding.confidence = Confidence.CONFIRMED
         ran = next(c for c in validation.checks if c.confirming)
+        status = f"HTTP {ran.http_status}" if ran.http_status is not None else "exit 0"
         finding.verification = (
-            f"Validated live: `{ran.command}` ran successfully (exit 0); "
+            f"Validated live: `{ran.command}` ran successfully ({status}); "
             "captured output attached as evidence."
         )
     elif validation.attempted:

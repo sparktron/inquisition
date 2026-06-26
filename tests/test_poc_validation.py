@@ -217,6 +217,35 @@ class ValidateFindingTests(unittest.TestCase):
         self.assertEqual(f.confidence, Confidence.MEDIUM)  # not promoted
         self.assertIn("Attempted validation", f.verification)
 
+    def test_curl_writeout_status_injected(self) -> None:
+        # curl must run with a --write-out sentinel so the HTTP status is captured.
+        f = _f("curl -sI https://example.com")
+        runner = _runner(returncode=0, stdout="HTTP/2 200")
+        poc_validation.validate_finding(f, runner=runner)
+        argv = runner.calls[0]  # type: ignore[attr-defined]
+        self.assertIn("--write-out", argv)
+        self.assertIn("__INQ_HTTP_STATUS__", " ".join(argv))
+
+    def test_curl_existing_writeout_not_doubled(self) -> None:
+        f = _f("curl -sI -w done https://example.com")
+        runner = _runner()
+        poc_validation.validate_finding(f, runner=runner)
+        argv = runner.calls[0]  # type: ignore[attr-defined]
+        self.assertEqual(argv.count("--write-out"), 0)
+        self.assertNotIn("__INQ_HTTP_STATUS__", " ".join(argv))
+
+    def test_http_status_captured_and_stripped(self) -> None:
+        f = _f("curl -sI https://example.com", confidence=Confidence.MEDIUM)
+        runner = _runner(returncode=0, stdout="HTTP/2 200\nbody\n__INQ_HTTP_STATUS__:200")
+        result = poc_validation.validate_finding(f, runner=runner)
+        assert result is not None
+        self.assertTrue(result.confirmed)
+        check = f.metadata["poc_validation"]["checks"][0]
+        self.assertEqual(check["http_status"], 200)
+        # The sentinel is stripped from the captured evidence.
+        self.assertNotIn("__INQ_HTTP_STATUS__", check["stdout"])
+        self.assertIn("HTTP 200", f.verification)
+
     def test_output_truncated(self) -> None:
         f = _f("curl -sI https://x")
         runner = _runner(stdout="A" * 9000)

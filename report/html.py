@@ -78,7 +78,13 @@ def _poc_evidence_html(f: Finding) -> str:
         return ""
     blocks = ""
     for c in checks:
-        code = "timed out" if c.get("exit_code") is None else f"exit {c.get('exit_code')}"
+        status = c.get("http_status")
+        if status is not None:
+            code = f"HTTP {status}"
+        elif c.get("exit_code") is None:
+            code = "timed out"
+        else:
+            code = f"exit {c.get('exit_code')}"
         captured = (str(c.get("stdout", "")) + str(c.get("stderr", ""))).strip()
         body = _e(captured) if captured else "<em>no output</em>"
         blocks += (
