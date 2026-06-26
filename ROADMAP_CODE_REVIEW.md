@@ -106,20 +106,23 @@ right border doesn't line up. Recompute the box to a single width.
 
 ---
 
-## P3 — Feature opportunities (net-new value)
+## P3 — Feature opportunities (net-new value)  ✅ DONE (2026-06-25)
 
-- **Status-aware confirmation evidence.** Once #1 lands, surface the captured
-  HTTP status in the report's evidence block ("confirmed: HTTP 200") so the
-  proof is self-explaining.
-- **Fleet dashboard: confirmed-vs-modeled rollup.** The per-target attack graph
-  already distinguishes confirmed paths; aggregate a fleet-wide
-  "N confirmed / M modeled objectives" headline in `render_fleet_dashboard`.
-- **Blast-radius in the attack story.** `attack_story` narrates a single host;
-  for fleet runs, append the cross-target pivot ("…and this host is co-hosted
-  with the crown-jewel `api.example.com`") using `blast_radius` output.
-- **EPSS/KEV freshness surfaced in report header.** `intel_provenance()` (F1)
-  records feed freshness; show a small "intel current as of …" line so a stale
-  offline cache is visible to the reader.
+- **Status-aware confirmation evidence.** ✅ `_harden_curl` now also injects a
+  `--write-out` status sentinel; `_run_check` parses + strips it into
+  `PocCheck.http_status`. Surfaced as "ran successfully (HTTP 200)" in the
+  verification line, "HTTP 200" in the HTML evidence block, and `httpStatus` in
+  SARIF. (`2c11f83`)
+- **Fleet dashboard: confirmed-vs-modeled rollup.** ✅ `render_fleet_dashboard`
+  leads with a headline callout: N confirmed (proven via active scan) / M
+  modeled objectives across K targets, via `_fleet_objective_rollup`. (`02667cd`)
+- **Blast-radius in the attack story.** ✅ `attack_story(report, *, fleet=...)`
+  appends a cross-target pivot note built from the D2 blast-radius graph, naming
+  the most valuable endangered sibling. Threaded through render_text/html;
+  render_combined passes `fleet=reports`. (`3a6dacb`)
+- **EPSS/KEV freshness surfaced in report header.** ✅ `_intel_freshness_summary`
+  distills `intel_sources` into a one-line "intel current as of …" header in
+  text/HTML/markdown, flagging stale feeds. (`01548bd`)
 
 ---
 
@@ -130,3 +133,5 @@ right border doesn't line up. Recompute the box to a single width.
 3. P1 #3/#4 (report.py split + dedupe — unblocks faster future work).
 4. P2 cleanups (batch into one commit).
 5. P3 features as capacity allows.
+
+**Status: ALL items P0–P3 complete.** 388 tests pass, mypy clean.
