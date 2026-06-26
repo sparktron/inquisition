@@ -7,7 +7,25 @@ from __future__ import annotations
 
 from typing import Any
 
-from models import Finding, Severity
+from models import Finding, ScanReport, Severity
+
+
+def _intel_freshness_summary(report: ScanReport) -> str:
+    """One-line freshness headline for the report header (Theme F / F1).
+
+    Surfaces the oldest consulted feed date (the binding freshness) plus any
+    stale feeds, so a reader sees at a glance whether an offline intel cache has
+    gone out of date. Empty when no intel sources were recorded.
+    """
+    sources = report.intel_sources
+    if not sources:
+        return ""
+    dated = [s.as_of for s in sources if s.as_of]
+    base = f"intel current as of {min(dated)}" if dated else "intel freshness unknown"
+    stale = [s.name for s in sources if s.stale]
+    if stale:
+        return f"{base} — STALE: {', '.join(stale)}"
+    return base
 
 
 _SEV_ORDER = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO]

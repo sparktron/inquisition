@@ -19,6 +19,7 @@ from .scoring import (
     _SEVERITY_LABEL,
     _age_phrase,
     _exploitability_key,
+    _intel_freshness_summary,
     _mitre_url,
     _risk_score,
 )
@@ -53,6 +54,9 @@ def render_markdown(report: ScanReport, *, brief: bool = False, attacker_pov: bo
         out.append(f"- **Mode:** {mode}")
     if pov:
         out.append("- **View:** Attacker POV — ordered by exploitability")
+    intel_line = _intel_freshness_summary(report)
+    if intel_line:
+        out.append(f"- **Intel:** {intel_line}")
     out.append("")
 
     # --- Executive Summary ---

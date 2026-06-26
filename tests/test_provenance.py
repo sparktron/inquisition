@@ -101,6 +101,19 @@ class IntelFreshnessRenderTests(unittest.TestCase):
         self.assertIn("stale — refresh", html)
         self.assertIn("Modeled — knowledge base", html)
 
+    def test_header_freshness_line_uses_oldest_and_flags_stale(self) -> None:
+        # The header line surfaces the oldest feed date and names stale feeds.
+        out = render(_report([_f()], intel=self._intel()), ReportFormat.TEXT)
+        self.assertIn("Intel    : intel current as of 2026-05-01", out)
+        self.assertIn("STALE: Nuclei templates", out)
+
+    def test_header_freshness_line_in_html(self) -> None:
+        html = render_html(_report([_f()], intel=self._intel()))
+        self.assertIn("intel current as of 2026-05-01", html)
+
+    def test_header_freshness_omitted_without_intel(self) -> None:
+        self.assertNotIn("intel current as of", render(_report([_f()]), ReportFormat.TEXT))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -25,6 +25,7 @@ from .scoring import (
     _SEVERITY_LABEL,
     _age_phrase,
     _exploitability_key,
+    _intel_freshness_summary,
     _mitre_url,
     _poc_validation_checks,
     _risk_score,
@@ -186,6 +187,12 @@ def render_html(
     counts = report.summary_counts()
     score, grade = _risk_score(counts)
     exposure_idx = reachability.exposure_index(report)
+    intel_line = _intel_freshness_summary(report)
+    intel_stale = "STALE" in intel_line
+    intel_header = (
+        f'<div style="font-size:.78rem;margin-top:6px;color:{"#f87171" if intel_stale else "#64748b"}">'
+        f'&#128225; {_e(intel_line)}</div>'
+    ) if intel_line else ""
     story = attack_graph.attack_story(report, fleet=fleet)
     story_callout = (
         f'<div style="background:#fef2f2;border-left:4px solid #dc2626;border-radius:6px;'
@@ -701,6 +708,7 @@ def render_html(
       &#128273; INQUISITION
     </div>
     <div style="font-size:.9rem;color:#94a3b8;margin-top:4px">Security Reconnaissance Report</div>
+    {intel_header}
     <div style="margin-top:20px;display:flex;flex-wrap:wrap;gap:32px">
       <div>
         <div style="font-size:.75rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Target</div>

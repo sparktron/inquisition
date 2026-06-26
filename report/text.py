@@ -21,6 +21,7 @@ from .scoring import (
     _SEVERITY_LABEL,
     _age_phrase,
     _exploitability_key,
+    _intel_freshness_summary,
     _mitre_url,
     _risk_score,
 )
@@ -162,6 +163,9 @@ def render_text(
         lines.append(f"  Mode     : {'dry-run' if report.config.dry_run else 'safe' if report.config.safe_mode else 'standard'}")
     if pov:
         lines.append("  View     : ATTACKER POV — findings ordered by exploitability")
+    intel_line = _intel_freshness_summary(report)
+    if intel_line:
+        lines.append(f"  Intel    : {intel_line}")
     lines.append("")
 
     # --- Executive Summary ---
