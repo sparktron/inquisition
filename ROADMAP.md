@@ -1,10 +1,15 @@
 # Inquisition — Code Review & Development Roadmap
 
-_Last updated: 2026-06-10_
+_Last updated: 2026-06-29_
 
 This document captures a full code review of the Inquisition scanner and a
 phased roadmap toward the goal: **continuously verify that your websites are as
 secure as they can be, with comprehensive analysis and reporting.**
+
+Current follow-up plan: the 2026-06-29 two-week code review addendum in
+[`ROADMAP_CODE_REVIEW.md`](ROADMAP_CODE_REVIEW.md) tracks the active cleanup
+queue for strict `mypy` test annotations, SLA threshold validation, and
+unit-suite resource cleanup.
 
 It is organized as:
 

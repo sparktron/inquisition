@@ -20,7 +20,7 @@ You get a polished, self-contained report — **text, Markdown, JSON, SARIF, or 
 
 Inquisition is **read-only by design.** No exploit payloads, no auth bypasses, no injection, no login attempts, nothing that mutates the target — just non-mutating recon probes (DNS lookups, TCP connects, HTTP `GET`/`OPTIONS`, CORS preflights, GraphQL introspection). Real payload testing is **strictly opt-in** behind `--active` and a second authorization prompt. **Only scan what you're allowed to.**
 
-<sub>📦 Two roadmaps shipped and complete: correctness/coverage ([ROADMAP.md](ROADMAP.md), phases 0–4) and attack-narrative intelligence ([ROADMAP_ATTACK_NARRATIVE.md](ROADMAP_ATTACK_NARRATIVE.md), themes A–F). External recon is excellent — but it isn't a full production "all clear" on its own: active payload testing needs the external Nuclei/ZAP engines, and authenticated/internal assessment is out of scope.</sub>
+<sub>📦 Two roadmaps shipped and complete: correctness/coverage ([ROADMAP.md](ROADMAP.md), phases 0–4) and attack-narrative intelligence ([ROADMAP_ATTACK_NARRATIVE.md](ROADMAP_ATTACK_NARRATIVE.md), themes A–F). The current two-week review follow-up plan lives in [ROADMAP_CODE_REVIEW.md](ROADMAP_CODE_REVIEW.md). External recon is excellent — but it isn't a full production "all clear" on its own: active payload testing needs the external Nuclei/ZAP engines, and authenticated/internal assessment is out of scope.</sub>
 
 ## ✨ Highlights
 

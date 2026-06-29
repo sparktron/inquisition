@@ -1,4 +1,4 @@
-# Code Review & Roadmap — last 10 days (2026-06-15 → 06-25)
+# Code Review & Roadmap — recent changes (2026-06-15 → 06-29)
 
 Scope: the attack-narrative subsystem (`mitre`, `attack_graph`, `attack_rules`,
 `reachability`, `provenance`, `poc_validation`, `vuln_correlation` refactor) and
@@ -134,4 +134,70 @@ right border doesn't line up. Recompute the box to a single width.
 4. P2 cleanups (batch into one commit).
 5. P3 features as capacity allows.
 
-**Status: ALL items P0–P3 complete.** 388 tests pass, mypy clean.
+**Status:** Original P0–P3 items are complete, with 388 unit tests passing.
+
+---
+
+## Two-week review addendum — 2026-06-29
+
+Scope: all code changes committed from 2026-06-15 through 2026-06-29. The
+review covered the crawler URL handoff, TLS chain/DH work, fleet execution,
+watch mode, metrics/audit logging, active-scan integration, PoC validation,
+attack-narrative intelligence, report package split, and the P2/P3 polish pass.
+
+### Confirmed findings
+
+#### P1 — `mypy --strict` fails on new test helpers
+`python -m mypy .` currently fails with 11 `no-untyped-def` errors in:
+
+- `tests/test_poc_validation.py`
+- `tests/test_mitre.py`
+- `tests/test_attack_rules.py`
+- `tests/test_active_scan.py`
+
+The errors are limited to test helper functions/fake runners, but they make the
+documented strict type-checking gate red.
+
+**Fix plan:** add precise helper and fake-runner annotations without weakening
+`pyproject.toml` strictness. Prefer small local protocols or `Callable[..., Any]`
+where runner signatures intentionally vary.
+
+**Regression check:** `python -m mypy .`.
+
+#### P1 — Negative SLA thresholds are accepted and silently disable enforcement
+The CLI parser accepts values like `--sla-by-severity high=-1` because it strips
+`-` before the numeric check. Fleet config also coerces `sla_max_age` and
+`sla_by_severity` values with `int(...)` and does not reject negatives. In
+`notifications.sla_breaches`, thresholds `<= 0` disable the SLA, so a negative
+typo suppresses alerts instead of failing fast.
+
+**Fix plan:** reject negative SLA values in `_parse_sla_overrides`,
+`fleet_config._coerce_sla`, and `fleet_config._coerce` for `sla_max_age`.
+Keep `0` as the documented "disabled" value.
+
+**Regression check:** add CLI and fleet-config tests for negative values, then
+run `python -m unittest discover -s tests -v`.
+
+#### P2 — Test suite leaks file/socket resources under the standard unittest run
+The full unit suite passes, but `tests/test_audit.py` leaves several opened
+audit-log file handles unclosed and `tests/test_metrics_server.py` only
+schedules `server.shutdown`. `ThreadingHTTPServer` sockets remain unclosed and
+the suite produces `ResourceWarning` output during `python -m unittest discover
+-s tests -v`.
+
+**Fix plan:** use context managers for audit-log reads and add
+`server.server_close` as cleanup after shutdown, or use a single cleanup helper
+that calls both in order.
+
+**Regression check:** rerun `python -m unittest discover -s tests -v` and verify
+the file/socket warnings are gone.
+
+### Execution order
+
+1. Fix the `mypy` failures first so the repo's strict static gate is reliable
+   again.
+2. Tighten SLA validation next because it affects watch/notification behavior.
+3. Clean up test file/socket resources so the unit suite is warning-clean.
+4. Re-run the full validation path: `python -m unittest discover -s tests -v`,
+   `python -m mypy .`, `python -m compileall -q .`, then remove generated
+   `__pycache__` directories.
