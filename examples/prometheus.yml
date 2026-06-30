@@ -3,6 +3,10 @@
 global:
   scrape_interval: 30s
 
+# Alerting rules for Inquisition's exported metrics (see inquisition.rules.yml).
+rule_files:
+  - /etc/prometheus/inquisition.rules.yml
+
 scrape_configs:
   - job_name: inquisition
     metrics_path: /metrics

@@ -36,6 +36,7 @@ services:
     image: prom/prometheus:latest
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./inquisition.rules.yml:/etc/prometheus/inquisition.rules.yml:ro
     ports:
       - "9091:9090"   # Prometheus UI
     depends_on:

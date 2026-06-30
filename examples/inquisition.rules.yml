@@ -1,0 +1,132 @@
+# Prometheus alerting rules for Inquisition's exported metrics.
+#
+# Load these alongside the scrape config in examples/prometheus.yml:
+#
+#   rule_files:
+#     - /etc/prometheus/inquisition.rules.yml
+#
+# and mount the file into the Prometheus container (see examples/docker-compose.yml).
+# Validate locally with:  promtool check rules examples/inquisition.rules.yml
+#
+# Every alert carries a `target` label inherited from the metric, so a fleet of
+# hosts produces one alert per affected target. Thresholds and `for:` windows are
+# starting points — tune them to your fleet and scan cadence (the example compose
+# scans hourly). Route by the `severity` annotation label in Alertmanager.
+groups:
+  - name: inquisition.findings
+    rules:
+      # A critical finding is open on a target. Page on this.
+      - alert: InquisitionCriticalFinding
+        expr: inquisition_findings{severity="critical"} > 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical finding open on {{ $labels.target }}"
+          description: >-
+            {{ $value }} critical finding(s) are open on {{ $labels.target }}.
+            Investigate immediately — this is an exploitable exposure.
+
+      # High-severity findings are open. Ticket / notify, don't page.
+      - alert: InquisitionHighFindings
+        expr: inquisition_findings{severity="high"} > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High-severity findings open on {{ $labels.target }}"
+          description: >-
+            {{ $value }} high-severity finding(s) are open on {{ $labels.target }}.
+
+      # Net new findings appeared between scans (a regression). delta() over a
+      # window wider than the scan interval catches a single scan-to-scan jump.
+      - alert: InquisitionFindingsRegressed
+        expr: delta(inquisition_findings_total[2h]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "New findings appeared on {{ $labels.target }}"
+          description: >-
+            Total open findings on {{ $labels.target }} rose by
+            {{ $value }} since the previous scan — a posture regression.
+
+  - name: inquisition.posture
+    rules:
+      # Severity-weighted risk score is high. Tune the threshold to your fleet's
+      # baseline (risk_score = 10*critical + 5*high + 2*medium + 1*low-ish weights).
+      - alert: InquisitionRiskScoreHigh
+        expr: inquisition_risk_score > 50
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Risk score {{ $value }} on {{ $labels.target }}"
+          description: >-
+            Severity-weighted risk score on {{ $labels.target }} is {{ $value }}
+            (threshold 50). Review the open findings.
+
+      # Attack-surface exposure index (0–100) is elevated.
+      - alert: InquisitionExposureIndexHigh
+        expr: inquisition_exposure_index > 60
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Exposure index {{ $value }} on {{ $labels.target }}"
+          description: >-
+            Attack-surface exposure index on {{ $labels.target }} is {{ $value }}/100.
+
+      # Correlated CVE records are present on a target.
+      - alert: InquisitionCVEsPresent
+        expr: inquisition_cves_total > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} correlated CVE(s) on {{ $labels.target }}"
+          description: >-
+            Inquisition correlated {{ $value }} CVE record(s) for software
+            detected on {{ $labels.target }}.
+
+  - name: inquisition.sla
+    rules:
+      # A finding has stayed open beyond the SLA window (in consecutive scans).
+      # Mirrors the in-tool --sla-max-age gate at the monitoring layer. Adjust the
+      # threshold to match your --sla-max-age / --sla-by-severity settings.
+      - alert: InquisitionFindingSLABreach
+        expr: inquisition_finding_max_age_scans > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: "Stale finding on {{ $labels.target }} (age {{ $value }} scans)"
+          description: >-
+            A finding on {{ $labels.target }} has been open for {{ $value }}
+            consecutive scans, exceeding the 5-scan SLA window.
+
+  - name: inquisition.health
+    rules:
+      # The /metrics endpoint is unreachable — no fresh scan data is arriving.
+      # `up` is synthesised by Prometheus per scrape target.
+      - alert: InquisitionEndpointDown
+        expr: up{job="inquisition"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Inquisition /metrics endpoint down"
+          description: >-
+            Prometheus cannot scrape the Inquisition exporter
+            ({{ $labels.instance }}); scan results are stale.
+
+      # Scans are running much slower than expected (possible hang / timeout
+      # storm). The example fleet scans hourly; 600s is a generous ceiling.
+      - alert: InquisitionScanSlow
+        expr: inquisition_scan_duration_seconds > 600
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow scan on {{ $labels.target }} ({{ $value }}s)"
+          description: >-
+            The last scan of {{ $labels.target }} took {{ $value }}s
+            (threshold 600s). Check for hung probes or network issues.

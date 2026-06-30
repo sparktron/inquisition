@@ -445,7 +445,8 @@ Goal: the tool's existing output is correct and its claims are true.
 
 ### Suggested immediate next step
 All planned phases and follow-ons are complete, now including the image-publish
-CI workflow, the Grafana dashboard, and time-based audit rotation. Candidate
-future directions: a multi-arch (arm64/amd64) image build in the publish
-workflow; alerting rules (Prometheus `*.rules.yml`) for the exported metrics; and
-a signed/SBOM-attached image release.
+CI workflow, the Grafana dashboard, time-based audit rotation, and Prometheus
+alerting rules (`examples/inquisition.rules.yml`, wired into the example
+`prometheus.yml` and compose stack). Candidate future directions: a multi-arch
+(arm64/amd64) image build in the publish workflow; and a signed/SBOM-attached
+image release.

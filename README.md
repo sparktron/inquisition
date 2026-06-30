@@ -432,7 +432,13 @@ docker pull ghcr.io/sparktron/inquisition:0.1.0   # specific version
 docker compose -f examples/docker-compose.yml up --build
 ```
 
-Inquisition scans the fleet hourly, serves `/metrics` (plus `/healthz` and `/readyz`) on port 9090, and writes a rotating audit log to the `inquisition-data` volume. Prometheus is configured to scrape it automatically.
+Inquisition scans the fleet hourly, serves `/metrics` (plus `/healthz` and `/readyz`) on port 9090, and writes a rotating audit log to the `inquisition-data` volume. Prometheus is configured to scrape it automatically and loads the alerting rules below.
+
+### Prometheus Alerting Rules
+
+`examples/inquisition.rules.yml` is a ready-to-load set of alerting rules over the exported metrics — critical/high findings open, scan-to-scan regressions, elevated risk/exposure scores, correlated CVEs, SLA-breaching stale findings, a scrape-endpoint-down alert, and slow scans. Every alert inherits the metric's `target` label, so a fleet produces one alert per affected host; thresholds and `for:` windows are commented inline for tuning.
+
+The example `prometheus.yml` already wires them via `rule_files:` and the compose file mounts the rules into the Prometheus container, so `docker compose ... up` loads them automatically. Validate edits with `promtool check rules examples/inquisition.rules.yml`.
 
 ### Signal Reference (watch mode)
 
