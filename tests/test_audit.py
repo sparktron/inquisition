@@ -54,7 +54,8 @@ class AppendTests(unittest.TestCase):
             path = os.path.join(tmp, "audit.jsonl")
             append_jsonl(path, {"cycle": 1})
             append_jsonl(path, {"cycle": 2})
-            lines = open(path, encoding="utf-8").read().splitlines()
+            with open(path, encoding="utf-8") as fh:
+                lines = fh.read().splitlines()
             self.assertEqual(len(lines), 2)
             self.assertEqual(json.loads(lines[1])["cycle"], 2)
 
@@ -75,7 +76,8 @@ class AppendTests(unittest.TestCase):
             append_jsonl(path, {"ts": datetime.now(timezone.utc).isoformat(), "cycle": 2},
                          max_age_days=7)
             self.assertTrue(os.path.exists(path + ".1"))
-            live = open(path, encoding="utf-8").read().splitlines()
+            with open(path, encoding="utf-8") as fh:
+                live = fh.read().splitlines()
             self.assertEqual(len(live), 1)
             self.assertEqual(json.loads(live[0])["cycle"], 2)
 
@@ -98,7 +100,8 @@ class AppendTests(unittest.TestCase):
             self.assertTrue(os.path.exists(path + ".1"))
             self.assertFalse(os.path.exists(path + ".3"))  # capped at backups=2
             # The newest record is in the live file.
-            last = open(path, encoding="utf-8").read().splitlines()[-1]
+            with open(path, encoding="utf-8") as fh:
+                last = fh.read().splitlines()[-1]
             self.assertEqual(json.loads(last)["cycle"], 9)
 
 

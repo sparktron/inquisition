@@ -37,7 +37,10 @@ class ServerTests(unittest.TestCase):
         self.health = HealthState()
         self.server = start_metrics_server(0, self.holder, health=self.health, host="127.0.0.1")
         self.port = self.server.server_address[1]
-        self.addCleanup(self.server.shutdown)
+        def _stop() -> None:
+            self.server.shutdown()
+            self.server.server_close()
+        self.addCleanup(_stop)
 
     def _get(self, path: str) -> tuple[int, str]:
         try:
