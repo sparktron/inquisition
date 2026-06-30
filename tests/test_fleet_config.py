@@ -83,6 +83,26 @@ class ResolveTests(unittest.TestCase):
         with self.assertRaises(FleetConfigError):
             resolved_configs({"targets": [{"depth": "deep"}]}, _base())
 
+    def test_negative_sla_max_age_raises(self) -> None:
+        with self.assertRaises(FleetConfigError):
+            resolved_configs({"targets": [{"target": "a.com", "sla_max_age": -1}]}, _base())
+
+    def test_zero_sla_max_age_is_allowed(self) -> None:
+        c = resolved_configs({"targets": [{"target": "a.com", "sla_max_age": 0}]}, _base())[0]
+        self.assertEqual(c.sla_max_age, 0)
+
+    def test_negative_sla_by_severity_raises(self) -> None:
+        with self.assertRaises(FleetConfigError):
+            resolved_configs(
+                {"targets": [{"target": "a.com", "sla_by_severity": {"high": -1}}]}, _base()
+            )
+
+    def test_zero_sla_by_severity_is_allowed(self) -> None:
+        c = resolved_configs(
+            {"targets": [{"target": "a.com", "sla_by_severity": {"high": 0}}]}, _base()
+        )[0]
+        self.assertEqual(dict(c.sla_severity_overrides), {"high": 0})
+
 
 class LoadTests(unittest.TestCase):
     def test_load_valid(self) -> None:

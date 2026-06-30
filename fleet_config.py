@@ -124,7 +124,10 @@ def _coerce(key: str, value: Any) -> tuple[str, Any]:
             )
         return "asset_value", tier
     if key in _INT_FIELDS:
-        return key, int(value)
+        n = int(value)
+        if key == "sla_max_age" and n < 0:
+            raise FleetConfigError("sla_max_age must be non-negative (0 = disabled)")
+        return key, n
     if key in _FLOAT_FIELDS:
         return key, float(value)
     if key in _BOOL_FIELDS:
@@ -159,7 +162,13 @@ def _coerce_sla(value: Any) -> tuple[tuple[str, int], ...]:
     for sev, scans in value.items():
         if str(sev).lower() not in valid:
             raise FleetConfigError(f"unknown severity in sla_by_severity: {sev!r}")
-        pairs.append((str(sev).lower(), int(scans)))
+        n = int(scans)
+        if n < 0:
+            raise FleetConfigError(
+                f"sla_by_severity values must be non-negative (0 disables a severity), "
+                f"got {n} for {sev!r}"
+            )
+        pairs.append((str(sev).lower(), n))
     return tuple(pairs)
 
 

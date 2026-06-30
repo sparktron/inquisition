@@ -494,7 +494,15 @@ def _parse_sla_overrides(spec: str | None) -> tuple[tuple[str, int], ...]:
                 + ", ".join(sorted(valid)) + ")",
             )
             sys.exit(2)
-        pairs.append((key, int(value.strip())))
+        n = int(value.strip())
+        if n < 0:
+            from ui import print_error
+            print_error(
+                f"invalid --sla-by-severity entry: {chunk!r}",
+                "values must be non-negative (use 0 to disable a severity)",
+            )
+            sys.exit(2)
+        pairs.append((key, n))
     return tuple(pairs)
 
 
@@ -638,6 +646,10 @@ def main(argv: list[str] | None = None) -> None:
         993, 995, 3306, 3389, 5432, 5900, 6379, 8080, 8443, 9200,
     )
     ports = tuple(args.ports) if args.ports else default_ports
+    if args.sla_max_age < 0:
+        from ui import print_error
+        print_error("--sla-max-age must be non-negative (0 = disabled)")
+        sys.exit(2)
     sla_overrides = _parse_sla_overrides(args.sla_by_severity)
 
     # A base config (target filled in per scan) shared by all targets unless a

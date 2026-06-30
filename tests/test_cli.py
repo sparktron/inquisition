@@ -83,6 +83,13 @@ class SlaOverrideParseTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             _parse_sla_overrides("high=soon")
 
+    def test_negative_value_exits(self) -> None:
+        with self.assertRaises(SystemExit):
+            _parse_sla_overrides("high=-1")
+
+    def test_zero_value_is_allowed(self) -> None:
+        self.assertEqual(_parse_sla_overrides("high=0"), (("high", 0),))
+
 
 class ResolveTargetsTests(unittest.TestCase):
     def test_non_fleet_builds_config_per_target(self) -> None:
