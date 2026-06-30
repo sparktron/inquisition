@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import unittest
+from typing import Any
 
 import poc_validation
 from models import Confidence, Finding, FindingCategory, Severity
@@ -25,7 +26,7 @@ class _FakeProc:
         self.stderr = stderr
 
 
-def _runner(returncode: int = 0, stdout: str = "OK", stderr: str = ""):
+def _runner(returncode: int = 0, stdout: str = "OK", stderr: str = "") -> Any:
     calls: list[list[str]] = []
 
     def run(argv, **kwargs):  # type: ignore[no-untyped-def]

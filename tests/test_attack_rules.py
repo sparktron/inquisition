@@ -13,7 +13,7 @@ def _mc(name: str) -> MisconfigurationCheck:
     )
 
 
-def _finding(category: FindingCategory, title: str, severity: Severity = Severity.HIGH, cpe: str = "", mitre=None) -> Finding:
+def _finding(category: FindingCategory, title: str, severity: Severity = Severity.HIGH, cpe: str = "", mitre: list[str] | None = None) -> Finding:
     return Finding(
         title=title, category=category, severity=severity, evidence="e",
         cpe=cpe, mitre_techniques=list(mitre or []),

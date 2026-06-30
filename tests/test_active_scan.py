@@ -301,22 +301,22 @@ class BuildCommandTests(unittest.TestCase):
 
 class NucleiVersionTests(unittest.TestCase):
     def test_parses_version_from_stdout(self) -> None:
-        def fake_runner(cmd, **kw):
+        def fake_runner(cmd: list[str], **kw: Any) -> FakeCompleted:
             return FakeCompleted(stdout="Nuclei Engine Version: v3.2.1\n")
         self.assertEqual(_nuclei_version(fake_runner), (3, 2, 1))
 
     def test_parses_version_from_stderr(self) -> None:
-        def fake_runner(cmd, **kw):
+        def fake_runner(cmd: list[str], **kw: Any) -> FakeCompleted:
             return FakeCompleted(stderr="nuclei v2.9.4\n")
         self.assertEqual(_nuclei_version(fake_runner), (2, 9, 4))
 
     def test_returns_none_on_unparseable_output(self) -> None:
-        def fake_runner(cmd, **kw):
+        def fake_runner(cmd: list[str], **kw: Any) -> FakeCompleted:
             return FakeCompleted(stdout="no version here")
         self.assertIsNone(_nuclei_version(fake_runner))
 
     def test_returns_none_on_exception(self) -> None:
-        def fake_runner(cmd, **kw):
+        def fake_runner(cmd: list[str], **kw: Any) -> FakeCompleted:
             raise OSError("binary not found")
         self.assertIsNone(_nuclei_version(fake_runner))
 
@@ -418,7 +418,7 @@ class RunActiveScanTests(unittest.TestCase):
         self.assertIn("https://example.com", captured["cmd"])
 
     def test_version_warning_added_when_outdated(self) -> None:
-        def fake_runner(cmd, **kw):
+        def fake_runner(cmd: list[str], **kw: Any) -> FakeCompleted:
             return FakeCompleted(stdout="")
 
         with (
@@ -432,7 +432,7 @@ class RunActiveScanTests(unittest.TestCase):
         self.assertTrue(any("2.5.0" in e or "older" in e for e in errors))
 
     def test_stale_templates_warning_added(self) -> None:
-        def fake_runner(cmd, **kw):
+        def fake_runner(cmd: list[str], **kw: Any) -> FakeCompleted:
             return FakeCompleted(stdout="")
 
         with (
@@ -491,7 +491,7 @@ class RunActiveScanTests(unittest.TestCase):
         self.assertNotIn("-list", captured["cmd"])
 
     def test_meaningful_stderr_added_to_errors(self) -> None:
-        def fake_runner(cmd, **kw):
+        def fake_runner(cmd: list[str], **kw: Any) -> FakeCompleted:
             return FakeCompleted(stdout="", stderr="[ERR] Template parse failed: bad.yaml\n")
 
         with (
@@ -505,7 +505,7 @@ class RunActiveScanTests(unittest.TestCase):
         self.assertTrue(any("stderr" in e.lower() for e in errors))
 
     def test_noisy_stderr_filtered_out(self) -> None:
-        def fake_runner(cmd, **kw):
+        def fake_runner(cmd: list[str], **kw: Any) -> FakeCompleted:
             return FakeCompleted(
                 stdout="",
                 stderr="[INF] Current nuclei version: v3.0.0\n[INF] Templates loaded: 1000\n",

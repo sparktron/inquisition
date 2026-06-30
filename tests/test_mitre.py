@@ -13,7 +13,7 @@ from models import (
 )
 
 
-def _finding(category: FindingCategory, severity: Severity, techniques=None) -> Finding:
+def _finding(category: FindingCategory, severity: Severity, techniques: list[str] | None = None) -> Finding:
     return Finding(
         title="t",
         category=category,
