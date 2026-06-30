@@ -145,9 +145,13 @@ review covered the crawler URL handoff, TLS chain/DH work, fleet execution,
 watch mode, metrics/audit logging, active-scan integration, PoC validation,
 attack-narrative intelligence, report package split, and the P2/P3 polish pass.
 
+**Status: all three confirmed findings resolved 2026-06-29** (commits
+`2e3291a`, `641402c`, `be34adf`). 394 unit tests pass and `mypy --strict`
+is clean.
+
 ### Confirmed findings
 
-#### P1 — `mypy --strict` fails on new test helpers
+#### P1 — `mypy --strict` fails on new test helpers _(Fixed 2026-06-29)_
 `python -m mypy .` currently fails with 11 `no-untyped-def` errors in:
 
 - `tests/test_poc_validation.py`
@@ -164,7 +168,11 @@ where runner signatures intentionally vary.
 
 **Regression check:** `python -m mypy .`.
 
-#### P1 — Negative SLA thresholds are accepted and silently disable enforcement
+**Resolution:** added precise annotations to the fake runners and finding
+factories in all four test modules; no `pyproject.toml` strictness was
+weakened. `mypy --strict` is clean.
+
+#### P1 — Negative SLA thresholds are accepted and silently disable enforcement _(Fixed 2026-06-29)_
 The CLI parser accepts values like `--sla-by-severity high=-1` because it strips
 `-` before the numeric check. Fleet config also coerces `sla_max_age` and
 `sla_by_severity` values with `int(...)` and does not reject negatives. In
@@ -178,7 +186,12 @@ Keep `0` as the documented "disabled" value.
 **Regression check:** add CLI and fleet-config tests for negative values, then
 run `python -m unittest discover -s tests -v`.
 
-#### P2 — Test suite leaks file/socket resources under the standard unittest run
+**Resolution:** negatives are now rejected in `_parse_sla_overrides`, the
+`--sla-max-age` handler, and the fleet-config coercers (`_coerce`,
+`_coerce_sla`); `0` remains the documented "disabled" value. CLI and
+fleet-config regression tests cover the negative and zero cases.
+
+#### P2 — Test suite leaks file/socket resources under the standard unittest run _(Fixed 2026-06-29)_
 The full unit suite passes, but `tests/test_audit.py` leaves several opened
 audit-log file handles unclosed and `tests/test_metrics_server.py` only
 schedules `server.shutdown`. `ThreadingHTTPServer` sockets remain unclosed and
@@ -192,12 +205,16 @@ that calls both in order.
 **Regression check:** rerun `python -m unittest discover -s tests -v` and verify
 the file/socket warnings are gone.
 
-### Execution order
+**Resolution:** audit-log reads use `with` blocks, and the metrics-server
+test cleanup now calls `server.shutdown()` then `server.server_close()`.
 
-1. Fix the `mypy` failures first so the repo's strict static gate is reliable
-   again.
-2. Tighten SLA validation next because it affects watch/notification behavior.
-3. Clean up test file/socket resources so the unit suite is warning-clean.
-4. Re-run the full validation path: `python -m unittest discover -s tests -v`,
-   `python -m mypy .`, `python -m compileall -q .`, then remove generated
+### Execution order _(completed 2026-06-29)_
+
+1. [x] Fix the `mypy` failures first so the repo's strict static gate is
+   reliable again.
+2. [x] Tighten SLA validation next because it affects watch/notification
+   behavior.
+3. [x] Clean up test file/socket resources so the unit suite is warning-clean.
+4. [x] Re-run the full validation path: `python -m unittest discover -s tests
+   -v`, `python -m mypy .`, `python -m compileall -q .`, then remove generated
    `__pycache__` directories.
