@@ -9,7 +9,13 @@ from __future__ import annotations
 
 from models import ReportFormat, ScanReport
 
-from .scoring import _finding_anchor, _remediation_for, _risk_score, estimate_effort
+from .scoring import (
+    _finding_anchor,
+    _remediation_for,
+    _risk_score,
+    estimate_effort,
+    finding_anchor_map,
+)
 from .text import _hr, render_text
 from .markdown import render_markdown
 from .serialize import (
@@ -73,4 +79,5 @@ __all__ = [
     "_finding_anchor",
     "_remediation_for",
     "estimate_effort",
+    "finding_anchor_map",
 ]

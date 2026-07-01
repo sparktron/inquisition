@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import requests  # type: ignore[import-untyped]
 
@@ -304,7 +304,11 @@ def exploit_links(cve: CVERecord, msf_index: dict[str, str] | None = None) -> li
             f"https://www.rapid7.com/db/modules/exploit/{module_path}/",
         ))
     for i, url in enumerate(cve.references[:3], start=1):
-        links.append((f"NVD reference {i}", url))
+        # Label by the reference's host (e.g. "Reference: nvd.nist.gov") rather
+        # than assuming NVD — references routinely point at vendor advisories,
+        # GitHub, and mailing lists, not just the NVD detail page.
+        host = urlparse(url).netloc or f"reference {i}"
+        links.append((f"Reference: {host}", url))
     return links
 
 

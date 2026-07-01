@@ -25,7 +25,7 @@ from .scoring import (
     _SEVERITY_LABEL,
     _age_phrase,
     _exploitability_key,
-    _finding_anchor,
+    finding_anchor_map,
     _intel_freshness_summary,
     _mitre_url,
     _poc_validation_checks,
@@ -253,6 +253,9 @@ def render_html(
         if f.severity in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM)
     ]
     sort_key = _exploitability_key if pov else lambda x: (_SEV_ORDER.index(x.severity), 0, 0)
+    # Shared, render-unique anchors so the priority list and the detail cards
+    # agree even when two findings hash to the same content anchor.
+    anchors = finding_anchor_map(report.findings)
     matrix_rows = ""
     _EFFORT_COLOR = {"quick": "#16a34a", "planned": "#ea580c"}
     _EFFORT_LABEL = {"quick": "Quick fix", "planned": "Needs planning"}
@@ -264,7 +267,7 @@ def render_html(
             f"font-size:.72rem;font-weight:700;background:{_EFFORT_COLOR[effort]}1a;"
             f"color:{_EFFORT_COLOR[effort]}'>{_EFFORT_LABEL[effort]}</span></td>"
         )
-        anchor = _finding_anchor(f)
+        anchor = anchors[id(f)]
         matrix_rows += (
             f"<tr>"
             f"<td style='padding:6px 10px;color:#64748b'>{idx}</td>"
@@ -397,7 +400,7 @@ def render_html(
                     f'&#128218; How this attack works: {learn_more_links}</div>'
                 )
 
-            anchor = _finding_anchor(f)
+            anchor = anchors[id(f)]
             effort = estimate_effort(f)
             effort_color = "#16a34a" if effort == "quick" else "#ea580c"
             effort_label = "Quick fix" if effort == "quick" else "Needs planning"

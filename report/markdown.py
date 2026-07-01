@@ -33,6 +33,19 @@ def _md_cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
 
 
+def _md_url(url: str) -> str:
+    """Percent-encode the characters in ``url`` that would break a Markdown
+    inline link inside a table cell.
+
+    A raw ``)`` closes the ``[label](url)`` target early, a ``|`` splits the
+    table row, and whitespace ends the URL — external reference URLs contain all
+    three, so encode them rather than trust the source.
+    """
+    return (
+        url.replace("(", "%28").replace(")", "%29").replace("|", "%7C").replace(" ", "%20")
+    )
+
+
 def render_markdown(report: ScanReport, *, brief: bool = False, attacker_pov: bool = False) -> str:
     """Produce a GitHub-flavored Markdown report.
 
@@ -238,7 +251,7 @@ def render_markdown(report: ScanReport, *, brief: bool = False, attacker_pov: bo
             epss = f"{cve.epss_score:.0%}" if cve.epss_score else "—"
             exploit = f"**{', '.join(cve.exploit_sources)}**" if cve.exploit_public else "—"
             age = f"{cve.days_since_disclosure}d" if cve.days_since_disclosure else "—"
-            links = ", ".join(f"[{_md_cell(label)}]({url})" for label, url in cve.exploit_links) or "—"
+            links = ", ".join(f"[{_md_cell(label)}]({_md_url(url)})" for label, url in cve.exploit_links) or "—"
             out.append(
                 f"| {cve.cve_id} | {cve.cvss_score:.1f} | {epss} | {_SEVERITY_LABEL[cve.severity]} "
                 f"| {kev} | {exploit} | {age} | {_md_cell(cve.description[:120])} | {links} |"

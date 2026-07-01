@@ -6,6 +6,7 @@ html / fleet), so they live in one place to avoid cross-renderer coupling.
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import Any
 
 import analysis_kb
@@ -136,6 +137,13 @@ _QUICK_FIX_KEYWORDS = (
     "tls 1.0", "tls 1.1", "weak cipher", "referrer-policy",
     "x-frame-options", "permissions-policy", "same-site", "samesite",
 )
+# Match keywords on word boundaries, not as bare substrings, so short generic
+# tokens ("spf", "csp") don't fire inside unrelated words (e.g. a "spfilter"
+# plugin name). Keywords are escaped because several contain regex-significant
+# characters ("tls 1.0", "x-frame-options").
+_QUICK_FIX_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(kw) for kw in _QUICK_FIX_KEYWORDS) + r")\b"
+)
 
 # Categories that are ordinarily config-only default to "quick"; everything
 # else (exposed services, application bugs, architecture gaps) is "planned"
@@ -151,8 +159,7 @@ def estimate_effort(f: Finding) -> str:
     exposed services, application-layer bugs, architectural gaps — usually
     needs investigation, coordination, or code changes.
     """
-    title_lower = f.title.lower()
-    if any(kw in title_lower for kw in _QUICK_FIX_KEYWORDS):
+    if _QUICK_FIX_RE.search(f.title.lower()):
         return "quick"
     if f.category in _QUICK_FIX_CATEGORIES:
         return "quick"
@@ -179,6 +186,26 @@ def _finding_anchor(f: Finding) -> str:
     """
     digest = hashlib.sha1(f"{f.category.value}|{f.title}|{f.evidence}".encode()).hexdigest()
     return f"finding-{digest[:10]}"
+
+
+def finding_anchor_map(findings: list[Finding]) -> dict[int, str]:
+    """Map each finding (by object identity) to a render-unique anchor id.
+
+    :func:`_finding_anchor` is content-derived and therefore collides when two
+    findings share the same category/title/evidence — which would emit duplicate
+    HTML ``id`` attributes and make every priority-list link jump to the first
+    card. A renderer builds this map once and looks each finding up by
+    ``id(finding)`` so the priority list and the detail cards agree, and repeats
+    get a stable ``-2``/``-3`` suffix instead of a clashing id.
+    """
+    seen: dict[str, int] = {}
+    anchors: dict[int, str] = {}
+    for f in findings:
+        base = _finding_anchor(f)
+        count = seen.get(base, 0) + 1
+        seen[base] = count
+        anchors[id(f)] = base if count == 1 else f"{base}-{count}"
+    return anchors
 
 
 def _poc_validation_checks(f: Finding) -> list[dict[str, Any]]:

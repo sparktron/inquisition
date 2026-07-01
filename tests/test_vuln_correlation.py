@@ -152,7 +152,12 @@ class ExploitabilityTests(unittest.TestCase):
             by_label["Metasploit module (log4shell_header_injection)"],
             "https://www.rapid7.com/db/modules/exploit/multi/http/log4shell_header_injection/",
         )
-        self.assertIn("NVD reference 1", by_label)
+        # References are labeled by host, not assumed to be NVD.
+        self.assertIn("Reference: nvd.nist.gov", by_label)
+        self.assertEqual(
+            by_label["Reference: nvd.nist.gov"],
+            "https://nvd.nist.gov/vuln/detail/CVE-2021-44228",
+        )
 
     def test_cve_priority_orders_by_real_world_risk(self) -> None:
         kev = CVERecord("CVE-A", "", Severity.LOW, cvss_score=4.0, in_cisa_kev=True)

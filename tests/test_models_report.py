@@ -244,6 +244,40 @@ class ActionabilityTests(unittest.TestCase):
         )
         self.assertEqual(estimate_effort(f), "planned")
 
+    def test_estimate_effort_keywords_match_on_word_boundaries(self) -> None:
+        # "spf" must not fire inside an unrelated word like a plugin name, and a
+        # PORT-category app bug that merely mentions "spfilter" stays planned.
+        f = Finding(
+            title="WordPress spfilter plugin remote code execution",
+            category=FindingCategory.APPLICATION,
+            severity=Severity.CRITICAL,
+            evidence="e",
+        )
+        self.assertEqual(estimate_effort(f), "planned")
+
+    def test_finding_anchor_map_disambiguates_duplicate_findings(self) -> None:
+        from report import finding_anchor_map
+
+        dup_a = Finding(title="X", category=FindingCategory.TLS, severity=Severity.HIGH, evidence="e")
+        dup_b = Finding(title="X", category=FindingCategory.TLS, severity=Severity.HIGH, evidence="e")
+        other = Finding(title="Y", category=FindingCategory.TLS, severity=Severity.HIGH, evidence="e")
+        anchors = finding_anchor_map([dup_a, dup_b, other])
+        # Same content would collide under _finding_anchor; the map keeps them unique.
+        self.assertNotEqual(anchors[id(dup_a)], anchors[id(dup_b)])
+        self.assertEqual(anchors[id(dup_a)], _finding_anchor(dup_a))
+        self.assertEqual(anchors[id(dup_b)], f"{_finding_anchor(dup_b)}-2")
+        self.assertEqual(len({anchors[id(dup_a)], anchors[id(dup_b)], anchors[id(other)]}), 3)
+
+    def test_md_url_encodes_table_breaking_characters(self) -> None:
+        from report.markdown import _md_url
+
+        encoded = _md_url("https://vendor.example/adv/CVE-2021-1234)?x=a|b c")
+        self.assertNotIn(")", encoded)
+        self.assertNotIn("|", encoded)
+        self.assertNotIn(" ", encoded)
+        self.assertIn("%29", encoded)
+        self.assertIn("%7C", encoded)
+
     def test_remediation_for_falls_back_when_no_kb_entry_and_no_finding_text(self) -> None:
         f = Finding(
             title="Totally unrecognized finding title xyz123",
