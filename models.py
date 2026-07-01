@@ -215,6 +215,10 @@ class CVERecord:
     epss_percentile: float = 0.0
     exploit_public: bool = False
     exploit_sources: list[str] = field(default_factory=list)
+    # Clickable (label, url) pairs pointing at where a PoC/exploit can be found —
+    # Exploit-DB / GitHub code search always present, a Metasploit module link when
+    # a local Metasploit checkout has one, NVD references surfaced alongside.
+    exploit_links: list[tuple[str, str]] = field(default_factory=list)
 
 
 def cve_priority(cve: "CVERecord") -> tuple[int, int, float, float]:

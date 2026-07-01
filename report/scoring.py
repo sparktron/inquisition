@@ -5,9 +5,11 @@ html / fleet), so they live in one place to avoid cross-renderer coupling.
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
-from models import Finding, ScanReport, Severity
+import analysis_kb
+from models import Finding, FindingCategory, ScanReport, Severity
 
 
 def _intel_freshness_summary(report: ScanReport) -> str:
@@ -120,6 +122,63 @@ def _age_phrase(f: Finding) -> str:
         return "new this scan"
     day = f.first_seen[:10] if f.first_seen else "?"
     return f"open {f.age_scans} scans (since {day})"
+
+
+# ---------------------------------------------------------------------------
+# Actionability — effort estimate, remediation text, and stable drill-down anchors
+# ---------------------------------------------------------------------------
+
+# Title keywords that signal a "quick" (usually single config-line) fix even
+# when the category default is "planned" — most header/cookie/email-auth/TLS
+# knob findings are a one-line server or DNS config change, not new work.
+_QUICK_FIX_KEYWORDS = (
+    "header", "cookie", "spf", "dmarc", "dkim", "hsts", "csp",
+    "tls 1.0", "tls 1.1", "weak cipher", "referrer-policy",
+    "x-frame-options", "permissions-policy", "same-site", "samesite",
+)
+
+# Categories that are ordinarily config-only default to "quick"; everything
+# else (exposed services, application bugs, architecture gaps) is "planned"
+# unless a title keyword above says otherwise.
+_QUICK_FIX_CATEGORIES = {FindingCategory.HTTP_HEADER, FindingCategory.TLS, FindingCategory.DNS}
+
+
+def estimate_effort(f: Finding) -> str:
+    """Rough 'quick' vs 'planned' fix-effort label for prioritizing work.
+
+    Quick fixes are typically a single config change (a header, a DNS TXT
+    record, a TLS setting) an admin can ship same-day. Everything else —
+    exposed services, application-layer bugs, architectural gaps — usually
+    needs investigation, coordination, or code changes.
+    """
+    title_lower = f.title.lower()
+    if any(kw in title_lower for kw in _QUICK_FIX_KEYWORDS):
+        return "quick"
+    if f.category in _QUICK_FIX_CATEGORIES:
+        return "quick"
+    return "planned"
+
+
+def _remediation_for(f: Finding) -> str:
+    """Best available remediation text for a finding: KB entry, else the
+    finding's own text, else a graceful fallback — so every finding in a
+    fix list has *something* concrete, not a dead end.
+    """
+    kb = analysis_kb.lookup(f.title)
+    text = (kb["remediation"] if kb else "") or f.remediation
+    return text or "No specific remediation guidance available — investigate manually."
+
+
+def _finding_anchor(f: Finding) -> str:
+    """Stable HTML anchor id for a finding, derived from its content.
+
+    Content-derived (not index-derived) so the same finding resolves to the
+    same anchor across the priority list and its detail card within one
+    render, and stays stable across scans of the same target when the
+    finding itself is unchanged — link to it and bookmark it.
+    """
+    digest = hashlib.sha1(f"{f.category.value}|{f.title}|{f.evidence}".encode()).hexdigest()
+    return f"finding-{digest[:10]}"
 
 
 def _poc_validation_checks(f: Finding) -> list[dict[str, Any]]:

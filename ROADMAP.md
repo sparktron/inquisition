@@ -447,6 +447,52 @@ Goal: the tool's existing output is correct and its claims are true.
 All planned phases and follow-ons are complete, now including the image-publish
 CI workflow, the Grafana dashboard, time-based audit rotation, and Prometheus
 alerting rules (`examples/inquisition.rules.yml`, wired into the example
-`prometheus.yml` and compose stack). Candidate future directions: a multi-arch
-(arm64/amd64) image build in the publish workflow; and a signed/SBOM-attached
-image release.
+`prometheus.yml` and compose stack).
+
+Deprioritized: multi-arch (arm64/amd64) image builds and a signed/SBOM-attached
+image release — neither is load-bearing (CI runs amd64, no evidence of arm64
+deployment targets, and this isn't a widely-distributed base image). Redirected
+effort instead toward two user-facing tracks (2026-06-30):
+
+- **Exploit-archive links (done)** — `vuln_correlation.exploit_links()` attaches
+  clickable (label, url) pairs to every `CVERecord`: deterministic Exploit-DB
+  and GitHub PoC search links always, a Metasploit module link (via Rapid7's
+  module DB) when a local `metasploit-framework` checkout has a matching
+  module (`_load_msf_cve_index`, mirrors the existing Nuclei-template scan
+  pattern), plus the first few NVD reference URLs. A local Metasploit module
+  match is now also folded into `exploit_public`/`exploit_sources`. Rendered
+  in text, markdown (as `[label](url)` links), HTML (clickable pill links next
+  to the EXPLOIT badge), and JSON (`exploit_links: [{label, url}]`). Tests in
+  `tests/test_vuln_correlation.py`.
+- **Report/output UX: more actionable, layered HTML (done)** — reframed from
+  "skimmable" to "actionable" per user feedback: the goal is turning a report
+  into a to-do list with a clear next click, not just shorter text.
+  - `report/scoring.py` gained three shared helpers used by every renderer:
+    `estimate_effort(finding)` ("quick" config-only fix vs "planned" — title
+    keyword + category heuristic), `_remediation_for(finding)` (KB lookup →
+    finding's own text → graceful fallback, so *every* finding has concrete
+    next-step text, not just KB-recognized ones), and `_finding_anchor(finding)`
+    (stable content-derived id for cross-linking).
+  - **Layered single-file HTML** — the existing "Remediation Priority Matrix"
+    became "Fix These First": each row now links (`#finding-<anchor>`)
+    straight to its detail card. Finding cards became native `<details>`
+    elements (CRITICAL/HIGH open by default, MEDIUM/LOW/INFO collapsed) so the
+    top of the report is a compact action list and everything else is a click
+    away — still one portable self-contained file (no server, works from
+    file:// or an email attachment), just structured as a drill-down instead
+    of one long scroll. A small JS block opens the right `<details>` and
+    scrolls to it on `hashchange`/load, so links are shareable.
+  - Every finding card now shows an effort badge, a "How to Fix This" block
+    (always present via `_remediation_for`, not just KB-recognized findings),
+    and a "How this attack works" MITRE ATT&CK link — widened from
+    KB-explicit-only techniques to `mitre.techniques_for_finding()`'s
+    category-level fallback, so nearly every non-INFO finding gets at least
+    one background link, not just the CVE/KB-covered ones.
+  - Copy-to-clipboard buttons on remediation and PoC-command blocks
+    (`class="copyable-code"` + one generic JS handler).
+  - Text and Markdown renderers got the matching subset: their "Fix These
+    First" priority list gained an Effort column, the `Fix:` line now always
+    renders (via `_remediation_for`, not gated on `f.remediation` being set),
+    and MITRE lines use the same widened technique lookup.
+  - Tests: `ActionabilityTests` + `DrillDownHtmlTests` in
+    `tests/test_models_report.py`. 408 tests pass, mypy clean.

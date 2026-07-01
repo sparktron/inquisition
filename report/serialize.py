@@ -75,6 +75,7 @@ def _json_report_dict(report: ScanReport) -> dict[str, Any]:
                 "in_cisa_kev": c.in_cisa_kev,
                 "exploit_public": c.exploit_public,
                 "exploit_sources": c.exploit_sources,
+                "exploit_links": [{"label": label, "url": url} for label, url in c.exploit_links],
                 "references": c.references,
             }
             for c in sorted(report.cve_records, key=cve_priority, reverse=True)

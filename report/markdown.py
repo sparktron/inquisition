@@ -11,6 +11,7 @@ from models import (
 )
 from vuln_correlation import tools_for_category
 import analysis_kb
+import mitre
 import reachability
 
 from .scoring import (
@@ -21,7 +22,9 @@ from .scoring import (
     _exploitability_key,
     _intel_freshness_summary,
     _mitre_url,
+    _remediation_for,
     _risk_score,
+    estimate_effort,
 )
 
 
@@ -92,18 +95,22 @@ def render_markdown(report: ScanReport, *, brief: bool = False, attacker_pov: bo
         out.append(f"| {marker} | {headline} | {_md_cell(detail)} |")
     out.append("")
 
-    # --- Remediation Priority Matrix ---
-    out.append("## Remediation Priority Matrix")
+    # --- Fix These First ---
+    out.append("## Fix These First")
     out.append("")
     actionable = [f for f in report.findings if f.severity in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM)]
     sort_key = _exploitability_key if pov else lambda x: (_SEV_ORDER.index(x.severity), 0, 0)
     if actionable:
         poc_col = " PoC |" if pov else ""
-        out.append(f"| # | Severity | Category | Title |{poc_col}")
-        out.append(f"| --- | --- | --- | --- |{'--- |' if pov else ''}")
+        out.append(f"| # | Severity | Category | Title | Effort |{poc_col}")
+        out.append(f"| --- | --- | --- | --- | --- |{'--- |' if pov else ''}")
         for idx, f in enumerate(sorted(actionable, key=sort_key), 1):
             poc_flag = "✓" if f.poc_command else ""
-            row = f"| {idx} | {_SEVERITY_LABEL[f.severity]} | {_md_cell(f.category.value)} | {_md_cell(f.title)} |"
+            effort = "Quick fix" if estimate_effort(f) == "quick" else "Needs planning"
+            row = (
+                f"| {idx} | {_SEVERITY_LABEL[f.severity]} | {_md_cell(f.category.value)} | "
+                f"{_md_cell(f.title)} | {effort} |"
+            )
             if pov:
                 row += f" {poc_flag} |"
             out.append(row)
@@ -131,13 +138,13 @@ def render_markdown(report: ScanReport, *, brief: bool = False, attacker_pov: bo
             if f.confidence is not Confidence.CONFIRMED:
                 out.append(f"- **Confidence:** {f.confidence.value}")
             out.append(f"- **Evidence:** {f.evidence}")
-            if f.mitre_techniques:
-                links = ", ".join(f"[{t}]({_mitre_url(t)})" for t in f.mitre_techniques)
+            technique_ids = mitre.techniques_for_finding(f)
+            if technique_ids:
+                links = ", ".join(f"[{t}]({_mitre_url(t)})" for t in technique_ids)
                 out.append(f"- **MITRE ATT&CK:** {links}")
             if f.impact:
                 out.append(f"- **Impact:** {f.impact}")
-            if f.remediation:
-                out.append(f"- **Fix:** {f.remediation}")
+            out.append(f"- **Fix:** {_remediation_for(f)}")
             if f.verification:
                 out.append(f"- **Verify:** {f.verification}")
             if f.cpe:
@@ -224,16 +231,17 @@ def render_markdown(report: ScanReport, *, brief: bool = False, attacker_pov: bo
         out.append("")
         out.append("_Ranked by real-world exploitation risk (KEV > public exploit > EPSS > CVSS)._")
         out.append("")
-        out.append("| CVE ID | CVSS | EPSS | Severity | KEV | Exploit | Days Old | Description |")
-        out.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
+        out.append("| CVE ID | CVSS | EPSS | Severity | KEV | Exploit | Days Old | Description | Exploit Links |")
+        out.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
         for cve in sorted(report.cve_records, key=cve_priority, reverse=True):
             kev = "⚠️ **KEV**" if cve.in_cisa_kev else "—"
             epss = f"{cve.epss_score:.0%}" if cve.epss_score else "—"
             exploit = f"**{', '.join(cve.exploit_sources)}**" if cve.exploit_public else "—"
             age = f"{cve.days_since_disclosure}d" if cve.days_since_disclosure else "—"
+            links = ", ".join(f"[{_md_cell(label)}]({url})" for label, url in cve.exploit_links) or "—"
             out.append(
                 f"| {cve.cve_id} | {cve.cvss_score:.1f} | {epss} | {_SEVERITY_LABEL[cve.severity]} "
-                f"| {kev} | {exploit} | {age} | {_md_cell(cve.description[:120])} |"
+                f"| {kev} | {exploit} | {age} | {_md_cell(cve.description[:120])} | {links} |"
             )
         out.append("")
 

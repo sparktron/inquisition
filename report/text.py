@@ -23,7 +23,9 @@ from .scoring import (
     _exploitability_key,
     _intel_freshness_summary,
     _mitre_url,
+    _remediation_for,
     _risk_score,
+    estimate_effort,
 )
 
 
@@ -202,16 +204,20 @@ def render_text(
         lines.extend(_wrap_paragraphs(story, indent="  "))
         lines.append("")
 
-    # --- Remediation Priority Matrix ---
-    lines.append(_section("REMEDIATION PRIORITY MATRIX"))
+    # --- Fix These First ---
+    lines.append(_section("FIX THESE FIRST"))
     actionable = [f for f in report.findings if f.severity in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM)]
     sort_key = _exploitability_key if pov else lambda x: (_SEV_ORDER.index(x.severity), 0, 0)
     if actionable:
-        lines.append(f"  {'#':<4s} {'Severity':<10s} {'Category':<16s} {'Title'}")
-        lines.append(f"  {'-'*4} {'-'*10} {'-'*16} {'-'*38}")
+        lines.append(f"  {'#':<4s} {'Severity':<10s} {'Category':<16s} {'Effort':<9s} {'Title'}")
+        lines.append(f"  {'-'*4} {'-'*10} {'-'*16} {'-'*9} {'-'*38}")
         for idx, f in enumerate(sorted(actionable, key=sort_key), 1):
             poc_flag = " [PoC]" if f.poc_command else ""
-            lines.append(f"  {idx:<4d} {_SEVERITY_LABEL[f.severity]:<10s} {f.category.value:<16s} {f.title}{poc_flag}")
+            effort_label = "quick" if estimate_effort(f) == "quick" else "planned"
+            lines.append(
+                f"  {idx:<4d} {_SEVERITY_LABEL[f.severity]:<10s} {f.category.value:<16s} "
+                f"{effort_label:<9s} {f.title}{poc_flag}"
+            )
     else:
         lines.append("  No actionable findings.")
     lines.append("")
@@ -231,13 +237,13 @@ def render_text(
             if f.confidence is not Confidence.CONFIRMED:
                 lines.append(f"    Confidence: {f.confidence.value}")
             lines.append(f"    Evidence : {f.evidence}")
-            if f.mitre_techniques:
-                links = [f"{t} ({_mitre_url(t)})" for t in f.mitre_techniques]
+            technique_ids = mitre.techniques_for_finding(f)
+            if technique_ids:
+                links = [f"{t} ({_mitre_url(t)})" for t in technique_ids]
                 lines.append(f"    MITRE    : {', '.join(links)}")
             if f.impact:
                 lines.append(f"    Impact   : {f.impact}")
-            if f.remediation:
-                lines.append(f"    Fix      : {f.remediation}")
+            lines.append(f"    Fix      : {_remediation_for(f)}")
             if f.verification:
                 lines.append(f"    Verify   : {f.verification}")
             if f.cpe:
@@ -279,8 +285,8 @@ def render_text(
                 )
             if cve.exploit_public:
                 lines.append(f"    Exploit  : PUBLIC — {', '.join(cve.exploit_sources)}")
-            if cve.references:
-                lines.append(f"    Refs: {', '.join(cve.references[:3])}")
+            for label, url in cve.exploit_links:
+                lines.append(f"      {label}: {url}")
             lines.append("")
 
     # --- Misconfiguration Summary ---

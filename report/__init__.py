@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from models import ReportFormat, ScanReport
 
-from .scoring import _risk_score
+from .scoring import _finding_anchor, _remediation_for, _risk_score, estimate_effort
 from .text import _hr, render_text
 from .markdown import render_markdown
 from .serialize import (
@@ -70,4 +70,7 @@ __all__ = [
     "render_sarif_combined",
     "render_fleet_dashboard",
     "_risk_score",
+    "_finding_anchor",
+    "_remediation_for",
+    "estimate_effort",
 ]

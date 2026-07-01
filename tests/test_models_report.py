@@ -5,7 +5,16 @@ import unittest
 from datetime import datetime, timezone
 
 from models import Finding, FindingCategory, ScanReport, Severity
-from report import _risk_score, render_html, render_json, render_markdown, render_text
+from report import (
+    _finding_anchor,
+    _remediation_for,
+    _risk_score,
+    estimate_effort,
+    render_html,
+    render_json,
+    render_markdown,
+    render_text,
+)
 
 
 def _history(*totals: int) -> list[dict[str, object]]:
@@ -214,6 +223,129 @@ class AgeAndTrendRenderTests(unittest.TestCase):
         report = self._report()
         report.findings[0].age_scans = 1
         self.assertIn("new this scan", render_text(report))
+
+
+class ActionabilityTests(unittest.TestCase):
+    def test_estimate_effort_flags_header_findings_as_quick(self) -> None:
+        f = Finding(
+            title="Missing X-Frame-Options header",
+            category=FindingCategory.HTTP_HEADER,
+            severity=Severity.MEDIUM,
+            evidence="e",
+        )
+        self.assertEqual(estimate_effort(f), "quick")
+
+    def test_estimate_effort_flags_exposed_service_as_planned(self) -> None:
+        f = Finding(
+            title="Exposed Redis instance with no authentication",
+            category=FindingCategory.PORT,
+            severity=Severity.CRITICAL,
+            evidence="e",
+        )
+        self.assertEqual(estimate_effort(f), "planned")
+
+    def test_remediation_for_falls_back_when_no_kb_entry_and_no_finding_text(self) -> None:
+        f = Finding(
+            title="Totally unrecognized finding title xyz123",
+            category=FindingCategory.APPLICATION,
+            severity=Severity.LOW,
+            evidence="e",
+        )
+        self.assertIn("No specific remediation guidance available", _remediation_for(f))
+
+    def test_remediation_for_prefers_findings_own_text_over_fallback(self) -> None:
+        f = Finding(
+            title="Totally unrecognized finding title xyz123",
+            category=FindingCategory.APPLICATION,
+            severity=Severity.LOW,
+            evidence="e",
+            remediation="Do the specific thing.",
+        )
+        self.assertEqual(_remediation_for(f), "Do the specific thing.")
+
+    def test_finding_anchor_is_stable_and_content_derived(self) -> None:
+        f1 = Finding(title="X", category=FindingCategory.TLS, severity=Severity.HIGH, evidence="e1")
+        f2 = Finding(title="X", category=FindingCategory.TLS, severity=Severity.HIGH, evidence="e1")
+        f3 = Finding(title="X", category=FindingCategory.TLS, severity=Severity.HIGH, evidence="e2")
+        self.assertEqual(_finding_anchor(f1), _finding_anchor(f2))
+        self.assertNotEqual(_finding_anchor(f1), _finding_anchor(f3))
+        self.assertTrue(_finding_anchor(f1).startswith("finding-"))
+
+
+class DrillDownHtmlTests(unittest.TestCase):
+    def _report(self) -> ScanReport:
+        return ScanReport(
+            target="example.com",
+            started_at=datetime(2026, 6, 30, tzinfo=timezone.utc),
+            findings=[
+                Finding(
+                    title="Missing HSTS header",
+                    category=FindingCategory.HTTP_HEADER,
+                    severity=Severity.HIGH,
+                    evidence="no Strict-Transport-Security",
+                ),
+                Finding(
+                    title="Exposed Redis instance with no authentication",
+                    category=FindingCategory.PORT,
+                    severity=Severity.CRITICAL,
+                    evidence="6379/tcp open",
+                ),
+            ],
+        )
+
+    def test_fix_these_first_section_links_to_finding_anchors(self) -> None:
+        report = self._report()
+        html = render_html(report)
+        self.assertIn("Fix These First", html)
+        for f in report.findings:
+            anchor = _finding_anchor(f)
+            self.assertIn(f'id="{anchor}"', html)     # detail card carries the anchor
+            self.assertIn(f'#{anchor}', html)          # priority list links to it (single- or double-quoted)
+
+    def test_finding_cards_are_collapsible_details_elements(self) -> None:
+        html = render_html(self._report())
+        self.assertIn("<details id=\"finding-", html)
+        self.assertIn("<summary", html)
+
+    def test_high_and_critical_cards_default_open_others_closed(self) -> None:
+        report = self._report()
+        report.findings.append(Finding(
+            title="Verbose server banner disclosed",
+            category=FindingCategory.TECH_STACK,
+            severity=Severity.LOW,
+            evidence="Server: nginx/1.18.0",
+        ))
+        html = render_html(report)
+        high_anchor = _finding_anchor(report.findings[0])
+        low_anchor = _finding_anchor(report.findings[2])
+        self.assertIn(f'id="{high_anchor}" class="finding-card"', html.replace("\n", ""))
+        # The HIGH card should carry an "open" attribute before its closing '>'.
+        high_tag_start = html.index(f'id="{high_anchor}"')
+        high_tag_end = html.index(">", high_tag_start)
+        self.assertIn(" open", html[high_tag_start:high_tag_end])
+        low_tag_start = html.index(f'id="{low_anchor}"')
+        low_tag_end = html.index(">", low_tag_start)
+        self.assertNotIn(" open", html[low_tag_start:low_tag_end])
+
+    def test_every_finding_card_has_a_fix_block(self) -> None:
+        html = render_html(self._report())
+        self.assertIn("How to Fix This", html)
+
+    def test_copy_buttons_and_hash_navigation_js_present(self) -> None:
+        html = render_html(self._report())
+        self.assertIn("copyable-code", html)
+        self.assertIn("navigator.clipboard.writeText", html)
+        self.assertIn("hashchange", html)
+
+    def test_effort_badges_render_in_priority_list_and_cards(self) -> None:
+        html = render_html(self._report())
+        self.assertIn("Quick fix", html)        # header finding
+        self.assertIn("Needs planning", html)   # exposed service finding
+
+    def test_learn_more_links_to_mitre_for_uncategorized_findings(self) -> None:
+        html = render_html(self._report())
+        self.assertIn("How this attack works", html)
+        self.assertIn("attack.mitre.org", html)
 
 
 if __name__ == "__main__":

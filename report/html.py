@@ -25,10 +25,13 @@ from .scoring import (
     _SEVERITY_LABEL,
     _age_phrase,
     _exploitability_key,
+    _finding_anchor,
     _intel_freshness_summary,
     _mitre_url,
     _poc_validation_checks,
+    _remediation_for,
     _risk_score,
+    estimate_effort,
 )
 
 
@@ -251,15 +254,26 @@ def render_html(
     ]
     sort_key = _exploitability_key if pov else lambda x: (_SEV_ORDER.index(x.severity), 0, 0)
     matrix_rows = ""
+    _EFFORT_COLOR = {"quick": "#16a34a", "planned": "#ea580c"}
+    _EFFORT_LABEL = {"quick": "Quick fix", "planned": "Needs planning"}
     for idx, f in enumerate(sorted(actionable, key=sort_key), 1):
         poc_cell = "<td style='padding:6px 10px;color:#16a34a;font-weight:700'>✓</td>" if f.poc_command else "<td style='padding:6px 10px;color:#cbd5e1'>—</td>"
+        effort = estimate_effort(f)
+        effort_cell = (
+            f"<td style='padding:6px 10px'><span style='padding:1px 7px;border-radius:4px;"
+            f"font-size:.72rem;font-weight:700;background:{_EFFORT_COLOR[effort]}1a;"
+            f"color:{_EFFORT_COLOR[effort]}'>{_EFFORT_LABEL[effort]}</span></td>"
+        )
+        anchor = _finding_anchor(f)
         matrix_rows += (
             f"<tr>"
             f"<td style='padding:6px 10px;color:#64748b'>{idx}</td>"
             f"<td style='padding:6px 10px'>{_badge(f.severity)}</td>"
             f"<td style='padding:6px 10px;color:#64748b;font-size:.85rem'>{_e(f.category.value)}</td>"
-            f"<td style='padding:6px 10px;font-weight:500'>{_e(f.title)}</td>"
+            f"<td style='padding:6px 10px;font-weight:500'>"
+            f"<a href='#{anchor}' style='color:#1e293b;text-decoration:none'>{_e(f.title)} &rarr;</a></td>"
             f"{poc_cell}"
+            f"{effort_cell}"
             f"</tr>\n"
         )
 
@@ -278,9 +292,13 @@ def render_html(
         for f in group:
             kb = analysis_kb.lookup(f.title)
             tools = tools_for_category(f.category)
-            mitre_ids = f.mitre_techniques or (kb.get("mitre_techniques", []) if kb else [])
+            # Category-level fallback (mitre.techniques_for_finding) means almost
+            # every non-INFO finding gets at least one "how this attack works"
+            # link, not just the ones the KB explicitly tags.
+            mitre_ids = mitre.techniques_for_finding(f)
             attack_scenario = f.attack_scenario or (kb.get("attack_scenario", "") if kb else "")
             poc = f.poc_command or (kb.get("poc_command", "") if kb else "")
+            remediation_text = _remediation_for(f)
 
             rows = f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Category</td><td>{_e(f.category.value)}</td></tr>\n"
             if f.confidence is not Confidence.CONFIRMED:
@@ -322,64 +340,88 @@ def render_html(
             if tools:
                 rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Tools</td><td>{_e(', '.join(tools))}</td></tr>\n"
 
-            analysis_section = ""
+            attack_html = ""
+            if attack_scenario:
+                attack_html = (
+                    f'<details style="margin-top:8px">'
+                    f'<summary style="cursor:pointer;font-weight:600;color:#7c3aed;padding:4px 0">'
+                    f'&#128373; How an Attacker Exploits This</summary>'
+                    f'<div style="margin-top:8px;padding:12px;background:#faf5ff;border-radius:6px;'
+                    f'border-left:3px solid #7c3aed;font-size:.9rem;line-height:1.7;font-family:inherit">'
+                    f'{_nl2br(attack_scenario)}</div></details>'
+                )
+            poc_html = ""
+            if poc:
+                poc_html = (
+                    f'<details style="margin-top:8px">'
+                    f'<summary style="cursor:pointer;font-weight:600;color:#dc2626;padding:4px 0">'
+                    f'&#128192; Attacker\'s Command (PoC)</summary>'
+                    f'<pre class="copyable-code" style="margin-top:8px;padding:12px;background:#1e293b;color:#f8fafc;'
+                    f'border-radius:6px;font-size:.82rem;line-height:1.6;overflow-x:auto;'
+                    f'white-space:pre-wrap;font-family:\'SF Mono\',\'Fira Code\',monospace">'
+                    f'{_e(poc)}</pre></details>'
+                )
+            analysis_html = ""
             if kb:
-                attack_html = ""
-                if attack_scenario:
-                    attack_html = (
-                        f'<details style="margin-top:8px">'
-                        f'<summary style="cursor:pointer;font-weight:600;color:#7c3aed;padding:4px 0">'
-                        f'&#128373; How an Attacker Exploits This</summary>'
-                        f'<div style="margin-top:8px;padding:12px;background:#faf5ff;border-radius:6px;'
-                        f'border-left:3px solid #7c3aed;font-size:.9rem;line-height:1.7;font-family:inherit">'
-                        f'{_nl2br(attack_scenario)}</div></details>'
-                    )
-                poc_html = ""
-                if poc:
-                    poc_html = (
-                        f'<details style="margin-top:8px">'
-                        f'<summary style="cursor:pointer;font-weight:600;color:#dc2626;padding:4px 0">'
-                        f'&#128192; Attacker\'s Command (PoC)</summary>'
-                        f'<pre style="margin-top:8px;padding:12px;background:#1e293b;color:#f8fafc;'
-                        f'border-radius:6px;font-size:.82rem;line-height:1.6;overflow-x:auto;'
-                        f'white-space:pre-wrap;font-family:\'SF Mono\',\'Fira Code\',monospace">'
-                        f'{_e(poc)}</pre></details>'
-                    )
-                analysis_section = (
+                analysis_html = (
                     f'<details style="margin-top:12px">'
                     f'<summary style="cursor:pointer;font-weight:600;color:#1e293b;padding:4px 0">'
                     f'&#128269; Issue Analysis</summary>'
                     f'<div style="margin-top:8px;padding:12px;background:#f8fafc;border-radius:6px;'
                     f'font-size:.9rem;line-height:1.7;white-space:pre-wrap;font-family:inherit">'
                     f'{_e(kb["analysis"])}</div></details>'
-                    f'{attack_html}'
-                    f'<details style="margin-top:8px">'
-                    f'<summary style="cursor:pointer;font-weight:600;color:#1e293b;padding:4px 0">'
-                    f'&#128295; Remediation Steps</summary>'
-                    f'<div style="margin-top:8px;padding:12px;background:#f0fdf4;border-radius:6px;'
-                    f'font-size:.9rem;line-height:1.7;white-space:pre-wrap;font-family:inherit">'
-                    f'{_e(kb["remediation"])}</div></details>'
-                    f'{poc_html}'
+                )
+            # Always present (unlike the KB-gated analysis/attack-scenario blocks
+            # above) so every finding — not just the ones the KB recognizes — has
+            # a concrete, copy-pasteable next step.
+            remediation_html = (
+                f'<details style="margin-top:8px" open>'
+                f'<summary style="cursor:pointer;font-weight:600;color:#16a34a;padding:4px 0">'
+                f'&#128295; How to Fix This</summary>'
+                f'<div class="copyable-code" style="margin-top:8px;padding:12px;background:#f0fdf4;border-radius:6px;'
+                f'font-size:.9rem;line-height:1.7;white-space:pre-wrap;font-family:inherit">'
+                f'{_e(remediation_text)}</div></details>'
+            )
+            analysis_section = f'{analysis_html}{attack_html}{remediation_html}{poc_html}'
+
+            tactics = sorted({mitre.technique_tactic(t) for t in mitre_ids})
+            learn_more_html = ""
+            if mitre_ids:
+                learn_more_links = " ".join(
+                    f'<a href="{_e(_mitre_url(t))}" target="_blank" rel="noopener" '
+                    f'style="color:#7c3aed;text-decoration:none">{_e(mitre.technique_name(t))} ({_e(t)})</a>'
+                    for t in mitre_ids
+                )
+                learn_more_html = (
+                    f'<div style="margin-top:10px;font-size:.8rem;color:#64748b">'
+                    f'&#128218; How this attack works: {learn_more_links}</div>'
                 )
 
-            tactics = sorted({mitre.technique_tactic(t) for t in mitre.techniques_for_finding(f)})
+            anchor = _finding_anchor(f)
+            effort = estimate_effort(f)
+            effort_color = "#16a34a" if effort == "quick" else "#ea580c"
+            effort_label = "Quick fix" if effort == "quick" else "Needs planning"
+            open_attr = " open" if sev in (Severity.CRITICAL, Severity.HIGH) else ""
             finding_cards += (
-                f'<div class="finding-card" data-severity="{f.severity.value}" '
+                f'<details id="{anchor}" class="finding-card" data-severity="{f.severity.value}" '
                 f'data-category="{f.category.value}" data-confidence="{f.confidence.value}" '
                 f'data-tactics="{_e("|".join(tactics))}" '
                 f'style="margin-bottom:16px;border:1px solid {border};border-radius:8px;'
-                f'background:{bg};overflow:hidden">'
-                f'<div style="padding:10px 16px;display:flex;align-items:center;gap:10px;'
-                f'border-bottom:1px solid {border}">'
+                f'background:{bg};overflow:hidden"{open_attr}>'
+                f'<summary style="padding:10px 16px;display:flex;align-items:center;gap:10px;'
+                f'border-bottom:1px solid {border};cursor:pointer">'
                 f'{_badge(f.severity)}'
                 f'<span style="font-weight:600;color:#1e293b">{_e(f.title)}</span>'
-                f'</div>'
+                f'<span style="margin-left:auto;padding:1px 7px;border-radius:4px;font-size:.7rem;'
+                f'font-weight:700;background:{effort_color}1a;color:{effort_color}">{effort_label}</span>'
+                f'</summary>'
                 f'<div style="padding:12px 16px">'
                 f'<table style="border-collapse:collapse;width:100%">{rows}</table>'
                 f'{_poc_evidence_html(f)}'
                 f'{analysis_section}'
+                f'{learn_more_html}'
                 f'</div>'
-                f'</div>\n'
+                f'</details>\n'
             )
 
     # ---- interactive findings filter bar (C4) ----
@@ -430,6 +472,25 @@ def render_html(
         'el.addEventListener("change",apply);});apply();})();</script>'
     )
 
+    # ---- drill-down navigation + copy-to-clipboard (layered single-file report) ----
+    drilldown_js = (
+        '<script>(function(){'
+        'document.querySelectorAll(".copyable-code").forEach(function(el){'
+        'var btn=document.createElement("button");'
+        'btn.type="button";btn.textContent="Copy";'
+        'btn.style.cssText="float:right;margin-left:8px;padding:2px 8px;font-size:.72rem;'
+        'border:1px solid #cbd5e1;border-radius:4px;background:#fff;color:#334155;cursor:pointer";'
+        'btn.addEventListener("click",function(e){e.preventDefault();'
+        'navigator.clipboard.writeText(el.textContent.trim());'
+        'btn.textContent="Copied!";setTimeout(function(){btn.textContent="Copy";},1500);});'
+        'el.parentNode.insertBefore(btn, el);});'
+        'function openHash(){var h=location.hash;if(!h)return;'
+        'var el=document.querySelector(h);'
+        'if(el&&el.tagName==="DETAILS"){el.open=true;el.scrollIntoView({block:"center"});}}'
+        'window.addEventListener("hashchange",openHash);openHash();'
+        '})();</script>'
+    )
+
     # ---- CVE rows ----
     cve_rows = ""
     for cve in sorted(report.cve_records, key=cve_priority, reverse=True):
@@ -461,6 +522,13 @@ def render_html(
             f'title="{_e(", ".join(cve.exploit_sources))}">EXPLOIT</span>'
             if cve.exploit_public else ""
         )
+        exploit_links_html = " ".join(
+            f'<a href="{_e(url)}" target="_blank" rel="noopener" '
+            'style="display:inline-block;margin:2px 3px 0 0;padding:1px 6px;border-radius:3px;'
+            'background:#f1f5f9;color:#334155;font-size:.72rem;text-decoration:none;'
+            'border:1px solid #cbd5e1">' + _e(label) + "</a>"
+            for label, url in cve.exploit_links
+        )
         cve_rows += (
             f"<tr style='border-bottom:1px solid #e2e8f0'>"
             f"<td style='padding:8px 10px;font-weight:600;white-space:nowrap'>{_e(cve.cve_id)}</td>"
@@ -468,7 +536,7 @@ def render_html(
             f"<td style='padding:8px 10px'>{epss_html}{exploit_html}</td>"
             f"<td style='padding:8px 10px'>{kev_badge} {age_str}</td>"
             f"<td style='padding:8px 10px;font-size:.9rem'>{_e(cve.description[:200])}</td>"
-            f"<td style='padding:8px 10px'>{refs_html}</td>"
+            f"<td style='padding:8px 10px'>{refs_html}<div>{exploit_links_html}</div></td>"
             f"</tr>\n"
         )
 
@@ -496,7 +564,7 @@ def render_html(
             poc_html = (
                 f'<details style="margin-top:6px">'
                 f'<summary style="cursor:pointer;font-size:.85rem;color:#dc2626;font-weight:600">&#128192; PoC command</summary>'
-                f'<pre style="margin-top:6px;padding:10px;background:#1e293b;color:#f8fafc;border-radius:6px;'
+                f'<pre class="copyable-code" style="margin-top:6px;padding:10px;background:#1e293b;color:#f8fafc;border-radius:6px;'
                 f'font-size:.8rem;overflow-x:auto;white-space:pre-wrap;font-family:\'SF Mono\',monospace">'
                 f'{_e(mc.poc_command)}</pre></details>'
             )
@@ -775,7 +843,10 @@ def render_html(
 
 <!-- Priority Matrix -->
 <section style="margin-bottom:40px">
-  <h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">Remediation Priority Matrix</h2>
+  <h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">&#9989; Fix These First</h2>
+  <p style="font-size:.85rem;color:#64748b;margin-top:-8px;margin-bottom:12px">
+    Ranked by real-world exploit risk. Click a title to jump straight to its remediation steps below.
+  </p>
   {'<p style="color:#64748b">No actionable findings.</p>' if not matrix_rows else f'''
   <div style="overflow-x:auto">
   <table style="width:100%;border-collapse:collapse;font-size:.9rem">
@@ -786,6 +857,7 @@ def render_html(
         <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Category</th>
         <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600">Title</th>
         <th style="padding:8px 10px;text-align:center;color:#64748b;font-weight:600" title="Proof-of-concept command available">PoC</th>
+        <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600" title="Rough effort to remediate">Effort</th>
       </tr>
     </thead>
     <tbody>{{matrix_rows}}</tbody>
@@ -864,6 +936,7 @@ def render_html(
 </footer>
 {mermaid_script}
 {findings_filter_js}
+{drilldown_js}
 </body>
 </html>"""
 

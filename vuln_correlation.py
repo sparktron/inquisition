@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import requests  # type: ignore[import-untyped]
 
@@ -43,6 +45,12 @@ _EPSS_API = "https://api.first.org/data/v1/epss"
 # Most generous single-request batch the API accepts comfortably.
 _EPSS_BATCH = 100
 
+# Exploit-archive links (always offered, no lookup required — just search URLs).
+_EXPLOITDB_SEARCH_URL = "https://www.exploit-db.com/search?cve={cve}"
+_GITHUB_POC_SEARCH_URL = "https://github.com/search?q={cve}+exploit&type=repositories"
+# Matches a Metasploit module's ``['CVE', '2021-44228']`` reference entry.
+_MSF_CVE_REF_RE = re.compile(r"""\[\s*['"]CVE['"]\s*,\s*['"](\d{4}-\d{4,7})['"]\s*\]""")
+
 # In-process cache: CPE string → list[CVERecord]
 _cve_cache: dict[str, list[CVERecord]] = {}
 # CISA KEV set: CVE IDs known to be actively exploited
@@ -51,6 +59,9 @@ _kev_cache: set[str] | None = None
 _epss_cache: dict[str, tuple[float, float]] = {}
 # Nuclei template CVE coverage (local templates dir), loaded lazily.
 _nuclei_cve_cache: set[str] | None = None
+# Metasploit exploit-module CVE coverage: CVE ID -> module path (e.g.
+# "multi/http/log4shell_header_injection"), loaded lazily from a local checkout.
+_msf_cve_cache: dict[str, str] | None = None
 # Threat-intel provenance (F1): source name -> IntelSource, populated as each feed
 # is consulted this process. Read via intel_provenance().
 _intel_provenance: dict[str, IntelSource] = {}
@@ -224,26 +235,104 @@ def _load_nuclei_cve_ids() -> set[str]:
     return found
 
 
+def _msf_module_dirs() -> list[Path]:
+    """Candidate directories that may hold a local Metasploit Framework checkout."""
+    candidates = [
+        os.environ.get("METASPLOIT_MODULES", ""),
+        os.path.expanduser("~/metasploit-framework/modules"),
+        os.path.expanduser("~/.msf4/modules"),
+        "/usr/share/metasploit-framework/modules",
+        "/opt/metasploit-framework/embedded/framework/modules",
+    ]
+    return [Path(c) for c in candidates if c]
+
+
+def _load_msf_cve_index() -> dict[str, str]:
+    """CVE ID -> Metasploit exploit-module path, from a local checkout (empty if none).
+
+    Scanning a local ``modules/exploits`` tree for each module's ``['CVE', ...]``
+    reference entries keeps this offline and dependency-free, mirroring
+    :func:`_load_nuclei_cve_ids`. The module path (relative to ``exploits/``, no
+    extension) doubles as the Rapid7 module-DB slug.
+    """
+    global _msf_cve_cache
+    if _msf_cve_cache is not None:
+        return _msf_cve_cache
+    found: dict[str, str] = {}
+    for base in _msf_module_dirs():
+        exploits_dir = base / "exploits"
+        try:
+            if not exploits_dir.is_dir():
+                continue
+            for path in exploits_dir.rglob("*.rb"):
+                try:
+                    text = path.read_text(errors="ignore")
+                except OSError:
+                    continue
+                for match in _MSF_CVE_REF_RE.finditer(text):
+                    cve_id = f"CVE-{match.group(1)}"
+                    found.setdefault(cve_id, path.relative_to(exploits_dir).with_suffix("").as_posix())
+        except OSError as exc:
+            logger.warning("Could not scan Metasploit modules in %s: %s", base, exc)
+    _msf_cve_cache = found
+    if found:
+        _record_intel(IntelSource(
+            name="Metasploit modules",
+            detail="local module tree",
+            item_count=len(found),
+        ))
+    return found
+
+
+def exploit_links(cve: CVERecord, msf_index: dict[str, str] | None = None) -> list[tuple[str, str]]:
+    """Build (label, url) links to where a PoC/exploit for ``cve`` can be found.
+
+    Exploit-DB and GitHub code search are deterministic query URLs — always
+    offered, no lookup risk. A Metasploit module link is added only when a
+    local Metasploit checkout actually has a matching module. NVD references
+    are carried through so every "where do I read more" link lives in one place.
+    """
+    cve_id = cve.cve_id
+    links = [
+        ("Exploit-DB", _EXPLOITDB_SEARCH_URL.format(cve=quote(cve_id))),
+        ("GitHub PoC search", _GITHUB_POC_SEARCH_URL.format(cve=quote(cve_id))),
+    ]
+    module_path = (msf_index or {}).get(cve_id.upper())
+    if module_path:
+        links.append((
+            f"Metasploit module ({module_path.rsplit('/', 1)[-1]})",
+            f"https://www.rapid7.com/db/modules/exploit/{module_path}/",
+        ))
+    for i, url in enumerate(cve.references[:3], start=1):
+        links.append((f"NVD reference {i}", url))
+    return links
+
+
 def enrich_exploitability(records: list[CVERecord], timeout: float = 10.0) -> None:
     """Annotate CVE records in place with EPSS probability and exploit availability.
 
-    Adds the FIRST.org EPSS score/percentile and marks records that have a known
-    public exploit (a local Nuclei template, or in-the-wild use per CISA KEV).
+    Adds the FIRST.org EPSS score/percentile, marks records that have a known
+    public exploit (a local Nuclei template, a local Metasploit module, or
+    in-the-wild use per CISA KEV), and attaches clickable exploit-archive links.
     """
     if not records:
         return
     epss = _load_epss([c.cve_id for c in records], timeout=timeout)
     nuclei_cves = _load_nuclei_cve_ids()
+    msf_index = _load_msf_cve_index()
     for rec in records:
         if rec.cve_id in epss:
             rec.epss_score, rec.epss_percentile = epss[rec.cve_id]
         sources: list[str] = []
         if rec.cve_id.upper() in nuclei_cves:
             sources.append("Nuclei template")
+        if rec.cve_id.upper() in msf_index:
+            sources.append("Metasploit module")
         if rec.in_cisa_kev:
             sources.append("CISA KEV (in-the-wild)")
         rec.exploit_sources = sources
         rec.exploit_public = bool(sources)
+        rec.exploit_links = exploit_links(rec, msf_index)
 
 
 def lookup_cves_for_cpe(cpe: str, timeout: float = 15.0) -> list[CVERecord]:
