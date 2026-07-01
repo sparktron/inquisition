@@ -198,6 +198,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--fix-script",
+        metavar="FILE",
+        dest="fix_script",
+        help=(
+            "Write a bash runbook to FILE bundling every 'quick fix' finding "
+            "(CRITICAL/HIGH/MEDIUM, config-only) across all targets as a "
+            "reviewable checklist. Only read-only verification commands are left "
+            "runnable; remediation steps stay commented since they routinely "
+            "branch on your mail provider/framework/infra."
+        ),
+    )
+
+    parser.add_argument(
         "--metrics-output",
         metavar="FILE",
         dest="metrics_output",
@@ -774,6 +787,17 @@ def main(argv: list[str] | None = None) -> None:
                 print_info(f"wrote ATT&CK Navigator layer for {len(reports)} target(s) to {args.attack_navigator}")
             except OSError as exc:
                 print_error(f"could not write ATT&CK Navigator layer to {args.attack_navigator}", str(exc))
+                sys.exit(2)
+
+        # --- Quick-fix runbook export ---
+        if args.fix_script:
+            from fix_script import render_fix_script
+            try:
+                with open(args.fix_script, "w", encoding="utf-8") as fh:
+                    fh.write(render_fix_script(reports))
+                print_info(f"wrote quick-fix runbook for {len(reports)} target(s) to {args.fix_script}")
+            except OSError as exc:
+                print_error(f"could not write quick-fix runbook to {args.fix_script}", str(exc))
                 sys.exit(2)
 
         # --- Prometheus / OpenMetrics export (file / push / scrape) ---

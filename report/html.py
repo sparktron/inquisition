@@ -614,7 +614,7 @@ def render_html(
                 f'</div>\n'
             )
         attack_chain_section = (
-            f'<section style="margin-bottom:40px">'
+            f'<section id="sec-attack-chains" style="margin-bottom:40px">'
             f'<h2 style="font-size:1.1rem;font-weight:700;color:#6d28d9;border-bottom:2px solid #e9d5ff;'
             f'padding-bottom:8px;margin-bottom:16px">&#9947; Attack Chain Analysis</h2>'
             f'<p style="font-size:.85rem;color:#64748b;margin-top:-8px;margin-bottom:16px">'
@@ -646,7 +646,7 @@ def render_html(
                 f'{chips}</div>'
             )
         attack_coverage_section = (
-            f'<section style="margin-bottom:40px">'
+            f'<section id="sec-attack-coverage" style="margin-bottom:40px">'
             f'<h2 style="font-size:1.1rem;font-weight:700;color:#6d28d9;border-bottom:2px solid #e9d5ff;'
             f'padding-bottom:8px;margin-bottom:16px">&#9876; MITRE ATT&amp;CK Coverage</h2>'
             f'<p style="font-size:.85rem;color:#64748b;margin-top:-8px;margin-bottom:16px">'
@@ -679,7 +679,7 @@ def render_html(
         )
         mermaid_def = attack_graph.to_mermaid(graph)
         attack_graph_section = (
-            f'<section style="margin-bottom:40px">'
+            f'<section id="sec-attack-graph" style="margin-bottom:40px">'
             f'<h2 style="font-size:1.1rem;font-weight:700;color:#b91c1c;border-bottom:2px solid #fecaca;'
             f'padding-bottom:8px;margin-bottom:16px">&#128520; Attack Graph &mdash; Reachable Objectives</h2>'
             f'<p style="font-size:.85rem;color:#64748b;margin-top:-8px;margin-bottom:16px">'
@@ -702,10 +702,34 @@ def render_html(
             '</script>'
         )
 
+    # ---- persistent section nav (layered single-file report) ----
+    nav_candidates = [
+        ("Summary", "sec-summary", True),
+        ("Fix These First", "sec-fix", True),
+        ("Findings", "sec-findings", True),
+        ("Attack Graph", "sec-attack-graph", not graph.empty),
+        ("Attack Chains", "sec-attack-chains", bool(report.attack_chains)),
+        ("ATT&CK Coverage", "sec-attack-coverage", bool(hits)),
+        ("CVEs", "sec-cves", bool(report.cve_records)),
+        ("Misconfigs", "sec-misconfigs", bool(report.misconfigurations)),
+        ("Threat Intel", "sec-intel", bool(report.intel_sources)),
+        ("Errors", "sec-errors", bool(report.errors)),
+    ]
+    nav_html = "".join(
+        f'<a href="#{aid}" style="color:#e2e8f0;text-decoration:none;font-size:.82rem;'
+        f'font-weight:600;padding:4px 10px;border-radius:5px;white-space:nowrap">{_e(label)}</a>'
+        for label, aid, present in nav_candidates if present
+    )
+    section_nav = (
+        f'<nav style="position:sticky;top:0;z-index:20;background:#0f172a;'
+        f'padding:8px 24px;display:flex;gap:4px;flex-wrap:nowrap;overflow-x:auto;'
+        f'border-bottom:1px solid #1e293b" aria-label="Report sections">{nav_html}</nav>'
+    )
+
     # ---- error list ----
     error_items = "".join(f"<li style='color:#dc2626'>{_e(e)}</li>" for e in report.errors)
     errors_section = (
-        f'<section style="margin-bottom:40px">'
+        f'<section id="sec-errors" style="margin-bottom:40px">'
         f'<h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">Scan Errors</h2>'
         f'<ul style="margin:0;padding-left:20px">{error_items}</ul>'
         f'</section>'
@@ -732,7 +756,7 @@ def render_html(
                 f"<td style='padding:6px 10px'>{flag}</td></tr>\n"
             )
         intel_section = (
-            '<section style="margin-bottom:40px">'
+            '<section id="sec-intel" style="margin-bottom:40px">'
             '<h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">Threat Intelligence</h2>'
             '<p style="font-size:.85rem;color:#64748b;margin-top:-8px;margin-bottom:12px">'
             'Freshness of the external feeds consulted for this scan — stale intel is a silent false-negative.</p>'
@@ -766,9 +790,12 @@ def render_html(
   a {{ color: #2563eb; }}
   details > summary {{ user-select: none; }}
   details > summary::-webkit-details-marker {{ color: #94a3b8; }}
+  nav a:hover {{ background: #1e293b; }}
 </style>
 </head>
 <body>
+
+{section_nav}
 
 {pov_banner}
 
@@ -812,7 +839,7 @@ def render_html(
 <main style="max-width:1100px;margin:0 auto;padding:32px 24px">
 
 <!-- Executive Summary -->
-<section style="margin-bottom:40px">
+<section id="sec-summary" style="margin-bottom:40px">
   <h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">Executive Summary</h2>
   <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">{summary_chips}</div>
   <div style="color:#64748b;font-size:.9rem">
@@ -845,7 +872,7 @@ def render_html(
 </section>
 
 <!-- Priority Matrix -->
-<section style="margin-bottom:40px">
+<section id="sec-fix" style="margin-bottom:40px">
   <h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">&#9989; Fix These First</h2>
   <p style="font-size:.85rem;color:#64748b;margin-top:-8px;margin-bottom:12px">
     Ranked by real-world exploit risk. Click a title to jump straight to its remediation steps below.
@@ -869,7 +896,7 @@ def render_html(
 </section>
 
 <!-- Detailed Findings -->
-<section style="margin-bottom:40px">
+<section id="sec-findings" style="margin-bottom:40px">
   <h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">Detailed Findings</h2>
   <p style="font-size:.85rem;color:#64748b;margin-top:-8px;margin-bottom:16px">
     Expand <em>&#128373; How an Attacker Exploits This</em> to see the realistic attack scenario.
@@ -887,7 +914,7 @@ def render_html(
 {attack_coverage_section}
 
 <!-- CVE Correlation -->
-{f'''<section style="margin-bottom:40px">
+{f'''<section id="sec-cves" style="margin-bottom:40px">
   <h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">CVE Correlation</h2>
   <p style="font-size:.85rem;color:#64748b;margin-top:-8px;margin-bottom:12px">
     <strong>KEV</strong> = CISA Known Exploited Vulnerabilities catalog — active exploitation confirmed in the wild.
@@ -910,7 +937,7 @@ def render_html(
 </section>''' if report.cve_records else ''}
 
 <!-- Misconfigurations -->
-{f'''<section style="margin-bottom:40px">
+{f'''<section id="sec-misconfigs" style="margin-bottom:40px">
   <h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;border-bottom:2px solid #e2e8f0;padding-bottom:8px;margin-bottom:16px">Misconfiguration Summary</h2>
   <div style="overflow-x:auto">
   <table style="width:100%;border-collapse:collapse;font-size:.9rem">

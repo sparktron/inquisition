@@ -357,6 +357,7 @@ See [Active Testing](#active-testing-1) for a full explanation of how this works
 | `--sla-max-age` | int | 0 (off) | Warn and notify when a finding has stayed open beyond N consecutive scans (notifies even if nothing changed) |
 | `--sla-by-severity` | spec | none | Per-severity SLA overrides, e.g. `critical=1,high=3,medium=10` (falls back to `--sla-max-age`; `0` disables a severity) |
 | `--attack-navigator` | path | none | Write a MITRE ATT&CK Navigator layer (`layer.json`) covering all targets — import at [attack-navigator](https://mitre-attack.github.io/attack-navigator/) to overlay observed techniques on the ATT&CK matrix |
+| `--fix-script` | path | none | Write a bash runbook covering every "quick fix" finding (CRITICAL/HIGH/MEDIUM, config-only) across all targets — a reviewable checklist, not an auto-fixer. Only read-only verification commands are left runnable; remediation steps stay commented since they routinely branch on your mail provider/framework/infra |
 | `--metrics-output` | path | none | Also write Prometheus/OpenMetrics text exposition for all targets to this file |
 | `--metrics-history` | flag | off | In the metrics file, emit the findings trend as timestamped samples per stored scan (backfill) |
 | `--metrics-push` | URL | none | Push current metrics to a Prometheus Pushgateway base URL (PUT under `--metrics-job`) |

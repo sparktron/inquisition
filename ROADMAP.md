@@ -496,3 +496,40 @@ effort instead toward two user-facing tracks (2026-06-30):
     and MITRE lines use the same widened technique lookup.
   - Tests: `ActionabilityTests` + `DrillDownHtmlTests` in
     `tests/test_models_report.py`. 408 tests pass, mypy clean.
+
+Follow-on hardening (2026-07-01, committed `4eb3274`): `estimate_effort`
+keyword matching moved to word-boundary regex (a "spfilter" plugin no longer
+misclassifies as a quick SPF fix); Markdown CVE exploit-link URLs are
+percent-encoded (`_md_url`) so `)`/`|`/spaces can't break the table; CVE
+references are labeled by URL host instead of assumed-NVD; `finding_anchor_map`
+assigns render-unique anchors by object identity so two findings with
+identical category/title/evidence no longer collide on the same HTML id.
+
+**Next two picks (2026-07-01, done):**
+- **Bulk "quick fix" runbook export** — new top-level `fix_script.py`,
+  `render_fix_script(reports)`. Deliberately a reviewable checklist, not an
+  auto-fixer: KB/finding remediation prose branches on your mail provider,
+  framework, and infra, so blindly extracting "command-looking" lines out of
+  it and chaining them would risk running something the operator never chose.
+  Instead every CRITICAL/HIGH/MEDIUM finding with `estimate_effort() ==
+  "quick"` gets a heavily-commented block (full remediation text as `# `
+  comments), and only its verification command (`f.poc_command` / the KB's
+  `poc_command` — the same command the text/HTML remediation guides already
+  label "verify the fix") is left as an actually-runnable line, gated through
+  `poc_validation.classify_command`'s existing read-only allowlist so an
+  attacker-oriented or shell-metacharacter command stays commented out too.
+  Wired via `--fix-script FILE` (mirrors `--attack-navigator`/`--metrics-output`
+  in `inquisition.py`); `fix_script` added to `pyproject.toml` py-modules and
+  the README options table. Tests: `tests/test_fix_script.py` (9 cases).
+- **Persistent section nav in the layered HTML report** — `render_html` now
+  emits a sticky top `<nav>` (right after `<body>`) linking to every section
+  actually present in the report (`#sec-summary`, `#sec-fix`, `#sec-findings`
+  always; `#sec-attack-graph`/`#sec-attack-chains`/`#sec-attack-coverage`/
+  `#sec-cves`/`#sec-misconfigs`/`#sec-intel`/`#sec-errors` only when that
+  section has content) — built from the same booleans already used to gate
+  each section's rendering, so it can't drift out of sync. Every `<section>`
+  gained a matching `id`. Rounds out the "layered, not one long scroll" report
+  redesign: the top nav plus the "Fix These First" anchors together mean any
+  point in the report is one click away. Tests: `SectionNavTests` in
+  `tests/test_models_report.py`.
+- 423 tests pass, mypy clean on 73 source files.

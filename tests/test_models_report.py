@@ -382,5 +382,52 @@ class DrillDownHtmlTests(unittest.TestCase):
         self.assertIn("attack.mitre.org", html)
 
 
+class SectionNavTests(unittest.TestCase):
+    def test_always_present_sections_are_in_nav(self) -> None:
+        report = ScanReport(
+            target="example.com",
+            started_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+            findings=[
+                Finding(title="X", category=FindingCategory.HTTP_HEADER, severity=Severity.LOW, evidence="e"),
+            ],
+        )
+        html = render_html(report)
+        self.assertIn('<nav ', html)
+        self.assertIn('href="#sec-summary"', html)
+        self.assertIn('href="#sec-fix"', html)
+        self.assertIn('href="#sec-findings"', html)
+        self.assertIn('id="sec-summary"', html)
+        self.assertIn('id="sec-fix"', html)
+        self.assertIn('id="sec-findings"', html)
+
+    def test_nav_omits_sections_with_no_content(self) -> None:
+        report = ScanReport(
+            target="example.com",
+            started_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+            findings=[
+                Finding(title="X", category=FindingCategory.HTTP_HEADER, severity=Severity.LOW, evidence="e"),
+            ],
+        )
+        html = render_html(report)
+        self.assertNotIn('href="#sec-cves"', html)
+        self.assertNotIn('href="#sec-misconfigs"', html)
+        self.assertNotIn('href="#sec-attack-chains"', html)
+        self.assertNotIn('href="#sec-intel"', html)
+        self.assertNotIn('href="#sec-errors"', html)
+
+    def test_nav_includes_sections_that_are_present(self) -> None:
+        report = ScanReport(
+            target="example.com",
+            started_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+            findings=[
+                Finding(title="X", category=FindingCategory.HTTP_HEADER, severity=Severity.HIGH, evidence="e"),
+            ],
+            errors=["scan module foo crashed"],
+        )
+        html = render_html(report)
+        self.assertIn('href="#sec-errors"', html)
+        self.assertIn('id="sec-errors"', html)
+
+
 if __name__ == "__main__":
     unittest.main()
