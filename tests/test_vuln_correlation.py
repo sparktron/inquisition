@@ -16,6 +16,7 @@ class VulenCorrelationTests(unittest.TestCase):
         vuln_correlation._kev_cache = None
         vuln_correlation._epss_cache.clear()
         vuln_correlation._nuclei_cve_cache = None
+        vuln_correlation._last_nvd_request_at = None
 
     def test_lookup_uses_virtual_match_string_for_partial_cpe(self) -> None:
         response = Mock()
@@ -40,6 +41,37 @@ class VulenCorrelationTests(unittest.TestCase):
             params["virtualMatchString"],
             "cpe:2.3:a:wordpress:wordpress:*:*:*:*:*:*:*:*",
         )
+
+    def test_first_nvd_request_is_immediate_and_only_later_requests_wait(self) -> None:
+        response = Mock(status_code=200)
+        response.json.return_value = {"vulnerabilities": []}
+        vuln_correlation._kev_cache = set()
+        with (
+            patch("vuln_correlation.requests.get", return_value=response),
+            patch("vuln_correlation.time.sleep") as sleep,
+        ):
+            vuln_correlation.lookup_cves_for_cpe("cpe:2.3:a:vendor:first")
+            sleep.assert_not_called()
+            vuln_correlation.lookup_cves_for_cpe("cpe:2.3:a:vendor:second")
+        sleep.assert_called_once()
+
+    def test_multi_cpe_lookup_batches_exploitability_enrichment(self) -> None:
+        first = CVERecord("CVE-1", "first", Severity.HIGH)
+        second = CVERecord("CVE-2", "second", Severity.MEDIUM)
+        with (
+            patch(
+                "vuln_correlation.lookup_cves_for_cpe",
+                side_effect=[[first], [second]],
+            ) as lookup,
+            patch("vuln_correlation.enrich_exploitability") as enrich,
+        ):
+            matches = vuln_correlation.lookup_cves_for_cpes(
+                {"cpe:2.3:a:z:last", "cpe:2.3:a:a:first"}, timeout=2.0
+            )
+        self.assertEqual(list(matches), ["cpe:2.3:a:a:first", "cpe:2.3:a:z:last"])
+        self.assertEqual(lookup.call_count, 2)
+        self.assertTrue(all(call.kwargs["enrich"] is False for call in lookup.call_args_list))
+        enrich.assert_called_once_with([first, second], timeout=2.0)
 
 
 class IntelProvenanceTests(unittest.TestCase):

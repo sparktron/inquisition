@@ -390,7 +390,10 @@ or prompt-exit test.
 - NVD correlation sleeps six seconds before the first request and enriches each
   CPE's records separately. Track the last NVD request time so only subsequent
   calls wait, collect all CVEs first, then batch EPSS/exploitability enrichment
-  once per scan. Preserve public API rate limits.
+  once per scan. Preserve public API rate limits. **Fixed 2026-07-12:** a
+  lock-protected monotonic request slot makes the first call immediate and spaces
+  later calls, while the scanner defers exploitability enrichment until all CPE
+  results have been collected.
 - Active Nuclei results are deduplicated by display title, so distinct templates
   or endpoints with the same name are silently reduced to the first match.
   Deduplicate on template ID plus matched endpoint (or aggregate endpoints and
@@ -424,7 +427,7 @@ or prompt-exit test.
    abort a scan or erase a module's valid findings.
 4. [x] Centralize CLI/fleet validation and reject invalid ranges consistently.
 5. [x] Replace the DNS timeout shim and distinguish absence from lookup failure.
-6. [ ] Batch/throttle threat-intel work and preserve distinct active-scan
+6. [x] Batch/throttle threat-intel work and preserve distinct active-scan
    evidence.
 7. [ ] Clear Ruff, add package/security smoke gates, and finish documentation
    reconciliation.

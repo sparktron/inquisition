@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -36,6 +37,8 @@ _NUCLEI_STALE_DAYS = 7
 
 _NVD_API = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 _NVD_RATE_LIMIT = 6.0  # seconds between NVD calls (public API limit)
+_nvd_rate_lock = threading.Lock()
+_last_nvd_request_at: float | None = None
 
 # CISA Known Exploited Vulnerabilities catalog (public JSON feed)
 _CISA_KEV_API = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
@@ -358,7 +361,24 @@ def enrich_exploitability(records: list[CVERecord], timeout: float = 10.0) -> No
         rec.exploit_links = exploit_links(rec, msf_index)
 
 
-def lookup_cves_for_cpe(cpe: str, timeout: float = 15.0) -> list[CVERecord]:
+def _wait_for_nvd_slot() -> None:
+    """Reserve an NVD request slot, delaying only after an earlier request."""
+    global _last_nvd_request_at
+    with _nvd_rate_lock:
+        now = time.monotonic()
+        if _last_nvd_request_at is not None:
+            delay = _NVD_RATE_LIMIT - (now - _last_nvd_request_at)
+            if delay > 0:
+                time.sleep(delay)
+        _last_nvd_request_at = time.monotonic()
+
+
+def lookup_cves_for_cpe(
+    cpe: str,
+    timeout: float = 15.0,
+    *,
+    enrich: bool = True,
+) -> list[CVERecord]:
     """Query the NVD API for CVEs matching a CPE string.
 
     This is a best-effort lookup.  Returns an empty list on any error.
@@ -371,7 +391,10 @@ def lookup_cves_for_cpe(cpe: str, timeout: float = 15.0) -> list[CVERecord]:
         return []
 
     if cpe_match in _cve_cache:
-        return _cve_cache[cpe_match]
+        cached = _cve_cache[cpe_match]
+        if enrich:
+            enrich_exploitability(cached, timeout=timeout)
+        return cached
 
     params: dict[str, str] = {
         "virtualMatchString": cpe_match,
@@ -379,7 +402,7 @@ def lookup_cves_for_cpe(cpe: str, timeout: float = 15.0) -> list[CVERecord]:
     }
 
     try:
-        time.sleep(_NVD_RATE_LIMIT)  # respect rate limit
+        _wait_for_nvd_slot()
         resp = requests.get(
             _NVD_API,
             params=params,
@@ -480,7 +503,8 @@ def lookup_cves_for_cpe(cpe: str, timeout: float = 15.0) -> list[CVERecord]:
             in_cisa_kev=cve_id in kev_ids,
         ))
 
-    enrich_exploitability(records, timeout=timeout)
+    if enrich:
+        enrich_exploitability(records, timeout=timeout)
 
     _record_intel(IntelSource(
         name="NVD CVE database",
@@ -491,6 +515,20 @@ def lookup_cves_for_cpe(cpe: str, timeout: float = 15.0) -> list[CVERecord]:
 
     _cve_cache[cpe_match] = records
     return records
+
+
+def lookup_cves_for_cpes(
+    cpes: set[str], timeout: float = 15.0
+) -> dict[str, list[CVERecord]]:
+    """Look up many CPEs, then enrich all resulting CVEs in one batch."""
+    matches: dict[str, list[CVERecord]] = {}
+    combined: list[CVERecord] = []
+    for cpe in sorted(cpes):
+        records = lookup_cves_for_cpe(cpe, timeout=timeout, enrich=False)
+        matches[cpe] = records
+        combined.extend(records)
+    enrich_exploitability(combined, timeout=timeout)
+    return matches
 
 
 # ---------------------------------------------------------------------------

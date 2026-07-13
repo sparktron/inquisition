@@ -51,7 +51,12 @@ from ui import (
     print_summary,
     print_warning,
 )
-from vuln_correlation import derive_misconfigurations, detect_attack_chains, lookup_cves_for_cpe
+from vuln_correlation import (
+    derive_misconfigurations,
+    detect_attack_chains,
+    enrich_exploitability,
+    lookup_cves_for_cpe,
+)
 
 if TYPE_CHECKING:
     from models import Finding, ScanConfig
@@ -263,9 +268,9 @@ def run_scan(
     if cpe_values and not config.dry_run:
         if not quiet:
             print_cve_phase(len(cpe_values))
-        for cpe in cpe_values:
+        for cpe in sorted(cpe_values):
             try:
-                cves = lookup_cves_for_cpe(cpe, timeout=config.timeout)
+                cves = lookup_cves_for_cpe(cpe, timeout=config.timeout, enrich=False)
                 report.cve_records.extend(cves)
                 if cves and not quiet:
                     print_cve_match(cpe, len(cves))
@@ -273,6 +278,10 @@ def run_scan(
                 report.errors.append(f"CVE lookup for {cpe}: {exc}")
                 if not quiet:
                     print_cve_error(cpe)
+        try:
+            enrich_exploitability(report.cve_records, timeout=config.timeout)
+        except Exception as exc:
+            report.errors.append(f"CVE exploitability enrichment: {exc}")
 
     # --- Threat-intel freshness/provenance (F1) ---
     if not config.dry_run:

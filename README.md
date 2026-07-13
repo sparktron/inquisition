@@ -57,7 +57,7 @@ The things that make Inquisition more than a checklist:
 - **Content discovery** — **security.txt validation (RFC 9116)**, **robots.txt path leakage**, admin panels (Kibana, Grafana, Jenkins, Jupyter, Portainer, etc.), backup files, sensitive configs (`.env`, `docker-compose.yml`, `.htpasswd`)
 
 ### 🚨 Vulnerability analysis
-- **CVE correlation** — CPE-based lookup against the National Vulnerability Database (NVD) with CVSS scoring, days-since-disclosure, and references
+- **CVE correlation** — Rate-limited CPE-based lookup against the National Vulnerability Database (NVD) with CVSS scoring, days-since-disclosure, references, and scan-wide batched exploitability enrichment
 - **Real-world exploitation triage** — every CVE is ranked by the industry-standard triad: **CISA KEV** (exploited now) > **public exploit available** (local Nuclei template) > **FIRST.org EPSS** probability (exploited soon) > CVSS (how bad)
 - **Resilient external-data parsing** — malformed Nuclei, ZAP, NVD, CISA KEV, EPSS, or GraphQL records are isolated so valid findings remain available with an explicit warning where applicable
 - **Lossless active evidence** — Nuclei matches remain distinct by template ID and matched endpoint even when templates share the same display name
