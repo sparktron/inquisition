@@ -367,6 +367,12 @@ every numeric field.
 
 ### P1 — Make DNS results truthful and time-bounded
 
+**Status: fixed 2026-07-12.** A, AAAA, and PTR resolution now use dnspython's
+bounded lifetime instead of an uncancellable executor around `getaddrinfo`.
+DMARC NXDOMAIN/NoAnswer is reported as absent, while timeouts and resolver
+failures produce an informational inconclusive result rather than a false
+medium-severity finding.
+
 `_safe_dns_resolve` times out `future.result`, but `socket.getaddrinfo` continues
 in a non-daemon executor thread after `shutdown(wait=False)`; repeated DNS
 timeouts can accumulate blocked threads and delay process exit. Separately, the
@@ -415,7 +421,7 @@ or prompt-exit test.
 3. [x] Harden Nuclei/GraphQL/threat-intel parsers so one malformed record cannot
    abort a scan or erase a module's valid findings.
 4. [x] Centralize CLI/fleet validation and reject invalid ranges consistently.
-5. [ ] Replace the DNS timeout shim and distinguish absence from lookup failure.
+5. [x] Replace the DNS timeout shim and distinguish absence from lookup failure.
 6. [ ] Batch/throttle threat-intel work and preserve distinct active-scan
    evidence.
 7. [ ] Clear Ruff, add package/security smoke gates, and finish documentation

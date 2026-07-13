@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-import socket
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
-from typing import TYPE_CHECKING
+import ipaddress
+
+import dns.exception  # type: ignore[import-untyped]
+import dns.query  # type: ignore[import-untyped]
+import dns.resolver  # type: ignore[import-untyped]
+import dns.reversename  # type: ignore[import-untyped]
+import dns.zone  # type: ignore[import-untyped]
 
 from models import Finding, FindingCategory, Severity
 from modules.base import BaseModule
 from modules.security_grading import Issue, grade_dmarc, grade_spf
-
-if TYPE_CHECKING:
-    pass
 
 # Common subdomains to probe in deeper scans
 _COMMON_SUBDOMAINS = [
@@ -58,22 +59,27 @@ _TAKEOVER_CANDIDATES: dict[str, tuple[str, str]] = {
 
 
 def _safe_dns_resolve(hostname: str, timeout: float) -> list[str]:
-    """Resolve a hostname, returning IP addresses or an empty list on failure."""
-    executor = ThreadPoolExecutor(max_workers=1)
+    """Resolve bounded A/AAAA queries without leaving background worker threads."""
     try:
-        future = executor.submit(
-            socket.getaddrinfo,
-            hostname,
-            None,
-            socket.AF_UNSPEC,
-            socket.SOCK_STREAM,
-        )
-        results = future.result(timeout=timeout)
-        return list({str(r[4][0]) for r in results})
-    except (TimeoutError, socket.gaierror, socket.timeout, OSError):
-        return []
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        return [str(ipaddress.ip_address(hostname))]
+    except ValueError:
+        pass
+
+    addresses: set[str] = set()
+    for record_type in ("A", "AAAA"):
+        try:
+            answers = dns.resolver.resolve(hostname, record_type, lifetime=timeout)
+            addresses.update(str(answer).strip() for answer in answers)
+        except dns.resolver.NXDOMAIN:
+            break
+        except (
+            dns.resolver.NoAnswer,
+            dns.resolver.NoNameservers,
+            dns.exception.Timeout,
+            dns.exception.DNSException,
+        ):
+            continue
+    return sorted(addresses)
 
 
 class DnsReconModule(BaseModule):
@@ -121,14 +127,16 @@ class DnsReconModule(BaseModule):
         for ip in ips:
             self._rate_limit()
             try:
-                hostname_rev = socket.gethostbyaddr(ip)[0]
+                reverse_name = dns.reversename.from_address(ip)
+                answers = dns.resolver.resolve(reverse_name, "PTR", lifetime=self.config.timeout)
+                hostname_rev = str(next(iter(answers))).rstrip(".")
                 findings.append(Finding(
                     title="Reverse DNS",
                     category=FindingCategory.DNS,
                     severity=Severity.INFO,
                     evidence=f"{ip} -> {hostname_rev}",
                 ))
-            except (socket.herror, socket.gaierror, OSError):
+            except (ValueError, StopIteration, dns.exception.DNSException):
                 pass
 
         # --- Subdomain enumeration (standard + deep) ---
@@ -147,8 +155,6 @@ class DnsReconModule(BaseModule):
 
         # --- MX / NS via dnspython (optional) ---
         try:
-            import dns.resolver
-
             for qtype in ("MX", "NS", "TXT"):
                 self._rate_limit()
                 try:
@@ -212,7 +218,7 @@ class DnsReconModule(BaseModule):
                     grade_dmarc(dmarc_record),
                     findings,
                 )
-            except Exception:
+            except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
                 findings.append(Finding(
                     title="Missing DMARC record",
                     category=FindingCategory.MISCONFIGURATION,
@@ -220,6 +226,30 @@ class DnsReconModule(BaseModule):
                     evidence=f"No DMARC record at _dmarc.{target}",
                     impact="Email spoofing / phishing risk",
                     remediation="Add a DMARC TXT record at _dmarc.<domain>",
+                ))
+            except (dns.exception.Timeout, dns.resolver.NoNameservers) as exc:
+                findings.append(Finding(
+                    title="DMARC lookup inconclusive",
+                    category=FindingCategory.DNS,
+                    severity=Severity.INFO,
+                    evidence=(
+                        f"Could not determine DMARC status for _dmarc.{target}: "
+                        f"{type(exc).__name__}"
+                    ),
+                    impact="No missing-DMARC assertion was made because the DNS lookup failed",
+                    remediation="Retry after confirming the configured DNS resolver is reachable.",
+                ))
+            except dns.exception.DNSException as exc:
+                findings.append(Finding(
+                    title="DMARC lookup inconclusive",
+                    category=FindingCategory.DNS,
+                    severity=Severity.INFO,
+                    evidence=(
+                        f"Could not determine DMARC status for _dmarc.{target}: "
+                        f"{type(exc).__name__}"
+                    ),
+                    impact="No missing-DMARC assertion was made because the DNS lookup failed",
+                    remediation="Retry after confirming the configured DNS resolver is reachable.",
                 ))
 
             # --- DKIM probe (common selectors) ---
@@ -256,8 +286,6 @@ class DnsReconModule(BaseModule):
             for ns in ns_names:
                 self._rate_limit()
                 try:
-                    import dns.zone
-                    import dns.query
                     zone = dns.zone.from_xfr(dns.query.xfr(ns, target, timeout=self.config.timeout))
                     record_names = [str(n) for n in zone.nodes.keys()]
                     findings.append(Finding(

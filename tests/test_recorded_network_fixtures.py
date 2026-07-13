@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import socket
+import threading
 import unittest
 from dataclasses import dataclass, field
 from typing import Any, Callable, cast
 from unittest.mock import patch
 
+import dns.resolver  # type: ignore[import-untyped]
+
 from models import ScanConfig, ScanDepth, Severity
 from modules.app_checks import AppChecksModule
 from modules.content_discovery import ContentDiscoveryModule
-from modules.dns_recon import DnsReconModule
+from modules.dns_recon import DnsReconModule, _safe_dns_resolve
 from modules.http_headers import HttpHeaderModule
 from modules.http_client import HttpRequestException
 from modules.port_scan import PortScanModule
@@ -425,6 +428,8 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
 
     def test_dns_fixture_reports_records_without_global_socket_timeout(self) -> None:
         def fake_resolve(name: str, qtype: str, **_: object) -> list[RecordedTextRecord]:
+            if qtype == "PTR":
+                return [RecordedTextRecord("web.example.test.")]
             if name == "example.test" and qtype == "MX":
                 return [RecordedTextRecord("10 mail.example.test.")]
             if name == "example.test" and qtype == "NS":
@@ -438,7 +443,6 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
         config = ScanConfig(target="example.test", depth=ScanDepth.QUICK, rate_limit=0)
         with (
             patch("modules.dns_recon._safe_dns_resolve", return_value=["203.0.113.10"]),
-            patch("modules.dns_recon.socket.gethostbyaddr", return_value=("web.example.test", [], [])),
             patch("dns.resolver.resolve", side_effect=fake_resolve),
             patch("socket.setdefaulttimeout") as setdefaulttimeout,
         ):
@@ -466,7 +470,6 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
         config = ScanConfig(target="example.test", depth=ScanDepth.QUICK, rate_limit=0)
         with (
             patch("modules.dns_recon._safe_dns_resolve", return_value=["203.0.113.10"]),
-            patch("modules.dns_recon.socket.gethostbyaddr", side_effect=OSError),
             patch("dns.resolver.resolve", side_effect=fake_resolve),
         ):
             findings = DnsReconModule(config).run()
@@ -475,6 +478,57 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
         self.assertIn("Weak SPF policy: SPF uses +all (passes everyone)", titles)
         self.assertIn("Weak DMARC policy: DMARC policy is p=none (monitor only)", titles)
         self.assertIn("Weak DMARC policy: DMARC applies to only 50% of mail (pct=50)", titles)
+
+    def test_safe_dns_resolution_uses_bounded_queries_without_worker_threads(self) -> None:
+        def fake_resolve(name: str, qtype: str, **kwargs: object) -> list[RecordedTextRecord]:
+            self.assertEqual(kwargs["lifetime"], 0.01)
+            if qtype == "A":
+                return [RecordedTextRecord("203.0.113.10")]
+            raise dns.resolver.LifetimeTimeout(timeout=0.01, errors=[])  # type: ignore[no-untyped-call]
+
+        before = threading.active_count()
+        with patch("dns.resolver.resolve", side_effect=fake_resolve):
+            for _ in range(20):
+                self.assertEqual(_safe_dns_resolve("example.test", 0.01), ["203.0.113.10"])
+        self.assertEqual(threading.active_count(), before)
+
+    def test_dmarc_timeout_is_inconclusive_not_missing(self) -> None:
+        def fake_resolve(name: str, qtype: str, **_: object) -> list[RecordedTextRecord]:
+            if name == "_dmarc.example.test":
+                raise dns.resolver.LifetimeTimeout(timeout=0.01, errors=[])  # type: ignore[no-untyped-call]
+            if qtype == "PTR":
+                raise dns.resolver.NoAnswer()  # type: ignore[no-untyped-call]
+            return []
+
+        with (
+            patch("modules.dns_recon._safe_dns_resolve", return_value=["203.0.113.10"]),
+            patch("dns.resolver.resolve", side_effect=fake_resolve),
+        ):
+            findings = DnsReconModule(
+                ScanConfig(target="example.test", depth=ScanDepth.QUICK, rate_limit=0)
+            ).run()
+
+        titles = {finding.title for finding in findings}
+        self.assertIn("DMARC lookup inconclusive", titles)
+        self.assertNotIn("Missing DMARC record", titles)
+
+    def test_dmarc_nxdomain_is_reported_missing(self) -> None:
+        def fake_resolve(name: str, qtype: str, **_: object) -> list[RecordedTextRecord]:
+            if name == "_dmarc.example.test":
+                raise dns.resolver.NXDOMAIN()  # type: ignore[no-untyped-call]
+            if qtype == "PTR":
+                raise dns.resolver.NoAnswer()  # type: ignore[no-untyped-call]
+            return []
+
+        with (
+            patch("modules.dns_recon._safe_dns_resolve", return_value=["203.0.113.10"]),
+            patch("dns.resolver.resolve", side_effect=fake_resolve),
+        ):
+            findings = DnsReconModule(
+                ScanConfig(target="example.test", depth=ScanDepth.QUICK, rate_limit=0)
+            ).run()
+
+        self.assertIn("Missing DMARC record", {finding.title for finding in findings})
 
     def test_port_scan_fixture_reports_open_ssh_with_passive_banner(self) -> None:
         RecordedSocket.connected_ports = []

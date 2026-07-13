@@ -44,7 +44,7 @@ The things that make Inquisition more than a checklist:
 <summary><b>📋 The full feature catalog</b> (click to expand)</summary>
 
 ### 🔍 Reconnaissance & fingerprinting
-- **DNS reconnaissance** — A/AAAA resolution, reverse DNS, subdomain enumeration, MX/NS/TXT records, SPF/DMARC presence and policy-strength checks, **DNS zone transfer (AXFR) detection**
+- **DNS reconnaissance** — Time-bounded A/AAAA and reverse-DNS resolution, subdomain enumeration, MX/NS/TXT records, SPF/DMARC presence and policy-strength checks, resolver-failure-aware DMARC results, and **DNS zone transfer (AXFR) detection**
 - **Port scanning** — TCP connect-scan with banner grabbing; enhanced service detection for Telnet, SMB, VNC, Redis, Elasticsearch, MongoDB, MySQL, PostgreSQL, RDP
 - **TLS/SSL analysis** — negotiated protocol/cipher, active protocol-version and weak-cipher-family enumeration, weak Diffie-Hellman (Logjam) parameter detection, certificate validity/expiration, self-signed detection, hostname mismatch, full chain validation, Certificate Transparency (embedded SCT) presence, and OCSP revocation lookup
 - **WAF/CDN detection** — Signature-based detection for common protective layers including Cloudflare, AWS CloudFront, Akamai, Fastly, Imperva, and Sucuri
