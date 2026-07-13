@@ -440,3 +440,11 @@ failure semantics, and numeric/command validation.
    evidence.
 7. [x] Clear Ruff, add package/security smoke gates, and finish documentation
    reconciliation.
+
+### Remediation completion validation
+
+**Status: all repository-wide review findings resolved 2026-07-12.** Final
+validation completed with 456 tests and 122 subtests passing, strict mypy clean
+across 74 source files, Ruff clean, compileall clean, and a built-wheel
+installation/import/installed-CLI smoke test passing. A JSON CLI dry run also
+completed and its generated report parsed successfully.

@@ -14,7 +14,7 @@ complete and retained there as history.
 
 > Historical note: sections 1–4 below describe the repository at the start of
 > the original roadmap. Statements such as "No tests at all" are no longer
-> current; the present baseline is 423 passing tests plus 60 subtests. Completion
+> current; the present baseline is 456 passing tests plus 122 subtests. Completion
 > records later in this file remain the source of truth for the original phases.
 
 It is organized as:
@@ -105,8 +105,9 @@ _Location: `inquisition.py:149`._
 sets a **process-global** default. Because modules run concurrently, this races
 with socket operations in `port_scan`/`tls_analysis`. **Fix:** pass timeouts
 explicitly; never mutate the global default. _Location: `dns_recon.py:54`._
-**Status:** Fixed 2026-06-10; DNS resolution uses a bounded worker instead of
-mutating process-global socket defaults.
+**Status:** Fixed 2026-06-10 without mutating process-global socket defaults;
+further hardened 2026-07-12 to use dnspython lifetime-bounded A/AAAA/PTR
+queries without uncancellable worker threads.
 
 ### B6 — Port scan ignores `--rate-limit`  _(Medium)_
 `_probe` never calls `_rate_limit()`; all ports are opened concurrently. The
@@ -539,4 +540,4 @@ identical category/title/evidence no longer collide on the same HTML id.
   redesign: the top nav plus the "Fix These First" anchors together mean any
   point in the report is one click away. Tests: `SectionNavTests` in
   `tests/test_models_report.py`.
-- 423 tests pass, mypy clean on 73 source files.
+- 456 tests plus 122 subtests pass; strict mypy is clean on 74 source files.
