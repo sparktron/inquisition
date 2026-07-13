@@ -173,12 +173,22 @@ class ParseNucleiTests(unittest.TestCase):
         out = _nuclei_line("t", "Thing", "low", "https://example.com/")
         self.assertEqual(parse_nuclei_output(out)[0].poc_command, "")
 
-    def test_deduplication_keeps_first_match(self) -> None:
+    def test_distinct_endpoints_with_same_title_are_retained(self) -> None:
         line = _nuclei_line("t", "Same Finding", "high", "https://example.com/a")
         line2 = _nuclei_line("t", "Same Finding", "high", "https://example.com/b")
         findings = parse_nuclei_output(f"{line}\n{line2}")
-        self.assertEqual(len(findings), 1)
+        self.assertEqual(len(findings), 2)
         self.assertIn("/a", findings[0].evidence)
+        self.assertIn("/b", findings[1].evidence)
+
+    def test_exact_duplicate_template_endpoint_match_is_collapsed(self) -> None:
+        line = _nuclei_line("t", "Same Finding", "high", "https://example.com/a")
+        self.assertEqual(len(parse_nuclei_output(f"{line}\n{line}")), 1)
+
+    def test_distinct_templates_with_same_title_are_retained(self) -> None:
+        line1 = _nuclei_line("t1", "Same Finding", "high", "https://example.com/a")
+        line2 = _nuclei_line("t2", "Same Finding", "high", "https://example.com/a")
+        self.assertEqual(len(parse_nuclei_output(f"{line1}\n{line2}")), 2)
 
     def test_different_names_not_deduplicated(self) -> None:
         line1 = _nuclei_line("t1", "Finding A", "high", "https://example.com/a")

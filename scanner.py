@@ -24,7 +24,7 @@ from diffing import (
     update_ages,
 )
 from active_scan import run_active_scan
-from models import ReportFormat, ScanReport, Severity
+from models import ReportFormat, ScanReport, Severity, is_active_scan_finding
 from notifications import NOTIFY_REGRESSION, notify, sla_breaches
 from modules import ALL_MODULES
 from modules.base import BaseModule
@@ -69,11 +69,13 @@ def _deduplicate(findings: list[Finding]) -> list[Finding]:
     seen: set[tuple[str, str, str, str]] = set()
     deduped: list[Finding] = []
     for f in findings:
-        scheme = f.metadata.get("scheme", "")
-        if not scheme:
+        context = f.metadata.get("scheme", "")
+        if is_active_scan_finding(f):
+            context = f"{f.metadata.get('template_id', '')}|{f.metadata.get('matched_at', '')}"
+        if not context:
             match = re.search(r"\bhttps?://", f.evidence)
-            scheme = match.group(0).rstrip(":/") if match else ""
-        key = (f.title.lower(), f.category.value, f.severity.value, scheme)
+            context = match.group(0).rstrip(":/") if match else ""
+        key = (f.title.lower(), f.category.value, f.severity.value, str(context))
         if key not in seen:
             seen.add(key)
             deduped.append(f)

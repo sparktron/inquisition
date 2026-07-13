@@ -197,8 +197,8 @@ def parse_nuclei_output(stdout: str) -> list[Finding]:
     - ``curl-command`` field as a ready-to-run PoC command
     - Attack scenario built from description + CVE context + matched URL
 
-    Findings with the same title are deduplicated (same template matched on
-    multiple URLs produces one finding — the first match wins).
+    Exact duplicate template/endpoint matches are collapsed. Distinct templates
+    or endpoints are retained even when they share the same display title.
     """
     findings, _ = _parse_nuclei_output(stdout)
     return findings
@@ -208,7 +208,7 @@ def _parse_nuclei_output(stdout: str) -> tuple[list[Finding], list[str]]:
     """Parse Nuclei output, retaining valid records and describing skipped ones."""
     findings: list[Finding] = []
     errors: list[str] = []
-    seen_titles: set[str] = set()
+    seen_matches: set[tuple[str, str]] = set()
     malformed = 0
 
     for line in stdout.splitlines():
@@ -236,9 +236,10 @@ def _parse_nuclei_output(stdout: str) -> tuple[list[Finding], list[str]]:
         matched = item.get("matched-at") or item.get("host") or ""
 
         title = f"[active] {name}"
-        if title in seen_titles:
+        match_key = (str(template_id), str(matched))
+        if match_key in seen_matches:
             continue
-        seen_titles.add(title)
+        seen_matches.add(match_key)
 
         # --- Classification metadata ---
         classification_value = info.get("classification")
@@ -309,7 +310,11 @@ def _parse_nuclei_output(stdout: str) -> tuple[list[Finding], list[str]]:
             mitre_techniques=mitre,
             poc_command=poc,
             attack_scenario=attack_scenario,
-            metadata={"active_scan": True},
+            metadata={
+                "active_scan": True,
+                "template_id": str(template_id),
+                "matched_at": str(matched),
+            },
         ))
 
     if malformed:

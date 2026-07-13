@@ -394,7 +394,9 @@ or prompt-exit test.
 - Active Nuclei results are deduplicated by display title, so distinct templates
   or endpoints with the same name are silently reduced to the first match.
   Deduplicate on template ID plus matched endpoint (or aggregate endpoints and
-  retain the worst severity/evidence).
+  retain the worst severity/evidence). **Fixed 2026-07-12:** exact
+  template/endpoint duplicates collapse, while distinct matches carry structured
+  IDs/endpoints through the scanner-wide deduplication pass.
 - The default HTML file is mostly portable but loads Mermaid from jsDelivr for
   attack graphs. Vendor/embed the renderer, pre-render the graph, or provide an
   offline fallback; documentation now states the dependency explicitly.

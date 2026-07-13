@@ -71,6 +71,24 @@ class ScannerTests(unittest.TestCase):
         self.assertIn("https://", deduped[0].evidence)
         self.assertIn("http://", deduped[1].evidence)
 
+    def test_deduplicate_preserves_distinct_active_template_endpoint_matches(self) -> None:
+        findings = [
+            Finding(
+                title="[active] Shared title",
+                category=FindingCategory.VULNERABILITY,
+                severity=Severity.HIGH,
+                evidence=f"Nuclei template 't{index}' matched at https://example.com/{index}",
+                metadata={
+                    "active_scan": True,
+                    "template_id": f"t{index}",
+                    "matched_at": f"https://example.com/{index}",
+                },
+            )
+            for index in range(2)
+        ]
+
+        self.assertEqual(len(_deduplicate(findings)), 2)
+
     def test_extract_discovered_urls_uses_crawler_metadata(self) -> None:
         urls = _extract_discovered_urls([
             Finding(
