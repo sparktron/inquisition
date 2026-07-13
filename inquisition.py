@@ -9,15 +9,10 @@ import threading
 import time
 from dataclasses import replace
 from pathlib import Path
-
-# Ensure local modules can be imported
-sys.path.insert(0, str(Path(__file__).parent))
+from typing import Callable
 
 # Suppress urllib3 SSL warnings (read-only reconnaissance, unverified requests expected)
 import urllib3  # type: ignore[import-untyped]
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-from typing import Callable
 
 from config_validation import (
     ConfigValidationError,
@@ -27,6 +22,8 @@ from config_validation import (
 )
 from models import ReportFormat, ScanConfig, ScanDepth, ScanReport, Severity
 from scanner import run_scan
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:

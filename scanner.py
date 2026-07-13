@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import re
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -35,7 +34,6 @@ from safety import (
     abort,
     confirm_active_scan,
     confirm_validation,
-    enforce_dry_run,
     validate_config,
 )
 from ui import (
@@ -387,7 +385,6 @@ def run_scan(
                 print_warning(f"scan notification failed: {exc}")
 
     # --- Render report ---
-    report_saved = False
     summary_path = "(combined artifact)"
     if write_report:
         output = render(report, config.report_format, brief=brief, attacker_pov=attacker_pov)
@@ -398,7 +395,6 @@ def run_scan(
         try:
             with open(output_path, "w", encoding="utf-8") as fh:
                 fh.write(output)
-            report_saved = True
             report.report_path = output_path
             summary_path = output_path
         except OSError as exc:

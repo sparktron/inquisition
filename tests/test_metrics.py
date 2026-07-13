@@ -78,12 +78,14 @@ class HistoryMetricsTests(unittest.TestCase):
     def test_non_history_metrics_stay_pointintime(self) -> None:
         out = render_prometheus([self._report_with_history()], include_history=True)
         # risk_score is a current gauge, no trailing timestamp
-        line = next(l for l in out.splitlines() if l.startswith("inquisition_risk_score{"))
+        line = next(item for item in out.splitlines() if item.startswith("inquisition_risk_score{"))
         self.assertEqual(len(line.split()), 2)  # metric and value only
 
     def test_default_is_pointintime(self) -> None:
         out = render_prometheus([self._report_with_history()])
-        line = next(l for l in out.splitlines() if l.startswith("inquisition_findings_total{"))
+        line = next(
+            item for item in out.splitlines() if item.startswith("inquisition_findings_total{")
+        )
         self.assertEqual(len(line.split()), 2)  # no timestamp
 
 

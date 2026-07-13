@@ -479,10 +479,11 @@ The dashboard visualises:
 
 ### Image Publishing (CI)
 
-`.github/workflows/docker-publish.yml` runs automatically when a version tag (`v*`) is pushed or via manual `workflow_dispatch`. It:
+`.github/workflows/ci.yml` validates pull requests and pushes to `master`; `.github/workflows/docker-publish.yml` repeats the gates when a version tag (`v*`) is pushed or via manual `workflow_dispatch`. They:
 
-1. Runs the full test suite and type-checker (`mypy`) on Python 3.12
-2. Builds and pushes the image to `ghcr.io/sparktron/inquisition` tagged with the semver version (`0.1.0`), the minor release (`0.1`), and `latest`
+1. Run pytest, strict mypy, compileall, and Ruff on Python 3.12
+2. Build the wheel, install it outside the checkout, import the packaged modules, and invoke the installed CLI
+3. For a publish run, build and push the image to `ghcr.io/sparktron/inquisition` tagged with the semver version (`0.1.0`), the minor release (`0.1`), and `latest`
 
 ```bash
 git tag v0.1.0 && git push origin v0.1.0   # triggers the workflow
@@ -1130,7 +1131,7 @@ ruff check .
 python inquisition.py example.com --dry-run --format json --output /tmp/inquisition-dry-run.json
 ```
 
-As of the 2026-07-12 review, pytest, compilation, mypy, and wheel building pass. `ruff check .` reports 23 existing findings, so lint is listed here as the target gate rather than a currently green check; see the [review plan](ROADMAP_CODE_REVIEW.md#p2--make-quality-and-performance-gates-honest).
+As of the 2026-07-12 remediation, pytest, compilation, strict mypy, Ruff, wheel building, installed-package imports, and the installed CLI smoke test pass. CI enforces the same gate set.
 
 The test suite includes deterministic recorded HTTP/DNS/socket fixtures for network-facing modules; tests should not require live external targets.
 
@@ -1148,6 +1149,6 @@ For bug reports or feature requests, provide:
 
 **Built for defenders. Use it on what you're allowed to. Go find the doors before someone else does.** 🔍
 
-<sub>Last updated June 2026 — full attack-narrative intelligence (dynamic attack graph, executive story, exploitability-first CVE triage, safe PoC auto-validation with captured HTTP status, claim provenance, intel-freshness header) and fleet attack-path intelligence (cross-target correlation, blast-radius / crown-jewel ranking, confirmed-vs-modeled dashboard rollup).</sub>
+<sub>Last updated July 2026 — full attack-narrative intelligence (offline dynamic attack graph, executive story, exploitability-first CVE triage, safe PoC auto-validation with captured HTTP status, claim provenance, intel-freshness header) and fleet attack-path intelligence (cross-target correlation, blast-radius / crown-jewel ranking, confirmed-vs-modeled dashboard rollup).</sub>
 
 </div>

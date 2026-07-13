@@ -63,7 +63,7 @@ class FixScriptTests(unittest.TestCase):
         script = render_fix_script([report])
         self.assertIn("Verify after fixing (safe, read-only check):", script)
         lines = script.splitlines()
-        idx = next(i for i, l in enumerate(lines) if "safe, read-only check" in l)
+        idx = next(i for i, line in enumerate(lines) if "safe, read-only check" in line)
         self.assertEqual(lines[idx + 1], "curl -sI https://example.com/")
 
     def test_unsafe_verify_command_stays_commented(self) -> None:

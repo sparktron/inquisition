@@ -1,7 +1,6 @@
 """Fleet dashboard renderer — one HTML page ranking a multi-target run."""
 from __future__ import annotations
 
-import html as _html
 from datetime import datetime
 
 from models import ScanReport, Severity
@@ -241,4 +240,3 @@ def _fleet_correlation_html(reports: list[ScanReport]) -> str:
         "<th style='padding:10px 12px'>Detail &amp; attacker abuse</th>"
         f"</tr></thead><tbody>\n{rows}</tbody></table></section>\n"
     )
-

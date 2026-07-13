@@ -411,7 +411,7 @@ class AppChecksModule(BaseModule):
                 title="GraphQL introspection disabled",
                 category=FindingCategory.APPLICATION,
                 severity=Severity.INFO,
-                evidence=f"POST /graphql returned HTTP 200 but introspection query returned no schema",
+                evidence="POST /graphql returned HTTP 200 but introspection query returned no schema",
                 impact="GraphQL schema enumeration is blocked — good security posture",
                 remediation="",
             ))

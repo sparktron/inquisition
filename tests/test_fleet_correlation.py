@@ -69,7 +69,7 @@ class StructuredMetadataTests(unittest.TestCase):
             _report("b.com", [_dns_structured("b.com", ["203.0.113.5"])]),
         ]
         links = fleet_correlation.correlate_fleet(reports)
-        self.assertEqual([l.kind for l in links], ["shared_ip"])
+        self.assertEqual([link.kind for link in links], ["shared_ip"])
         self.assertEqual(links[0].shared, "203.0.113.5")
 
     def test_shared_cert_from_metadata_ignores_prose(self) -> None:
@@ -78,7 +78,7 @@ class StructuredMetadataTests(unittest.TestCase):
             _report("b.com", [_cert_structured(_FP_A.upper())]),
         ]
         links = fleet_correlation.correlate_fleet(reports)
-        self.assertEqual([l.kind for l in links], ["shared_cert"])
+        self.assertEqual([link.kind for link in links], ["shared_cert"])
         self.assertEqual(links[0].shared, _FP_A)
 
     def test_legacy_prose_still_parsed_without_metadata(self) -> None:
@@ -88,7 +88,7 @@ class StructuredMetadataTests(unittest.TestCase):
             _report("b.com", [_dns("b.com", "203.0.113.5")]),
         ]
         links = fleet_correlation.correlate_fleet(reports)
-        self.assertEqual([l.kind for l in links], ["shared_ip"])
+        self.assertEqual([link.kind for link in links], ["shared_ip"])
 
 
 class CorrelateFleetTests(unittest.TestCase):
@@ -102,7 +102,7 @@ class CorrelateFleetTests(unittest.TestCase):
             _report("c.com", [_dns("c.com", "198.51.100.1")]),
         ]
         links = fleet_correlation.correlate_fleet(reports)
-        ip_links = [l for l in links if l.kind == "shared_ip"]
+        ip_links = [link for link in links if link.kind == "shared_ip"]
         self.assertEqual(len(ip_links), 1)
         self.assertEqual(ip_links[0].shared, "203.0.113.5")
         self.assertEqual(ip_links[0].targets, ("a.com", "b.com"))
@@ -114,7 +114,11 @@ class CorrelateFleetTests(unittest.TestCase):
             _report("b.com", [_cert(_FP_A.upper())]),  # case-insensitive
             _report("c.com", [_cert(_FP_B)]),
         ]
-        links = [l for l in fleet_correlation.correlate_fleet(reports) if l.kind == "shared_cert"]
+        links = [
+            link
+            for link in fleet_correlation.correlate_fleet(reports)
+            if link.kind == "shared_cert"
+        ]
         self.assertEqual(len(links), 1)
         self.assertEqual(links[0].targets, ("a.com", "b.com"))
 
@@ -124,7 +128,11 @@ class CorrelateFleetTests(unittest.TestCase):
             _report("www.x.com", []),
             _report("api.x.com", []),
         ]
-        links = [l for l in fleet_correlation.correlate_fleet(reports) if l.kind == "takeover_pivot"]
+        links = [
+            link
+            for link in fleet_correlation.correlate_fleet(reports)
+            if link.kind == "takeover_pivot"
+        ]
         self.assertEqual(len(links), 1)
         self.assertEqual(links[0].shared, "dev.x.com")
         self.assertEqual(set(links[0].targets), {"dev.x.com", "www.x.com", "api.x.com"})

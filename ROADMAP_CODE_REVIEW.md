@@ -408,6 +408,13 @@ or prompt-exit test.
 
 ### P2 — Make quality and performance gates honest
 
+**Status: fixed 2026-07-12.** Ruff is configured for Python 3.10 and the
+repository is clean. Pull requests and pushes to master now run pytest, strict
+mypy, compileall, Ruff, and a built-wheel installation/import/CLI smoke test;
+the image-publish gate runs the same checks. The boundary regressions added
+throughout this remediation cover redirects, crawling, external payloads, DNS
+failure semantics, and numeric/command validation.
+
 1. Fix the 23 current Ruff findings with focused edits and add an explicit Ruff
    configuration matching repository conventions.
 2. Add `ruff check .` and wheel installation/import smoke tests to CI; keep
@@ -431,5 +438,5 @@ or prompt-exit test.
 5. [x] Replace the DNS timeout shim and distinguish absence from lookup failure.
 6. [x] Batch/throttle threat-intel work and preserve distinct active-scan
    evidence.
-7. [ ] Clear Ruff, add package/security smoke gates, and finish documentation
+7. [x] Clear Ruff, add package/security smoke gates, and finish documentation
    reconciliation.

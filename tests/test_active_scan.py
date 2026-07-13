@@ -10,7 +10,6 @@ from active_scan import (
     _MIN_NUCLEI_VERSION,
     _mitre_from_tags,
     _nuclei_version,
-    _templates_stale,
     build_nuclei_command,
     build_zap_command,
     parse_nuclei_output,

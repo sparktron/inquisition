@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime, timezone
 
 import reachability
-from models import Finding, FindingCategory, MisconfigurationCheck, ScanReport, Severity
+from models import Finding, FindingCategory, ScanReport, Severity
 
 
 def _f(title: str, category: FindingCategory, severity: Severity = Severity.HIGH) -> Finding:

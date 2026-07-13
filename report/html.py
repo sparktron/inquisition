@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import html as _html
-from typing import Any
 
 from models import (
     Confidence,
@@ -739,7 +738,7 @@ def render_html(
             f'<td style="padding:6px 10px;font-weight:600">{_e(g.label)}'
             + (_confirmed_badge if g.confirmed else "")
             + "</td>"
-            f'<td style="padding:6px 10px;font-size:.85rem;color:#475569">'
+            '<td style="padding:6px 10px;font-size:.85rem;color:#475569">'
             + _e(" → ".join(["External"] + [attack_graph.STATE_LABEL.get(e.to, e.to) for e in g.path]))
             + "</td></tr>"
             for g in graph.goals
@@ -938,7 +937,7 @@ def render_html(
   <p style="font-size:.85rem;color:#64748b;margin-top:-8px;margin-bottom:12px">
     Ranked by real-world exploit risk. Click a title to jump straight to its remediation steps below.
   </p>
-  {'<p style="color:#64748b">No actionable findings.</p>' if not matrix_rows else f'''
+    {'<p style="color:#64748b">No actionable findings.</p>' if not matrix_rows else '''
   <div style="overflow-x:auto">
   <table style="width:100%;border-collapse:collapse;font-size:.9rem">
     <thead>
@@ -951,7 +950,7 @@ def render_html(
         <th style="padding:8px 10px;text-align:left;color:#64748b;font-weight:600" title="Rough effort to remediate">Effort</th>
       </tr>
     </thead>
-    <tbody>{{matrix_rows}}</tbody>
+    <tbody>{matrix_rows}</tbody>
   </table>
   </div>'''.format(matrix_rows=matrix_rows)}
 </section>
