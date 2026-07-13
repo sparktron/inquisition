@@ -323,6 +323,12 @@ retention and cross-origin stripping of every configured secret header.
 
 #### Malformed scanner/API output can abort work
 
+**Status: fixed 2026-07-12.** Nuclei and ZAP retain valid findings while
+returning concise warnings for malformed records. GraphQL introspection accepts
+`data: null`, filters malformed schema members, and reports an indeterminate
+shape without erasing earlier module findings. NVD, CISA KEV, and EPSS validate
+container and record shapes and skip only invalid entries.
+
 - `active_scan.parse_nuclei_output('{"info":"bad"}')` raises `AttributeError`;
   `run_active_scan` does not contain parser exceptions, so malformed/truncated
   tool output can abort the whole scan.
@@ -400,7 +406,7 @@ or prompt-exit test.
 
 1. [x] Close the PoC classifier bypasses and verify the regression matrix.
 2. [x] Enforce same-origin sitemap fetching and redirect credential stripping.
-3. [ ] Harden Nuclei/GraphQL/threat-intel parsers so one malformed record cannot
+3. [x] Harden Nuclei/GraphQL/threat-intel parsers so one malformed record cannot
    abort a scan or erase a module's valid findings.
 4. [ ] Centralize CLI/fleet validation and reject invalid ranges consistently.
 5. [ ] Replace the DNS timeout shim and distinguish absence from lookup failure.

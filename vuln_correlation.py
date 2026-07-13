@@ -122,7 +122,18 @@ def _load_cisa_kev(timeout: float = 10.0) -> set[str]:
         )
         if resp.status_code == 200:
             data = resp.json()
-            _kev_cache = {v["cveID"] for v in data.get("vulnerabilities", [])}
+            if not isinstance(data, dict):
+                raise ValueError("catalog root is not an object")
+            vulnerabilities = data.get("vulnerabilities", [])
+            if not isinstance(vulnerabilities, list):
+                raise ValueError("catalog vulnerabilities field is not a list")
+            _kev_cache = {
+                cve_id
+                for item in vulnerabilities
+                if isinstance(item, dict)
+                for cve_id in [item.get("cveID")]
+                if isinstance(cve_id, str) and cve_id
+            }
             version = str(data.get("catalogVersion", "")).strip()
             _record_intel(IntelSource(
                 name="CISA KEV",
@@ -165,9 +176,17 @@ def _load_epss(cve_ids: list[str], timeout: float = 10.0) -> dict[str, tuple[flo
             if resp.status_code != 200:
                 logger.warning("EPSS API returned HTTP %d — exploit probability unavailable", resp.status_code)
                 continue
-            for row in resp.json().get("data", []):
+            payload = resp.json()
+            if not isinstance(payload, dict):
+                raise ValueError("EPSS response root is not an object")
+            rows = payload.get("data", [])
+            if not isinstance(rows, list):
+                raise ValueError("EPSS data field is not a list")
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
                 cid = row.get("cve", "")
-                if not cid:
+                if not isinstance(cid, str) or not cid:
                     continue
                 try:
                     pair = (float(row.get("epss", 0) or 0), float(row.get("percentile", 0) or 0))
@@ -371,7 +390,10 @@ def lookup_cves_for_cpe(cpe: str, timeout: float = 15.0) -> list[CVERecord]:
             logger.warning("NVD API returned HTTP %d for CPE %s — CVE data may be incomplete", resp.status_code, cpe)
             return []
 
-        data: dict[str, Any] = resp.json()
+        payload = resp.json()
+        if not isinstance(payload, dict):
+            raise ValueError("NVD response root is not an object")
+        data: dict[str, Any] = payload
     except (requests.RequestException, ValueError) as exc:
         logger.warning("NVD lookup failed for CPE %s: %s — CVE data may be incomplete", cpe, exc)
         return []
@@ -380,33 +402,67 @@ def lookup_cves_for_cpe(cpe: str, timeout: float = 15.0) -> list[CVERecord]:
     now = datetime.now(timezone.utc)
 
     records: list[CVERecord] = []
-    for vuln in data.get("vulnerabilities", []):
+    vulnerabilities = data.get("vulnerabilities", [])
+    if not isinstance(vulnerabilities, list):
+        logger.warning("NVD vulnerabilities field is not a list for CPE %s", cpe)
+        vulnerabilities = []
+    for vuln in vulnerabilities:
+        if not isinstance(vuln, dict):
+            continue
         cve_item = vuln.get("cve", {})
+        if not isinstance(cve_item, dict):
+            continue
         cve_id = cve_item.get("id", "")
-        descriptions = cve_item.get("descriptions", [])
+        if not isinstance(cve_id, str) or not cve_id:
+            continue
+        descriptions_value = cve_item.get("descriptions", [])
+        descriptions = descriptions_value if isinstance(descriptions_value, list) else []
         desc = next(
-            (d["value"] for d in descriptions if d.get("lang") == "en"),
+            (
+                value
+                for item in descriptions
+                if isinstance(item, dict) and item.get("lang") == "en"
+                for value in [item.get("value")]
+                if isinstance(value, str)
+            ),
             "No description available",
         )
 
-        metrics = cve_item.get("metrics", {})
+        metrics_value = cve_item.get("metrics", {})
+        metrics = metrics_value if isinstance(metrics_value, dict) else {}
         score = 0.0
         for metric_version in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
             metric_list = metrics.get(metric_version, [])
-            if metric_list:
-                cvss_data = metric_list[0].get("cvssData", {})
-                score = cvss_data.get("baseScore", 0.0)
+            if not isinstance(metric_list, list):
+                continue
+            for metric in metric_list:
+                if not isinstance(metric, dict):
+                    continue
+                cvss_data = metric.get("cvssData", {})
+                if not isinstance(cvss_data, dict):
+                    continue
+                try:
+                    score = float(cvss_data.get("baseScore", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    score = 0.0
+                break
+            if score:
                 break
 
+        references_value = cve_item.get("references", [])
+        references = references_value if isinstance(references_value, list) else []
         refs = [
-            r.get("url", "")
-            for r in cve_item.get("references", [])[:5]
-            if r.get("url")
+            url
+            for item in references[:5]
+            if isinstance(item, dict)
+            for url in [item.get("url")]
+            if isinstance(url, str) and url
         ]
 
         # Compute days since public disclosure
         days_since = 0
-        published_str = cve_item.get("published", "")
+        published_value = cve_item.get("published", "")
+        published_str = published_value if isinstance(published_value, str) else ""
         if published_str:
             try:
                 published = datetime.fromisoformat(published_str.rstrip("Z")).replace(tzinfo=timezone.utc)

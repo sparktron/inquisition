@@ -59,6 +59,7 @@ The things that make Inquisition more than a checklist:
 ### 🚨 Vulnerability analysis
 - **CVE correlation** — CPE-based lookup against the National Vulnerability Database (NVD) with CVSS scoring, days-since-disclosure, and references
 - **Real-world exploitation triage** — every CVE is ranked by the industry-standard triad: **CISA KEV** (exploited now) > **public exploit available** (local Nuclei template) > **FIRST.org EPSS** probability (exploited soon) > CVSS (how bad)
+- **Resilient external-data parsing** — malformed Nuclei, ZAP, NVD, CISA KEV, EPSS, or GraphQL records are isolated so valid findings remain available with an explicit warning where applicable
 - **Subdomain takeover candidates** — Identifies CNAMEs pointing at takeover-prone hosted services; the scanner does not confirm that the backing resource is unclaimed, so each candidate requires provider-specific verification.
 - **Misconfiguration detection** — 30+ pattern-matched rules for common security weaknesses (expired certs, legacy TLS, missing HSTS, exposed credentials, etc.)
 - **Attack chain detection** — Automatically derives multi-step kill chains from the combination of misconfigurations detected

@@ -200,8 +200,16 @@ def parse_nuclei_output(stdout: str) -> list[Finding]:
     Findings with the same title are deduplicated (same template matched on
     multiple URLs produces one finding — the first match wins).
     """
+    findings, _ = _parse_nuclei_output(stdout)
+    return findings
+
+
+def _parse_nuclei_output(stdout: str) -> tuple[list[Finding], list[str]]:
+    """Parse Nuclei output, retaining valid records and describing skipped ones."""
     findings: list[Finding] = []
+    errors: list[str] = []
     seen_titles: set[str] = set()
+    malformed = 0
 
     for line in stdout.splitlines():
         line = line.strip()
@@ -210,11 +218,16 @@ def parse_nuclei_output(stdout: str) -> list[Finding]:
         try:
             item = json.loads(line)
         except ValueError:
+            malformed += 1
             continue
         if not isinstance(item, dict):
+            malformed += 1
             continue
 
-        info = item.get("info") or {}
+        info = item.get("info")
+        if not isinstance(info, dict):
+            malformed += 1
+            continue
         severity_str = str(info.get("severity", "info")).lower()
         severity = _NUCLEI_SEVERITY.get(severity_str, Severity.INFO)
 
@@ -228,10 +241,12 @@ def parse_nuclei_output(stdout: str) -> list[Finding]:
         seen_titles.add(title)
 
         # --- Classification metadata ---
-        classification = info.get("classification") or {}
-        cve_ids: list[str] = classification.get("cve-id") or []
-        if isinstance(cve_ids, str):
-            cve_ids = [cve_ids]
+        classification_value = info.get("classification")
+        classification = classification_value if isinstance(classification_value, dict) else {}
+        cve_value = classification.get("cve-id")
+        cve_ids: list[Any] = cve_value if isinstance(cve_value, list) else []
+        if isinstance(cve_value, str):
+            cve_ids = [cve_value]
         cve_ids = [c for c in cve_ids if isinstance(c, str)]
 
         cvss_score: float = 0.0
@@ -243,15 +258,17 @@ def parse_nuclei_output(stdout: str) -> list[Finding]:
                 pass
 
         # --- References ---
-        references = info.get("reference") or []
-        if isinstance(references, str):
-            references = [references]
+        reference_value = info.get("reference")
+        references: list[Any] = reference_value if isinstance(reference_value, list) else []
+        if isinstance(reference_value, str):
+            references = [reference_value]
         references = [r for r in references if isinstance(r, str)]
 
         # --- MITRE ATT&CK techniques from template tags ---
-        tags: list[Any] = info.get("tags") or []
-        if isinstance(tags, str):
-            tags = [t.strip() for t in tags.split(",")]
+        tag_value = info.get("tags")
+        tags: list[Any] = tag_value if isinstance(tag_value, list) else []
+        if isinstance(tag_value, str):
+            tags = [t.strip() for t in tag_value.split(",")]
         mitre = _mitre_from_tags(tags)
 
         # --- PoC command from Nuclei's curl-command field ---
@@ -295,7 +312,9 @@ def parse_nuclei_output(stdout: str) -> list[Finding]:
             metadata={"active_scan": True},
         ))
 
-    return findings
+    if malformed:
+        errors.append(f"Nuclei output contained {malformed} malformed record(s); valid records were retained")
+    return findings, errors
 
 
 def build_zap_command(
@@ -344,24 +363,41 @@ def _zap_replacer_config(*, auth_header: str, auth_cookie: str) -> str:
 
 def parse_zap_output(stdout: str) -> list[Finding]:
     """Parse OWASP ZAP baseline JSON output into Finding objects."""
+    findings, _ = _parse_zap_output(stdout)
+    return findings
+
+
+def _parse_zap_output(stdout: str) -> tuple[list[Finding], list[str]]:
+    """Parse ZAP output, retaining valid alerts and describing malformed input."""
     try:
         payload = json.loads(_extract_json_object(stdout))
     except ValueError:
-        return []
+        return [], ["ZAP output did not contain a valid JSON report"]
+    if not isinstance(payload, dict):
+        return [], ["ZAP output root must be a JSON object"]
 
-    sites = payload.get("site", []) if isinstance(payload, dict) else []
+    sites_value = payload.get("site", [])
+    sites = sites_value if isinstance(sites_value, list) else []
     if isinstance(sites, dict):
         sites = [sites]
+    elif isinstance(sites_value, dict):
+        sites = [sites_value]
 
     findings: list[Finding] = []
+    malformed = 0
     for site in sites:
         if not isinstance(site, dict):
+            malformed += 1
             continue
-        alerts = site.get("alerts", [])
-        if isinstance(alerts, dict):
-            alerts = [alerts]
+        alerts_value = site.get("alerts", [])
+        alerts = alerts_value if isinstance(alerts_value, list) else []
+        if isinstance(alerts_value, dict):
+            alerts = [alerts_value]
+        elif not isinstance(alerts_value, list):
+            malformed += 1
         for alert in alerts:
             if not isinstance(alert, dict):
+                malformed += 1
                 continue
             risk = _zap_risk(alert)
             if risk == Severity.INFO:
@@ -381,7 +417,10 @@ def parse_zap_output(stdout: str) -> list[Finding]:
                 references=references,
                 metadata={"active_scan": True},
             ))
-    return findings
+    errors = []
+    if malformed:
+        errors.append(f"ZAP output contained {malformed} malformed record(s); valid records were retained")
+    return findings, errors
 
 
 def _extract_json_object(stdout: str) -> str:
@@ -406,9 +445,10 @@ def _zap_risk(alert: dict[str, Any]) -> Severity:
 
 
 def _zap_first_instance_uri(alert: dict[str, Any]) -> str:
-    instances = alert.get("instances", [])
-    if isinstance(instances, dict):
-        instances = [instances]
+    value = alert.get("instances", [])
+    instances = value if isinstance(value, list) else []
+    if isinstance(value, dict):
+        instances = [value]
     for instance in instances:
         if isinstance(instance, dict) and instance.get("uri"):
             return str(instance["uri"])
@@ -511,7 +551,8 @@ def run_active_scan(
                 errors.append(f"Nuclei stderr: {'; '.join(meaningful[:5])}")
 
         stdout = getattr(proc, "stdout", "") or ""
-        return parse_nuclei_output(stdout), errors
+        findings, parse_errors = _parse_nuclei_output(stdout)
+        return findings, [*errors, *parse_errors]
 
     finally:
         if tmp_path:
@@ -553,4 +594,5 @@ def _run_zap_scan(
         return [], errors
 
     stdout = getattr(proc, "stdout", "") or ""
-    return parse_zap_output(stdout), errors
+    findings, parse_errors = _parse_zap_output(stdout)
+    return findings, [*errors, *parse_errors]

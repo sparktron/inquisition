@@ -120,6 +120,16 @@ class ParseNucleiTests(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].severity, Severity.MEDIUM)
 
+    def test_malformed_nested_records_do_not_discard_valid_findings(self) -> None:
+        out = "\n".join([
+            json.dumps({"info": "bad"}),
+            json.dumps({"info": {"name": "bad", "tags": 7, "classification": []}}),
+            _nuclei_line("t", "Real", "high", "https://example.com/real"),
+        ])
+        findings = parse_nuclei_output(out)
+        self.assertEqual(len(findings), 2)
+        self.assertEqual(findings[-1].title, "[active] Real")
+
     def test_unknown_severity_defaults_to_info(self) -> None:
         out = _nuclei_line("t", "Weird", "totally-unknown", "https://example.com/")
         self.assertEqual(parse_nuclei_output(out)[0].severity, Severity.INFO)
@@ -224,6 +234,13 @@ class ParseZapTests(unittest.TestCase):
 
     def test_invalid_zap_json_returns_no_findings(self) -> None:
         self.assertEqual(parse_zap_output("not json"), [])
+
+    def test_malformed_zap_records_do_not_discard_valid_alerts(self) -> None:
+        payload = json.loads(_zap_report())
+        payload["site"].append("bad")
+        payload["site"][0]["alerts"].append(7)
+        findings = parse_zap_output(json.dumps(payload))
+        self.assertEqual(len(findings), 1)
 
 
 # ---------------------------------------------------------------------------
@@ -384,6 +401,24 @@ class RunActiveScanTests(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].severity, Severity.HIGH)
         self.assertEqual(captured["cmd"][0], "nuclei")
+
+    def test_run_reports_malformed_nuclei_records_but_keeps_valid_results(self) -> None:
+        def fake_runner(cmd: list[str], **kwargs: Any) -> FakeCompleted:
+            return FakeCompleted(stdout=(
+                '{"info":"bad"}\n'
+                + _nuclei_line("t", "Finding", "high", "https://example.com/")
+            ))
+
+        with (
+            patch("active_scan.is_nuclei_available", return_value=True),
+            patch("active_scan._nuclei_version", return_value=_MIN_NUCLEI_VERSION),
+            patch("active_scan._templates_stale", return_value=False),
+        ):
+            findings, errors = run_active_scan(
+                ScanConfig(target="example.com", active=True), runner=fake_runner
+            )
+        self.assertEqual(len(findings), 1)
+        self.assertTrue(any("malformed record" in error for error in errors))
 
     def test_runs_zap_engine_when_selected(self) -> None:
         captured: dict[str, Any] = {}

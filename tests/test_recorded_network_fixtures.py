@@ -280,6 +280,36 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
         self.assertIn("HTTP TRACE method enabled", titles)
         self.assertTrue(any("DELETE" in title for title in titles))
 
+    def test_graphql_null_data_is_handled_as_disabled_introspection(self) -> None:
+        response = RecordedResponse(status_code=200, json_data={"data": None})
+        module = AppChecksModule(
+            ScanConfig(target="example.test", rate_limit=0),
+            http_client=cast(Any, RecordedHttpClient(post=lambda *_args, **_kwargs: response)),
+        )
+        findings: list[Any] = []
+
+        module._graphql_introspection("https://example.test", findings)
+
+        self.assertEqual([finding.title for finding in findings], ["GraphQL introspection disabled"])
+
+    def test_graphql_malformed_types_preserve_valid_schema_evidence(self) -> None:
+        response = RecordedResponse(status_code=200, json_data={
+            "data": {"__schema": {
+                "types": [None, {"name": 7}, {"name": "Query"}, {"name": "__Type"}],
+                "mutationType": "bad",
+            }},
+        })
+        module = AppChecksModule(
+            ScanConfig(target="example.test", rate_limit=0),
+            http_client=cast(Any, RecordedHttpClient(post=lambda *_args, **_kwargs: response)),
+        )
+        findings: list[Any] = []
+
+        module._graphql_introspection("https://example.test", findings)
+
+        self.assertEqual([finding.title for finding in findings], ["GraphQL introspection enabled"])
+        self.assertIn("1 type(s): Query", findings[0].evidence)
+
     def test_app_checks_fixture_reports_mixed_content_and_missing_sri(self) -> None:
         html = """
         <html>

@@ -394,7 +394,17 @@ class AppChecksModule(BaseModule):
         except (ValueError, json.JSONDecodeError):
             return
 
-        schema = data.get("data", {}).get("__schema")
+        if not isinstance(data, dict):
+            self._append_graphql_parse_error(findings, "response root is not an object")
+            return
+        response_data = data.get("data")
+        if response_data is None:
+            schema = None
+        elif isinstance(response_data, dict):
+            schema = response_data.get("__schema")
+        else:
+            self._append_graphql_parse_error(findings, "data field is not an object or null")
+            return
         if not schema:
             # Introspection was blocked or returned no schema
             findings.append(Finding(
@@ -406,9 +416,25 @@ class AppChecksModule(BaseModule):
                 remediation="",
             ))
             return
+        if not isinstance(schema, dict):
+            self._append_graphql_parse_error(findings, "__schema field is not an object")
+            return
 
-        type_names = [t["name"] for t in schema.get("types", []) if not t["name"].startswith("__")]
-        mutation_type = schema.get("mutationType")
+        raw_types = schema.get("types", [])
+        types = raw_types if isinstance(raw_types, list) else []
+        type_names = [
+            name
+            for item in types
+            if isinstance(item, dict)
+            for name in [item.get("name")]
+            if isinstance(name, str) and name and not name.startswith("__")
+        ]
+        mutation_value = schema.get("mutationType")
+        mutation_name = (
+            mutation_value.get("name")
+            if isinstance(mutation_value, dict) and isinstance(mutation_value.get("name"), str)
+            else ""
+        )
         findings.append(Finding(
             title="GraphQL introspection enabled",
             category=FindingCategory.APPLICATION,
@@ -416,7 +442,7 @@ class AppChecksModule(BaseModule):
             evidence=(
                 f"Schema exposed: {len(type_names)} type(s): {', '.join(type_names[:15])}"
                 + (" …" if len(type_names) > 15 else "")
-                + (f". Mutations available: yes ({mutation_type['name']})" if mutation_type else ". No mutations.")
+                + (f". Mutations available: yes ({mutation_name})" if mutation_name else ". No mutations.")
             ),
             impact=(
                 "Full API schema exposed — attackers can enumerate all queries, mutations, "
@@ -428,6 +454,17 @@ class AppChecksModule(BaseModule):
                 "In Graphene: GRAPHENE = {'ATOMIC_MUTATIONS': True} and restrict introspection. "
                 "Consider field-level authorization and depth/complexity limiting."
             ),
+        ))
+
+    @staticmethod
+    def _append_graphql_parse_error(findings: list[Finding], detail: str) -> None:
+        findings.append(Finding(
+            title="GraphQL introspection response malformed",
+            category=FindingCategory.APPLICATION,
+            severity=Severity.INFO,
+            evidence=f"POST /graphql returned HTTP 200 JSON, but {detail}",
+            impact="The scanner could not determine whether schema introspection is enabled",
+            remediation="Review the GraphQL response shape and scanner logs; no vulnerability is asserted.",
         ))
 
     def _enumerate_http_methods(self, base_url: str, findings: list[Finding]) -> None:

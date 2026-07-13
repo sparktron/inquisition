@@ -69,6 +69,15 @@ class IntelProvenanceTests(unittest.TestCase):
         prov = {s.name: s for s in vuln_correlation.intel_provenance()}
         self.assertTrue(prov["CISA KEV"].stale)
 
+    def test_kev_skips_malformed_entries(self) -> None:
+        response = Mock(status_code=200)
+        response.json.return_value = {
+            "vulnerabilities": [None, {"cveID": 7}, {"cveID": "CVE-2026-0001"}],
+        }
+        with patch("vuln_correlation.requests.get", return_value=response):
+            result = vuln_correlation._load_cisa_kev(timeout=1.0)
+        self.assertEqual(result, {"CVE-2026-0001"})
+
 
 class ExploitabilityTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -94,6 +103,44 @@ class ExploitabilityTests(unittest.TestCase):
         get2.assert_not_called()
         self.assertEqual(again, out)
         self.assertEqual(get.call_count, 1)
+
+    def test_load_epss_skips_malformed_rows(self) -> None:
+        response = Mock(status_code=200)
+        response.json.return_value = {
+            "data": [None, {"cve": 7}, {"cve": "CVE-BAD", "epss": "oops"},
+                     {"cve": "CVE-2026-0001", "epss": "0.2", "percentile": "0.8"}],
+        }
+        with patch("vuln_correlation.requests.get", return_value=response):
+            result = vuln_correlation._load_epss(["CVE-2026-0001"], timeout=1.0)
+        self.assertEqual(result["CVE-2026-0001"], (0.2, 0.8))
+
+    def test_nvd_skips_malformed_records_and_keeps_valid_record(self) -> None:
+        response = Mock(status_code=200)
+        response.json.return_value = {
+            "vulnerabilities": [
+                None,
+                {"cve": "bad"},
+                {"cve": {
+                    "id": "CVE-2026-0001",
+                    "descriptions": [None, {"lang": "en", "value": "Valid issue"}],
+                    "metrics": {"cvssMetricV31": [None, {"cvssData": {"baseScore": "7.5"}}]},
+                    "references": [None, {"url": "https://example.test/advisory"}],
+                    "published": "2026-01-01T00:00:00Z",
+                }},
+            ],
+        }
+        with (
+            patch("vuln_correlation.time.sleep"),
+            patch("vuln_correlation.requests.get", return_value=response),
+            patch("vuln_correlation._load_cisa_kev", return_value=set()),
+            patch("vuln_correlation.enrich_exploitability"),
+        ):
+            records = vuln_correlation.lookup_cves_for_cpe(
+                "cpe:2.3:a:vendor:product", timeout=1.0
+            )
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].cve_id, "CVE-2026-0001")
+        self.assertEqual(records[0].cvss_score, 7.5)
 
     def test_enrich_marks_kev_and_nuclei_as_public_exploit(self) -> None:
         rec = CVERecord(
