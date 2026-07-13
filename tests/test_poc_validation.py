@@ -99,6 +99,54 @@ class ClassifyTests(unittest.TestCase):
             poc_validation.classify_command("curl --config=/tmp/c https://x")[0]
         )
 
+    def test_compact_curl_mutating_flags_rejected(self) -> None:
+        commands = (
+            "curl -XPOST https://example.com",
+            "curl -sXPOST https://example.com",
+            "curl -dvalue https://example.com",
+            "curl -sdvalue https://example.com",
+            "curl -Fname=value https://example.com",
+            "curl -Tsecret.txt https://example.com",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertFalse(poc_validation.classify_command(command)[0])
+
+    def test_compact_curl_file_writes_rejected(self) -> None:
+        commands = (
+            "curl -Kconfig https://example.com",
+            "curl -ofile https://example.com",
+            "curl -sO https://example.com/file",
+            "curl -ccookies.txt https://example.com",
+            "curl -Dheaders.txt https://example.com",
+            "curl --cookie-jar=cookies.txt https://example.com",
+            "curl --dump-header=headers.txt https://example.com",
+            "curl --trace=trace.txt https://example.com",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertFalse(poc_validation.classify_command(command)[0])
+
+    def test_compact_safe_curl_flags_remain_allowed(self) -> None:
+        commands = (
+            "curl -sI https://example.com",
+            "curl -sH'Accept: application/json' https://example.com",
+            "curl -XHEAD https://example.com",
+            "curl -sXOPTIONS https://example.com",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                safe, reason = poc_validation.classify_command(command)
+                self.assertTrue(safe, reason)
+
+    def test_rejected_compact_curl_never_runs(self) -> None:
+        f = _f("curl -sXPOST https://example.com")
+        runner = _runner()
+        result = poc_validation.validate_finding(f, runner=runner)
+        assert result is not None
+        self.assertFalse(result.attempted)
+        self.assertEqual(runner.calls, [])  # type: ignore[attr-defined]
+
     def test_curl_file_scheme_rejected(self) -> None:
         safe, reason = poc_validation.classify_command("curl -s file:///etc/passwd")
         self.assertFalse(safe)

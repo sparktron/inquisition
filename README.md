@@ -23,7 +23,7 @@ Inquisition is **read-only by design.** No exploit payloads, no auth bypasses, n
 <sub>📦 The original correctness/coverage ([ROADMAP.md](ROADMAP.md), phases 0–4) and attack-narrative intelligence ([ROADMAP_ATTACK_NARRATIVE.md](ROADMAP_ATTACK_NARRATIVE.md), themes A–F) roadmaps are complete. The current repository-wide review and remediation plan lives in [ROADMAP_CODE_REVIEW.md](ROADMAP_CODE_REVIEW.md#repository-wide-review-addendum--2026-07-12). External recon is useful, but it is not a full production "all clear" on its own: active payload testing needs the external Nuclei/ZAP engines, and authenticated/internal assessment is out of scope.</sub>
 
 > [!WARNING]
-> The 2026-07-12 review found a safety bypass in the optional `--validate` PoC-command classifier: compact curl flags such as `-XPOST`, `-dvalue`, `-Kfile`, and `-ofile`, plus output-writing OpenSSL options, can currently be misclassified as read-only. Do not use `--validate` with unreviewed PoC commands until the P0 remediation in the [code-review roadmap](ROADMAP_CODE_REVIEW.md#p0--restore-the-poc-validators-fail-closed-boundary) is complete. Normal scans without `--validate` are not affected by this classifier bug.
+> The compact curl-flag bypass found in the 2026-07-12 review is fixed. Output-writing OpenSSL options are still being remediated, so keep `--validate` disabled until the remaining P0 work in the [code-review roadmap](ROADMAP_CODE_REVIEW.md#p0--restore-the-poc-validators-fail-closed-boundary) is complete. Normal scans without `--validate` are not affected.
 
 ## ✨ Highlights
 

@@ -63,6 +63,8 @@ _CURL_MUTATING_FLAGS: frozenset[str] = frozenset(
         "-d", "--data", "--data-raw", "--data-binary", "--data-urlencode",
         "--data-ascii", "-F", "--form", "--form-string", "-T", "--upload-file",
         "-o", "--output", "-O", "--remote-name", "--remote-name-all",
+        "-c", "--cookie-jar", "-D", "--dump-header", "--trace",
+        "--trace-ascii", "--stderr",
     }
 )
 
@@ -72,6 +74,19 @@ _CURL_SAFE_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
 # (-d, -o, -X POST, …), so an apparently read-only command could smuggle a write
 # past the flag scan. Reject them outright.
 _CURL_CONFIG_FLAGS: frozenset[str] = frozenset({"-K", "--config"})
+
+# Short options may be clustered and options that take a value may attach it:
+# ``-sXPOST``, ``-dvalue``, ``-ofile``. Parse clusters instead of comparing the
+# whole token, otherwise a mutating option can hide behind a safe flag.
+_CURL_SHORT_VALUE_FLAGS: frozenset[str] = frozenset(
+    {
+        "A", "b", "c", "d", "D", "e", "E", "F", "H", "K", "m", "o",
+        "P", "Q", "r", "t", "T", "u", "U", "w", "x", "X", "Y", "z",
+    }
+)
+_CURL_SHORT_REJECTED_FLAGS: frozenset[str] = frozenset(
+    {"c", "d", "D", "F", "K", "o", "O", "T"}
+)
 
 # Only web schemes are in scope for a read-only probe. ``file://``, ``gopher://``,
 # ``dict://`` etc. can read local files or reach internal services, so a curl
@@ -190,19 +205,28 @@ def classify_command(command: str) -> tuple[bool, str]:
 
 
 def _classify_curl(tokens: list[str]) -> tuple[bool, str]:
-    for i, tok in enumerate(tokens[1:], start=1):
+    i = 1
+    while i < len(tokens):
+        tok = tokens[i]
         # Split combined short flags' value form like --data=x.
         flag = tok.split("=", 1)[0]
         if flag in _CURL_MUTATING_FLAGS:
             return False, f"curl flag '{flag}' sends data or writes a file"
         if flag in _CURL_CONFIG_FLAGS:
             return False, f"curl flag '{flag}' reads a config file that can declare mutating options"
-        if flag in ("-X", "--request"):
+        if tok.startswith("-") and not tok.startswith("--") and tok != "-":
+            safe, reason, consumes_next = _classify_curl_short_token(tok, tokens, i)
+            if not safe:
+                return False, reason
+            if consumes_next:
+                i += 1
+        elif flag == "--request":
             method = ""
             if "=" in tok:
                 method = tok.split("=", 1)[1]
             elif i + 1 < len(tokens):
                 method = tokens[i + 1]
+                i += 1
             if method.upper() not in _CURL_SAFE_METHODS:
                 return False, f"curl uses mutating method '{method}'"
         # Any token carrying an explicit URL scheme must be a web scheme; reject
@@ -210,7 +234,36 @@ def _classify_curl(tokens: list[str]) -> tuple[bool, str]:
         scheme_match = _URL_SCHEME_RE.match(tok)
         if scheme_match and scheme_match.group(1).lower() not in _CURL_SAFE_SCHEMES:
             return False, f"curl URL scheme '{scheme_match.group(1)}' is not http(s)"
+        i += 1
     return True, ""
+
+
+def _classify_curl_short_token(
+    token: str, tokens: list[str], index: int
+) -> tuple[bool, str, bool]:
+    """Classify one curl short-option token, including clusters/attached values.
+
+    Returns ``(safe, reason, consumes_next)``. Once an option that takes a value
+    is reached, the remainder of the token is that value; when there is no
+    remainder the next argv token is consumed instead.
+    """
+    cluster = token[1:]
+    for offset, option in enumerate(cluster):
+        flag = f"-{option}"
+        if option in _CURL_SHORT_REJECTED_FLAGS:
+            if option == "K":
+                return False, f"curl flag '{flag}' reads a config file that can declare mutating options", False
+            return False, f"curl flag '{flag}' sends data or writes a file", False
+        if option == "X":
+            attached = cluster[offset + 1:]
+            consumes_next = not attached and index + 1 < len(tokens)
+            method = attached or (tokens[index + 1] if consumes_next else "")
+            if method.upper() not in _CURL_SAFE_METHODS:
+                return False, f"curl uses mutating method '{method}'", False
+            return True, "", consumes_next
+        if option in _CURL_SHORT_VALUE_FLAGS:
+            return True, "", offset == len(cluster) - 1 and index + 1 < len(tokens)
+    return True, "", False
 
 
 def _classify_openssl(tokens: list[str]) -> tuple[bool, str]:

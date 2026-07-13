@@ -245,6 +245,9 @@ Passing tests do not cover the boundary cases below.
 
 #### Compact curl flags and OpenSSL output options can execute writes
 
+**Status:** curl compact/body/upload/config/output forms fixed; OpenSSL output
+options remain open.
+
 `poc_validation._classify_curl` recognizes separated flags (`-X POST`, `-d
 value`, `-o file`) and GNU `--flag=value` forms, but not compact short-option
 forms. The following all currently return `(True, "")` from
@@ -375,7 +378,7 @@ or prompt-exit test.
 
 ### Recommended execution order
 
-1. [ ] Close the PoC classifier bypasses and disable/guard `--validate` until
+1. [ ] Close the remaining OpenSSL classifier bypass and keep `--validate` guarded until
    the regression matrix is green.
 2. [ ] Enforce same-origin sitemap fetching and redirect credential stripping.
 3. [ ] Harden Nuclei/GraphQL/threat-intel parsers so one malformed record cannot
