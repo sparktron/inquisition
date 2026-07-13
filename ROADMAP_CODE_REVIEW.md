@@ -281,6 +281,11 @@ the subprocess runner.
 
 #### Crawler follows out-of-origin sitemap URLs
 
+**Status: fixed 2026-07-12.** Sitemap documents and nested indexes are fetched
+only when their normalized scheme, hostname, and effective port match the
+resolved target origin. Traversal is capped at 20 sitemap documents and two
+nested-index levels.
+
 `CrawlerModule` filters discovered page results to the target origin, but
 `_collect_from_sitemaps` fetches `Sitemap:` URLs from `robots.txt` and nested
 sitemap-index `<loc>` values before applying an origin check. A target can
@@ -293,6 +298,12 @@ sitemap count/depth as well as discovered URL count. Add fixture tests proving
 external robots and nested-index URLs are never requested.
 
 #### Custom auth headers survive cross-origin redirects
+
+**Status: fixed 2026-07-12.** The shared client now follows at most ten
+redirects itself, retains configured credentials on same-origin hops, and
+permanently strips every configured credential header after an origin change.
+Session access is serialized while the response cache remains independently
+locked.
 
 The shared `HttpClient` passes arbitrary configured auth headers to
 `requests.Session` with redirects enabled. Requests strips `Authorization` and
@@ -388,7 +399,7 @@ or prompt-exit test.
 ### Recommended execution order
 
 1. [x] Close the PoC classifier bypasses and verify the regression matrix.
-2. [ ] Enforce same-origin sitemap fetching and redirect credential stripping.
+2. [x] Enforce same-origin sitemap fetching and redirect credential stripping.
 3. [ ] Harden Nuclei/GraphQL/threat-intel parsers so one malformed record cannot
    abort a scan or erase a module's valid findings.
 4. [ ] Centralize CLI/fleet validation and reject invalid ranges consistently.

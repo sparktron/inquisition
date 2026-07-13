@@ -23,6 +23,8 @@ from modules.http_client import HttpRequestException, HttpResponse
 # Upper bounds keep a crawl polite and finite even on large sites.
 _MAX_URLS = 250
 _MAX_DEEP_PAGES = 15
+_MAX_SITEMAPS = 20
+_MAX_SITEMAP_DEPTH = 2
 
 # Attributes that carry URLs we care about for surface discovery.
 _LINK_RE = re.compile(r"""(?:href|src|action)\s*=\s*["']([^"'#\s]+)["']""", re.IGNORECASE)
@@ -93,11 +95,11 @@ class CrawlerModule(BaseModule):
 
         # --- Bounded deep crawl one level further ---
         if self.config.depth == ScanDepth.DEEP:
-            self._expand_deep(target, discovered)
+            self._expand_deep(base_url, discovered)
 
         internal = {
             url: src for url, src in discovered.items()
-            if self._same_origin(url, target)
+            if self._same_origin(url, base_url)
         }
 
         if not internal:
@@ -211,11 +213,14 @@ class CrawlerModule(BaseModule):
         self, base_url: str, extra_sitemaps: list[str], discovered: dict[str, str]
     ) -> None:
         """Parse sitemap.xml (and sitemap indexes) for <loc> URLs."""
-        queue = [urljoin(base_url, "/sitemap.xml"), *extra_sitemaps]
+        queue = [
+            (urljoin(base_url, "/sitemap.xml"), 0),
+            *((urljoin(base_url, url), 0) for url in extra_sitemaps),
+        ]
         seen_sitemaps: set[str] = set()
-        while queue and len(discovered) < _MAX_URLS:
-            sitemap_url = queue.pop(0)
-            if sitemap_url in seen_sitemaps:
+        while queue and len(discovered) < _MAX_URLS and len(seen_sitemaps) < _MAX_SITEMAPS:
+            sitemap_url, depth = queue.pop(0)
+            if sitemap_url in seen_sitemaps or not self._same_origin(sitemap_url, base_url):
                 continue
             seen_sitemaps.add(sitemap_url)
 
@@ -227,16 +232,23 @@ class CrawlerModule(BaseModule):
             for loc in _LOC_RE.findall(text):
                 loc = loc.strip()
                 if is_index:
-                    if loc not in seen_sitemaps:
-                        queue.append(loc)
+                    nested = urljoin(sitemap_url, loc)
+                    if (
+                        depth < _MAX_SITEMAP_DEPTH
+                        and nested not in seen_sitemaps
+                        and self._same_origin(nested, base_url)
+                    ):
+                        queue.append((nested, depth + 1))
                 elif len(discovered) < _MAX_URLS:
-                    discovered.setdefault(loc, "sitemap.xml")
+                    page_url = urljoin(sitemap_url, loc)
+                    if self._same_origin(page_url, base_url):
+                        discovered.setdefault(page_url, "sitemap.xml")
 
-    def _expand_deep(self, target: str, discovered: dict[str, str]) -> None:
+    def _expand_deep(self, base_url: str, discovered: dict[str, str]) -> None:
         """Fetch a bounded number of internal HTML pages to find deeper links."""
         seeds = [
             url for url in list(discovered)
-            if self._same_origin(url, target)
+            if self._same_origin(url, base_url)
         ][:_MAX_DEEP_PAGES]
         for url in seeds:
             if len(discovered) >= _MAX_URLS:
@@ -254,11 +266,8 @@ class CrawlerModule(BaseModule):
     # Helpers
     # -----------------------------------------------------------------------
 
-    def _same_origin(self, url: str, target: str) -> bool:
-        host = urlparse(url).hostname or ""
-        host = host.lower()
-        target = target.lower()
-        return host in (target, f"www.{target}") or f"www.{host}" == target
+    def _same_origin(self, url: str, base_url: str) -> bool:
+        return _normalized_origin(url) == _normalized_origin(base_url)
 
     def _sensitive_label(self, url: str) -> str | None:
         path = urlparse(url).path.lower()
@@ -266,3 +275,17 @@ class CrawlerModule(BaseModule):
             if fragment in path:
                 return descriptor
         return None
+
+
+def _normalized_origin(url: str) -> tuple[str, str, int | None] | None:
+    """Return a scheme/host/effective-port tuple for an HTTP(S) URL."""
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    if scheme not in {"http", "https"} or not host:
+        return None
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    return scheme, host, port if port is not None else (443 if scheme == "https" else 80)

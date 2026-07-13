@@ -19,8 +19,10 @@ class FakeResponse:
 class FakeHttpClient:
     def __init__(self, pages: dict[str, FakeResponse]) -> None:
         self.pages = pages
+        self.requested: list[str] = []
 
     def get(self, url: str, **_: object) -> FakeResponse:
+        self.requested.append(url)
         return self.pages.get(url, FakeResponse(status_code=404, text="not found"))
 
 
@@ -80,6 +82,47 @@ class CrawlerTests(unittest.TestCase):
         findings = _module(pages).run()
         sensitive = [f for f in findings if f.title.startswith("Sensitive path discovered")]
         self.assertTrue(any("/admin" in f.evidence for f in sensitive))
+
+    def test_external_sitemaps_are_never_requested(self) -> None:
+        pages = {
+            "https://example.com/": FakeResponse(text="<html></html>"),
+            "https://example.com/robots.txt": FakeResponse(text=(
+                "Sitemap: https://external.test/from-robots.xml\n"
+            )),
+            "https://example.com/sitemap.xml": FakeResponse(text=(
+                "<sitemapindex>"
+                "<sitemap><loc>https://external.test/nested.xml</loc></sitemap>"
+                "<sitemap><loc>https://example.com/internal.xml</loc></sitemap>"
+                "</sitemapindex>"
+            )),
+            "https://example.com/internal.xml": FakeResponse(text=(
+                "<urlset><url><loc>https://example.com/admin</loc></url></urlset>"
+            )),
+        }
+        client = FakeHttpClient(pages)
+        config = ScanConfig(target="example.com", rate_limit=0)
+
+        findings = CrawlerModule(config, http_client=cast(Any, client)).run()
+
+        self.assertFalse(any("external.test" in url for url in client.requested))
+        self.assertTrue(any("/admin" in finding.evidence for finding in findings))
+
+    def test_sitemap_origin_includes_scheme_and_effective_port(self) -> None:
+        pages = {
+            "https://example.com/": FakeResponse(text="<html></html>"),
+            "https://example.com/robots.txt": FakeResponse(text=(
+                "Sitemap: http://example.com/insecure.xml\n"
+                "Sitemap: https://example.com:444/other-port.xml\n"
+            )),
+            "https://example.com/sitemap.xml": FakeResponse(text="<urlset></urlset>"),
+        }
+        client = FakeHttpClient(pages)
+        config = ScanConfig(target="example.com", rate_limit=0)
+
+        CrawlerModule(config, http_client=cast(Any, client)).run()
+
+        self.assertNotIn("http://example.com/insecure.xml", client.requested)
+        self.assertNotIn("https://example.com:444/other-port.xml", client.requested)
 
     def test_no_internal_links_reports_empty_surface(self) -> None:
         pages = {

@@ -48,7 +48,7 @@ The things that make Inquisition more than a checklist:
 - **Port scanning** — TCP connect-scan with banner grabbing; enhanced service detection for Telnet, SMB, VNC, Redis, Elasticsearch, MongoDB, MySQL, PostgreSQL, RDP
 - **TLS/SSL analysis** — negotiated protocol/cipher, active protocol-version and weak-cipher-family enumeration, weak Diffie-Hellman (Logjam) parameter detection, certificate validity/expiration, self-signed detection, hostname mismatch, full chain validation, Certificate Transparency (embedded SCT) presence, and OCSP revocation lookup
 - **WAF/CDN detection** — Signature-based detection for common protective layers including Cloudflare, AWS CloudFront, Akamai, Fastly, Imperva, and Sucuri
-- **Crawler-fed analysis** — Homepage, robots.txt, and sitemap.xml URL discovery feeds application, content, and technology checks
+- **Crawler-fed analysis** — Same-origin homepage, robots.txt, and bounded sitemap.xml URL discovery feeds application, content, and technology checks
 - **Technology stack detection** — WordPress, Joomla, Drupal, Laravel, Django, PHP, nginx, Apache, IIS, Node.js, and more via body/header signatures, path probing, and discovered pages
 
 ### 🧱 Security headers & application layer
@@ -1093,6 +1093,8 @@ By default, Inquisition is intentionally **read-only active reconnaissance:**
 Optional `--active` mode is different: it shells out to Nuclei or OWASP ZAP and sends payload-based vulnerability probes after a second, explicit active-scan authorization prompt. DOS, brute-force, and fuzzing template categories are always excluded. Use it only where you have written permission for active testing. See [Active Testing](#active-testing-1) for the full explanation.
 
 The optional `--validate` mode uses a small command/subcommand allowlist, rejects shell metacharacters, parses compact curl option clusters, limits curl to HTTP(S) and safe methods, and rejects curl/OpenSSL file-writing options. Keep PoC commands reviewable and extend the table-driven rejection tests whenever the allowlist changes.
+
+Authenticated HTTP requests keep configured credentials on same-origin redirects but strip them permanently before following a redirect to a different scheme, host, or effective port. Sitemap discovery applies the same exact-origin boundary before fetching robots-declared or nested sitemap URLs.
 
 ### Responsible Disclosure
 

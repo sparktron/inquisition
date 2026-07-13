@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Iterable, Mapping
 from typing import Any, Protocol, cast
+from urllib.parse import urljoin, urlparse
 
 import requests  # type: ignore[import-untyped]
 
@@ -26,6 +27,8 @@ class HttpResponse(Protocol):
         ...
 
 _USER_AGENT = "Inquisition/0.1 SecurityScanner"
+_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+_MAX_REDIRECTS = 10
 
 
 def _build_auth_headers(config: ScanConfig) -> dict[str, str]:
@@ -47,6 +50,7 @@ class HttpClient:
         self.session = requests.Session()
         self._cache: dict[tuple[str, str, bool, bool, tuple[tuple[str, str], ...]], HttpResponse] = {}
         self._lock = threading.Lock()
+        self._session_lock = threading.Lock()
         self._auth_headers = _build_auth_headers(config)
 
     def get(
@@ -121,20 +125,92 @@ class HttpClient:
             if cached is not None:
                 return cached
 
-        response = cast(
-            HttpResponse,
-            self.session.request(
-                normalized_method,
-                url,
-                json=json,
-                timeout=self.config.timeout if timeout is None else timeout,
-                allow_redirects=allow_redirects,
-                verify=verify,
-                headers=merged_headers,
-            ),
+        response = self._request_with_redirects(
+            normalized_method,
+            url,
+            json=json,
+            timeout=self.config.timeout if timeout is None else timeout,
+            allow_redirects=allow_redirects,
+            verify=verify,
+            headers=merged_headers,
         )
 
         if use_cache and normalized_method == "GET":
             with self._lock:
                 self._cache[cache_key] = response
         return response
+
+    def _request_with_redirects(
+        self,
+        method: str,
+        url: str,
+        *,
+        json: dict[str, Any] | None,
+        timeout: float,
+        allow_redirects: bool,
+        verify: bool,
+        headers: dict[str, str],
+    ) -> HttpResponse:
+        """Follow bounded redirects without forwarding configured secrets cross-origin."""
+        current_method = method
+        current_url = url
+        current_json = json
+        current_headers = dict(headers)
+        secret_names = {name.lower() for name in self._auth_headers}
+
+        for redirect_count in range(_MAX_REDIRECTS + 1):
+            with self._session_lock:
+                response = cast(
+                    HttpResponse,
+                    self.session.request(
+                        current_method,
+                        current_url,
+                        json=current_json,
+                        timeout=timeout,
+                        allow_redirects=False,
+                        verify=verify,
+                        headers=current_headers,
+                    ),
+                )
+
+            location = response.headers.get("Location") or response.headers.get("location")
+            if (
+                not allow_redirects
+                or response.status_code not in _REDIRECT_STATUSES
+                or not location
+            ):
+                return response
+            if redirect_count == _MAX_REDIRECTS:
+                raise requests.TooManyRedirects(f"Exceeded {_MAX_REDIRECTS} redirects")
+
+            next_url = urljoin(current_url, location)
+            if _normalized_origin(next_url) is None:
+                return response
+            if _normalized_origin(current_url) != _normalized_origin(next_url):
+                current_headers = {
+                    name: value
+                    for name, value in current_headers.items()
+                    if name.lower() not in secret_names
+                }
+
+            if response.status_code == 303 or (
+                response.status_code in {301, 302} and current_method == "POST"
+            ):
+                current_method = "GET"
+                current_json = None
+            current_url = next_url
+
+        raise AssertionError("redirect loop terminated unexpectedly")
+
+
+def _normalized_origin(url: str) -> tuple[str, str, int] | None:
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    if scheme not in {"http", "https"} or not host:
+        return None
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    return scheme, host, port if port is not None else (443 if scheme == "https" else 80)
