@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 
+from config_validation import scan_config_errors
 from models import ScanConfig
 
 
@@ -126,24 +127,7 @@ def enforce_dry_run(config: ScanConfig) -> bool:
 
 def validate_config(config: ScanConfig) -> list[str]:
     """Return a list of validation warnings (empty if everything is fine)."""
-    warnings: list[str] = []
-
-    if not config.target:
-        warnings.append("No target specified.")
-
-    if config.max_threads < 1:
-        warnings.append("Thread count must be >= 1.")
-
-    if config.rate_limit < 0:
-        warnings.append("Rate limit cannot be negative.")
-
-    if config.timeout <= 0:
-        warnings.append("Timeout must be positive.")
-
-    if config.connect_timeout <= 0:
-        warnings.append("Connect timeout must be positive.")
-
-    return warnings
+    return scan_config_errors(config)
 
 
 def abort(message: str) -> None:

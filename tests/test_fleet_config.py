@@ -103,6 +103,31 @@ class ResolveTests(unittest.TestCase):
         )[0]
         self.assertEqual(dict(c.sla_severity_overrides), {"high": 0})
 
+    def test_invalid_numeric_types_are_fleet_errors(self) -> None:
+        for key, value in (("timeout", "oops"), ("max_threads", None)):
+            with self.subTest(key=key), self.assertRaises(FleetConfigError):
+                resolved_configs({"targets": [{"target": "a.com", key: value}]}, _base())
+
+    def test_numeric_ranges_are_validated(self) -> None:
+        invalid = (
+            ("ports", [0, 443]),
+            ("ports", [80, 70000]),
+            ("max_threads", 0),
+            ("rate_limit", -0.1),
+            ("timeout", 0),
+            ("connect_timeout", -1),
+        )
+        for key, value in invalid:
+            with self.subTest(key=key, value=value), self.assertRaises(FleetConfigError):
+                resolved_configs({"targets": [{"target": "a.com", key: value}]}, _base())
+
+    def test_non_finite_floats_are_rejected(self) -> None:
+        for value in ("nan", "inf", "-inf"):
+            with self.subTest(value=value), self.assertRaises(FleetConfigError):
+                resolved_configs(
+                    {"targets": [{"target": "a.com", "timeout": value}]}, _base()
+                )
+
 
 class LoadTests(unittest.TestCase):
     def test_load_valid(self) -> None:

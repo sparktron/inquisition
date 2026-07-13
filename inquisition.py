@@ -19,6 +19,12 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from typing import Callable
 
+from config_validation import (
+    ConfigValidationError,
+    coerce_float,
+    coerce_int,
+    coerce_ports,
+)
 from models import ReportFormat, ScanConfig, ScanDepth, ScanReport, Severity
 from scanner import run_scan
 
@@ -460,7 +466,34 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Cookie header for authenticated scanning, e.g. 'session=<value>'",
     )
 
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    try:
+        _validate_cli_numbers(args)
+    except ConfigValidationError as exc:
+        parser.error(str(exc))
+    return args
+
+
+def _validate_cli_numbers(args: argparse.Namespace) -> None:
+    """Apply explicit range and zero semantics to every numeric CLI option."""
+    coerce_int(args.jobs, "--jobs", minimum=1)
+    coerce_int(args.history_size, "--history-size", minimum=1)
+    coerce_int(args.history_max_age_days, "--history-max-age-days", minimum=0)
+    coerce_int(args.sla_max_age, "--sla-max-age", minimum=0)
+    coerce_int(args.watch, "--watch", minimum=0)
+    coerce_float(args.watch_jitter, "--watch-jitter", minimum=0)
+    metrics_port = coerce_int(args.metrics_serve, "--metrics-serve", minimum=0)
+    if metrics_port > 65535:
+        raise ConfigValidationError(f"--metrics-serve must be 0 or in 1..65535, got {metrics_port}")
+    coerce_int(args.audit_max_bytes, "--audit-max-bytes", minimum=0)
+    coerce_int(args.audit_backups, "--audit-backups", minimum=0)
+    coerce_float(args.audit_max_age_days, "--audit-max-age-days", minimum=0)
+    coerce_int(args.threads, "--threads", minimum=1)
+    coerce_float(args.rate_limit, "--rate-limit", minimum=0)
+    coerce_float(args.timeout, "--timeout", exclusive_minimum=0)
+    coerce_float(args.connect_timeout, "--connect-timeout", exclusive_minimum=0)
+    if args.ports is not None:
+        coerce_ports(args.ports, "--ports")
 
 
 def _gather_targets(args: argparse.Namespace) -> list[str]:
@@ -659,10 +692,6 @@ def main(argv: list[str] | None = None) -> None:
         993, 995, 3306, 3389, 5432, 5900, 6379, 8080, 8443, 9200,
     )
     ports = tuple(args.ports) if args.ports else default_ports
-    if args.sla_max_age < 0:
-        from ui import print_error
-        print_error("--sla-max-age must be non-negative (0 = disabled)")
-        sys.exit(2)
     sla_overrides = _parse_sla_overrides(args.sla_by_severity)
 
     # A base config (target filled in per scan) shared by all targets unless a

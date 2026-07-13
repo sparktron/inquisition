@@ -26,6 +26,13 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
 
+from config_validation import (
+    ConfigValidationError,
+    coerce_float,
+    coerce_int,
+    coerce_ports,
+    validate_scan_config,
+)
 from models import ScanConfig, ScanDepth, Severity
 
 _ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -108,12 +115,10 @@ def _coerce(key: str, value: Any) -> tuple[str, Any]:
         except ValueError:
             raise FleetConfigError(f"invalid depth: {value!r} (use quick/standard/deep)") from None
     if key == "ports":
-        if not isinstance(value, list):
-            raise FleetConfigError("ports must be a list of integers")
         try:
-            return "ports", tuple(int(p) for p in value)
-        except (TypeError, ValueError):
-            raise FleetConfigError("ports must be a list of integers") from None
+            return "ports", coerce_ports(value)
+        except ConfigValidationError as exc:
+            raise FleetConfigError(str(exc)) from None
     if key == "sla_by_severity":
         return "sla_severity_overrides", _coerce_sla(value)
     if key == "asset_value":
@@ -124,12 +129,17 @@ def _coerce(key: str, value: Any) -> tuple[str, Any]:
             )
         return "asset_value", tier
     if key in _INT_FIELDS:
-        n = int(value)
-        if key == "sla_max_age" and n < 0:
-            raise FleetConfigError("sla_max_age must be non-negative (0 = disabled)")
-        return key, n
+        try:
+            return key, coerce_int(value, key, minimum=0 if key == "sla_max_age" else 1)
+        except ConfigValidationError as exc:
+            raise FleetConfigError(str(exc)) from None
     if key in _FLOAT_FIELDS:
-        return key, float(value)
+        try:
+            if key == "rate_limit":
+                return key, coerce_float(value, key, minimum=0)
+            return key, coerce_float(value, key, exclusive_minimum=0)
+        except ConfigValidationError as exc:
+            raise FleetConfigError(str(exc)) from None
     if key in _BOOL_FIELDS:
         return key, _coerce_bool(key, value)
     if key in _STR_FIELDS:
@@ -162,12 +172,10 @@ def _coerce_sla(value: Any) -> tuple[tuple[str, int], ...]:
     for sev, scans in value.items():
         if str(sev).lower() not in valid:
             raise FleetConfigError(f"unknown severity in sla_by_severity: {sev!r}")
-        n = int(scans)
-        if n < 0:
-            raise FleetConfigError(
-                f"sla_by_severity values must be non-negative (0 disables a severity), "
-                f"got {n} for {sev!r}"
-            )
+        try:
+            n = coerce_int(scans, f"sla_by_severity[{sev}]", minimum=0)
+        except ConfigValidationError as exc:
+            raise FleetConfigError(str(exc)) from None
         pairs.append((str(sev).lower(), n))
     return tuple(pairs)
 
@@ -177,7 +185,11 @@ def _apply(base: ScanConfig, target: str, overrides: dict[str, Any]) -> ScanConf
     for key, value in overrides.items():
         field, typed = _coerce(key, value)
         kwargs[field] = typed
-    return replace(base, **kwargs)
+    config = replace(base, **kwargs)
+    try:
+        return validate_scan_config(config)
+    except ConfigValidationError as exc:
+        raise FleetConfigError(str(exc)) from None
 
 
 def resolved_configs(fleet_cfg: dict[str, Any], base: ScanConfig) -> list[ScanConfig]:

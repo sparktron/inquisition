@@ -13,6 +13,7 @@ from inquisition import (
     _gather_targets,
     _jitter_delay,
     _output_path_for,
+    _parse_args,
     _parse_sla_overrides,
     _resolve_targets,
     _run_targets,
@@ -40,6 +41,45 @@ class GatherTargetsTests(unittest.TestCase):
             result = _gather_targets(_args(["a.com"], targets_file=path))
         # positional a.com first, then file entries, a.com deduped
         self.assertEqual(result, ["a.com", "c.com", "d.com"])
+
+
+class NumericValidationTests(unittest.TestCase):
+    def test_invalid_numeric_ranges_exit_as_argparse_errors(self) -> None:
+        invalid = (
+            ["example.com", "--jobs", "0"],
+            ["example.com", "--history-size", "0"],
+            ["example.com", "--history-max-age-days", "-1"],
+            ["example.com", "--watch", "-1"],
+            ["example.com", "--watch-jitter", "-0.1"],
+            ["example.com", "--metrics-serve", "70000"],
+            ["example.com", "--audit-max-bytes", "-1"],
+            ["example.com", "--audit-backups", "-1"],
+            ["example.com", "--audit-max-age-days", "-1"],
+            ["example.com", "--threads", "0"],
+            ["example.com", "--rate-limit", "-0.1"],
+            ["example.com", "--timeout", "0"],
+            ["example.com", "--connect-timeout", "0"],
+            ["example.com", "--ports", "0"],
+            ["example.com", "--ports", "70000"],
+        )
+        for argv in invalid:
+            with self.subTest(argv=argv), self.assertRaises(SystemExit) as raised:
+                _parse_args(argv)
+            self.assertEqual(raised.exception.code, 2)
+
+    def test_documented_zero_disable_values_are_accepted(self) -> None:
+        args = _parse_args([
+            "example.com",
+            "--history-max-age-days", "0",
+            "--sla-max-age", "0",
+            "--watch", "0",
+            "--watch-jitter", "0",
+            "--metrics-serve", "0",
+            "--audit-max-bytes", "0",
+            "--audit-backups", "0",
+            "--audit-max-age-days", "0",
+        ])
+        self.assertEqual(args.audit_backups, 0)
 
 
 class OutputPathTests(unittest.TestCase):

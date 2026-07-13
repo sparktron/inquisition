@@ -304,7 +304,7 @@ python inquisition.py example.com -o report.sarif  # → SARIF format
 | `target` | string(s) | *required* | One or more hostnames/IPs (space-separated). Multiple targets run a fleet scan |
 | `--targets-file` | path | none | Read additional targets from a file, one per line (`#` comments and blank lines ignored) |
 | `-d`, `--depth` | `quick` \| `standard` \| `deep` | `standard` | Scan depth: controls ports and path probing |
-| `--ports` | list of ints | 20 well-known | Override default ports (e.g. `--ports 22 80 443 8080`) |
+| `--ports` | list of ints | 20 well-known | Override default ports; every port must be in `1..65535` (e.g. `--ports 22 80 443 8080`) |
 
 **Fleet scanning:** pass several targets (or `--targets-file`) to scan each in turn. A combined overview table prints at the end, each target is diffed and notified independently, and `--fail-on` exits non-zero if *any* target meets the threshold. With multiple targets, `--output` is treated as a **directory** and a per-target report (`<target>.<ext>`) is written into it; with a single target it remains a file path.
 
@@ -327,11 +327,11 @@ inquisition --targets-file hosts.txt --format sarif \
 #### Concurrency & Timing
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `-j`, `--jobs` | int | 1 | Scan up to N targets concurrently (fleet runs). N>1 runs each scan quiet and prints a per-target line as it finishes |
-| `-t`, `--threads` | int | 10 | Max concurrent threads per module |
-| `--rate-limit` | float (seconds) | 0.1 | Minimum delay between requests within a module |
-| `--timeout` | float (seconds) | 10.0 | Per-request timeout for HTTP, TLS, DNS, and API operations |
-| `--connect-timeout` | float (seconds) | 2.0 | TCP connect timeout for port scanning |
+| `-j`, `--jobs` | int ≥ 1 | 1 | Scan up to N targets concurrently (fleet runs). N>1 runs each scan quiet and prints a per-target line as it finishes |
+| `--threads` | int ≥ 1 | 10 | Max concurrent threads per module |
+| `--rate-limit` | float ≥ 0 (seconds) | 0.1 | Minimum delay between requests within a module; zero disables pacing |
+| `--timeout` | float > 0 (seconds) | 10.0 | Per-request timeout for HTTP, TLS, DNS, and API operations |
+| `--connect-timeout` | float > 0 (seconds) | 2.0 | TCP connect timeout for port scanning |
 
 #### Testing & Debugging
 | Option | Type | Default | Description |
@@ -366,15 +366,15 @@ See [Active Testing](#active-testing-1) for a full explanation of how this works
 | `--metrics-history` | flag | off | In the metrics file, emit the findings trend as timestamped samples per stored scan (backfill) |
 | `--metrics-push` | URL | none | Push current metrics to a Prometheus Pushgateway base URL (PUT under `--metrics-job`) |
 | `--metrics-job` | name | `inquisition` | Pushgateway job name for `--metrics-push` |
-| `--metrics-serve` | int (port) | 0 (off) | Serve the latest metrics at `http://HOST:PORT/metrics` for Prometheus to scrape, plus `/healthz` (liveness) and `/readyz` (readiness) |
+| `--metrics-serve` | int (port) | 0 (off) | Serve the latest metrics at `http://HOST:PORT/metrics` on port `1..65535`, plus `/healthz` and `/readyz` |
 | `--audit-log` | path | none | Append one JSON line per scan cycle (targets, counts, durations, fail status) to this file |
 | `--audit-max-bytes` | int | 0 (off) | Rotate the audit log when it would exceed N bytes |
 | `--audit-max-age-days` | float | 0 (off) | Rotate the audit log when its oldest record is older than DAYS |
-| `--audit-backups` | int | 3 | Number of rotated audit-log backups to keep |
+| `--audit-backups` | int ≥ 0 | 3 | Number of rotated audit-log backups to keep; zero disables rotation |
 | `--fleet-config` | path | none | JSON or YAML file defining targets and per-target scan overrides (`${VAR}` filled from env) |
 | `--watch` | int (seconds) | 0 (off) | Run continuously, re-scanning all targets every N seconds until interrupted (SIGHUP reloads a fleet config) |
 | `--watch-jitter` | float (seconds) | 0 | In watch mode, stagger each target by a random 0–N second delay |
-| `--history-size` | int | 10 | Number of past scans retained per target for trend tracking |
+| `--history-size` | int ≥ 1 | 10 | Number of past scans retained per target for trend tracking |
 | `--history-max-age-days` | int | 0 (off) | Also drop history entries older than this many days (count cap still applies) |
 
 Each scan is diffed against the previous run for the same target (state is kept under `reports/.state/`). Inquisition also keeps a rolling window of the last `--history-size` scans per target and reports the **trend** (improving / worsening / stable, by a severity-weighted score, plus the change in total and critical+high counts) at the end of each run. Continuous-assurance extras:

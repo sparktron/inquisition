@@ -346,6 +346,12 @@ GraphQL, NVD, CISA, and EPSS.
 
 #### Fleet and CLI numeric validation is incomplete
 
+**Status: fixed 2026-07-12.** Fleet and CLI paths now share typed finite-number,
+port, and range validators. Fleet failures are consistently surfaced as
+`FleetConfigError`; CLI failures are argparse errors. Jobs, threads, and history
+size require at least one, ports require `1..65535`, and every zero-as-disabled
+field has explicit documentation and coverage.
+
 Fleet values such as `timeout: "oops"` and `max_threads: null` escape as raw
 `ValueError`/`TypeError`, while the CLI catches only `FleetConfigError`.
 `ports: [0, 70000]` is accepted, and CLI/fleet options such as history size,
@@ -408,7 +414,7 @@ or prompt-exit test.
 2. [x] Enforce same-origin sitemap fetching and redirect credential stripping.
 3. [x] Harden Nuclei/GraphQL/threat-intel parsers so one malformed record cannot
    abort a scan or erase a module's valid findings.
-4. [ ] Centralize CLI/fleet validation and reject invalid ranges consistently.
+4. [x] Centralize CLI/fleet validation and reject invalid ranges consistently.
 5. [ ] Replace the DNS timeout shim and distinguish absence from lookup failure.
 6. [ ] Batch/throttle threat-intel work and preserve distinct active-scan
    evidence.
