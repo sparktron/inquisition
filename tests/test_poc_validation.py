@@ -95,6 +95,7 @@ class ClassifyTests(unittest.TestCase):
             "openssl ocsp -respin response.der -respout copied.der",
             "openssl crl -in crl.pem -out copied.pem",
             "openssl x509 -in cert.pem -CAcreateserial",
+            "openssl x509 -in cert.pem -CAserial serial.txt",
             "openssl x509 -in cert.pem -writerand random.state",
         )
         for command in commands:
@@ -200,6 +201,14 @@ class ClassifyTests(unittest.TestCase):
         self.assertTrue(
             poc_validation.classify_command("curl -s https://example.com/.env")[0]
         )
+
+    def test_curl_requires_explicit_http_url(self) -> None:
+        commands = ("curl -s", "curl -s example.com", "curl -s --version")
+        for command in commands:
+            with self.subTest(command=command):
+                safe, reason = poc_validation.classify_command(command)
+                self.assertFalse(safe)
+                self.assertIn("no explicit http(s) URL", reason)
 
 
 class ValidateFindingTests(unittest.TestCase):

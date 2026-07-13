@@ -58,7 +58,7 @@ _SAFE_OPENSSL_SUBCOMMANDS: frozenset[str] = frozenset(
 _OPENSSL_OUTPUT_FLAGS: frozenset[str] = frozenset(
     {
         "-out", "-keyout", "-writerand", "-sess_out", "-keylogfile",
-        "-msgfile", "-reqout", "-respout", "-CAcreateserial",
+        "-msgfile", "-reqout", "-respout", "-CAcreateserial", "-CAserial",
     }
 )
 
@@ -217,6 +217,7 @@ def classify_command(command: str) -> tuple[bool, str]:
 
 def _classify_curl(tokens: list[str]) -> tuple[bool, str]:
     i = 1
+    has_http_url = False
     while i < len(tokens):
         tok = tokens[i]
         # Split combined short flags' value form like --data=x.
@@ -245,7 +246,11 @@ def _classify_curl(tokens: list[str]) -> tuple[bool, str]:
         scheme_match = _URL_SCHEME_RE.match(tok)
         if scheme_match and scheme_match.group(1).lower() not in _CURL_SAFE_SCHEMES:
             return False, f"curl URL scheme '{scheme_match.group(1)}' is not http(s)"
+        if scheme_match:
+            has_http_url = True
         i += 1
+    if not has_http_url:
+        return False, "curl command has no explicit http(s) URL"
     return True, ""
 
 

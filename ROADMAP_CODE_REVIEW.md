@@ -270,8 +270,9 @@ before the full suite.
 
 **Resolution:** curl short-option clusters and attached values are parsed, with
 body/upload/config/output and persistent cookie/header/trace output rejected.
+Every executable curl command must also contain an explicit HTTP(S) URL.
 OpenSSL file, key-log, session, message, OCSP request/response, random-state,
-and CA serial output options are rejected across the allowed inspection
+and CA serial create/update options are rejected across the allowed inspection
 subcommands. Safe compact curl methods and read-only OpenSSL options have
 positive regression coverage; rejected commands are verified never to reach
 the subprocess runner.
