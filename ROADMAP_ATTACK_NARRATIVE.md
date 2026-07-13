@@ -239,7 +239,7 @@ report.
 
 All six themes (A–F) are now complete. Theme A (EPSS/exploit/exposure/reachability),
 Theme B (predicate DSL, externalized YAML KB, attack graph, per-finding ATT&CK),
-Theme C (Mermaid diagram, Navigator export, executive story, interactive report),
+Theme C (offline inline-SVG diagram, Navigator export, executive story, interactive report),
 Theme D (D1 cross-target correlation, D2 blast-radius/crown-jewels), Theme E
 (E1 PoC auto-validation, E2 evidence bundles incl. SARIF, E3 active vulns into the
 graph), and Theme F (F1 intel freshness/provenance, F2 provenance on attacker

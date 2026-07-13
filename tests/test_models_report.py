@@ -219,6 +219,23 @@ class AgeAndTrendRenderTests(unittest.TestCase):
         # empty, but the exposure metric is always rendered.
         self.assertIn("/100", html)
 
+    def test_html_attack_graph_is_inline_and_offline(self) -> None:
+        report = self._report()
+        report.findings = [Finding(
+            title="[active] Remote code execution",
+            category=FindingCategory.VULNERABILITY,
+            severity=Severity.CRITICAL,
+            evidence="confirmed",
+            metadata={"active_scan": True},
+        )]
+
+        html = render_html(report)
+
+        self.assertIn('aria-label="attack graph of reachable objectives"', html)
+        self.assertIn("confirmed RCE", html)
+        self.assertNotIn("cdn.jsdelivr.net", html)
+        self.assertNotIn('class="mermaid"', html)
+
     def test_new_finding_reads_as_new(self) -> None:
         report = self._report()
         report.findings[0].age_scans = 1

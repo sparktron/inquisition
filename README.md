@@ -31,7 +31,7 @@ The things that make Inquisition more than a checklist:
 
 | | |
 |---|---|
-| 🧠 **Dynamic attack graph** | Findings become edges between attacker *states* — one traversal reveals every reachable objective (RCE, data access, cloud takeover, lateral movement) and the shortest path to each, ranked by feasibility-discounted value and drawn as a Mermaid diagram. |
+| 🧠 **Dynamic attack graph** | Findings become edges between attacker *states* — one traversal reveals every reachable objective (RCE, data access, cloud takeover, lateral movement) and the shortest path to each, ranked by feasibility-discounted value and drawn as an offline inline SVG. |
 | 📖 **Executive attack story** | The single most dangerous path, narrated end-to-end in plain English. Readable by an exec *and* an engineer. |
 | 🎯 **Exploitability-first CVE triage** | Ranks by CISA KEV → public exploit → EPSS probability → CVSS, so *"being exploited right now"* beats *"scary number."* |
 | 🧪 **Safe PoC auto-validation** | Runs only classified read-only proofs (`curl -sI`, `dig`, `openssl s_client`) to upgrade a finding from *modeled* to *confirmed* — captured HTTP status + output attached as evidence. Mutating and file-writing options are rejected. |
@@ -67,7 +67,7 @@ The things that make Inquisition more than a checklist:
 
 ### 🧠 Attack-narrative intelligence
 *Turns a flat list of findings into a connected, prioritized, evidence-backed picture of how an attacker actually compromises the target.*
-- **Dynamic attack graph** — models attacker *states* (external → on-path → credentials → code-execution → data-access → cloud-account → …) with findings as the edges between them; a traversal from an external position reveals every reachable objective and the shortest path to each, ranked by **feasibility-discounted value** and rendered as a Mermaid diagram
+- **Dynamic attack graph** — models attacker *states* (external → on-path → credentials → code-execution → data-access → cloud-account → …) with findings as the edges between them; a traversal from an external position reveals every reachable objective and the shortest path to each, ranked by **feasibility-discounted value** and rendered as an embedded SVG
 - **Executive attack story** — a plain-English narrative of the single most dangerous reachable path, end to end (optional LLM-assisted phrasing, deterministic template fallback so the tool stays offline-capable). In a fleet run it also notes when a host's compromise pivots to a higher-value sibling
 - **Exposure index (0–100)** — a measure of *how much door is open* (reachable unauthenticated services, admin panels, secret files, weak transport, missing controls), distinct from the severity-weighted risk score
 - **Reachability modeling** — every finding is tagged with the attacker preconditions it implies (network position, auth required, victim interaction) that weight the graph
@@ -94,7 +94,7 @@ The things that make Inquisition more than a checklist:
 - **Risk scoring & grading** — Weighted numeric score (0–∞) and security grade (A+ to F) derived from all findings
 - **Priority matrix** — Ranked table of CRITICAL/HIGH/MEDIUM findings sorted by severity (or exploitability in `--attacker-pov` mode)
 - **Finding deduplication** — Overlapping probes automatically collapsed to eliminate noise
-- **Text, Markdown, JSON, SARIF, and HTML output** — HTML reports are single-file with collapsible attack scenario / PoC panels and inline SVG chain diagrams; attack-graph rendering optionally loads Mermaid externally
+- **Text, Markdown, JSON, SARIF, and HTML output** — HTML reports are self-contained single files with collapsible attack scenario / PoC panels and inline SVG attack-chain and attack-graph diagrams
 
 </details>
 
@@ -152,7 +152,7 @@ python inquisition.py example.com --depth deep -o report.html   # the works → 
 python inquisition.py example.com --attacker-pov -o report.html # same, sorted by "what gets popped first"
 ```
 
-Open `report.html` in any browser — it's a single-file report with no server or build step. The report content, filters, finding cards, and attack-chain SVGs are embedded; the attack-graph diagram optionally loads Mermaid from jsDelivr, so that diagram needs network access unless Mermaid is vendored or the report is changed to embed the rendered graph.
+Open `report.html` in any browser — it is a self-contained report with no server, build step, or external runtime asset. The content, filters, finding cards, and attack-chain and attack-graph SVGs are all embedded.
 
 ---
 
@@ -505,7 +505,7 @@ A report isn't a data dump — it's organized to answer four questions in order:
 | **Live Validation Evidence** | When `--validate` is used, the captured output of the read-only verification probe that *confirmed* a finding — attached as a green panel in HTML, a `poc_validation` bundle in JSON, and `result.properties` in SARIF |
 | **Attack Chain Analysis** | Multi-step kill chains inferred from the combination of findings present (data-driven rules in `modules/data/attack_chains.yaml`, matched by a predicate DSL), with inline SVG flowcharts (HTML) and MITRE technique tags |
 | **Executive Attack Story** | A plain-English narrative of the single most dangerous reachable attack path (top objective, the steps to reach it, and the concrete scenario behind the first weakness) — a red callout in HTML, a section in text/markdown |
-| **Attack Graph — Reachable Objectives** | Emergent attacker-state graph: each finding is an edge between attacker states, and a traversal from an external position reveals every objective an attacker can reach (RCE, data access, cloud takeover, lateral movement, …), ranked by **feasibility-discounted value** (a remote/unauth route outranks one needing an on-path position) with the shortest path to each — rendered as a Mermaid diagram in HTML. With `--active`, confirmed Nuclei/ZAP vulns enter the graph as **confirmed edges** (thick, ✓-flagged) that outrank merely-modeled paths |
+| **Attack Graph — Reachable Objectives** | Emergent attacker-state graph: each finding is an edge between attacker states, and a traversal from an external position reveals every objective an attacker can reach (RCE, data access, cloud takeover, lateral movement, …), ranked by **feasibility-discounted value** (a remote/unauth route outranks one needing an on-path position) with the shortest path to each — rendered as an offline inline SVG in HTML. With `--active`, confirmed Nuclei/ZAP vulns enter the graph as **confirmed edges** (thick, ✓-flagged) that outrank merely-modeled paths |
 | **MITRE ATT&CK Coverage** | Every finding mapped to ATT&CK techniques (explicit or category-level fallback), grouped by tactic in kill-chain order; exportable as a Navigator layer with `--attack-navigator` |
 | **Deep Issue Analysis** | Multi-paragraph explanation of what each issue is, why it is dangerous, and relevant CVEs *(text/HTML only; omitted with `--brief`)* |
 | **Remediation Guide** | Step-by-step fix instructions with configuration examples for common platforms and verification commands *(text/HTML only; omitted with `--brief`)* |
@@ -543,7 +543,7 @@ Findings are annotated with the attacker preconditions they imply — network po
 
 ### HTML Report
 
-The HTML report is a single file (the only optional external dependency is the Mermaid script used to draw the attack-graph diagram). It includes a **client-side filter bar** for the findings list (free-text search plus severity / category / ATT&CK-tactic / confidence filters). Each finding is rendered as a severity-coloured card with expandable panels:
+The HTML report is a self-contained single file; its attack graph is a deterministic inline SVG and does not load a renderer from the network. It includes a **client-side filter bar** for the findings list (free-text search plus severity / category / ATT&CK-tactic / confidence filters). Each finding is rendered as a severity-coloured card with expandable panels:
 
 - **Issue Analysis** — multi-paragraph deep-dive into what the issue is and why it matters
 - **How an Attacker Exploits This** — step-by-step realistic attack scenario (purple panel)

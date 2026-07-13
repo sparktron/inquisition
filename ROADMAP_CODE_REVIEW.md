@@ -403,6 +403,8 @@ or prompt-exit test.
 - The default HTML file is mostly portable but loads Mermaid from jsDelivr for
   attack graphs. Vendor/embed the renderer, pre-render the graph, or provide an
   offline fallback; documentation now states the dependency explicitly.
+  **Fixed 2026-07-12:** the report renders the reachable-state graph as a
+  deterministic inline SVG and no longer loads any external runtime asset.
 
 ### P2 — Make quality and performance gates honest
 

@@ -179,6 +179,74 @@ def _attack_chain_svg(chain_steps: list[str]) -> str:
     return "\n".join(svg_lines)
 
 
+def _attack_graph_svg(graph: attack_graph.AttackGraph) -> str:
+    """Render the reachable attack-state graph as a dependency-free inline SVG."""
+    depths = {attack_graph.START: 0}
+    for _ in range(len(graph.reachable)):
+        changed = False
+        for edge in graph.edges:
+            if edge.frm not in depths or edge.to in depths:
+                continue
+            depths[edge.to] = depths[edge.frm] + 1
+            changed = True
+        if not changed:
+            break
+    for state in graph.reachable:
+        depths.setdefault(state, 0)
+
+    columns: dict[int, list[str]] = {}
+    for state in sorted(graph.reachable, key=lambda item: attack_graph.STATE_LABEL.get(item, item)):
+        columns.setdefault(depths[state], []).append(state)
+    max_depth = max(columns, default=0)
+    max_rows = max((len(states) for states in columns.values()), default=1)
+    width = max(720, 190 + max_depth * 220)
+    height = max(170, 90 + max_rows * 100)
+    positions: dict[str, tuple[float, float]] = {}
+    for depth, states in columns.items():
+        column_height = (len(states) - 1) * 90
+        start_y = height / 2 - column_height / 2
+        for index, state in enumerate(states):
+            positions[state] = (95 + depth * 220, start_y + index * 90)
+
+    svg = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="{height}" '
+        f'viewBox="0 0 {width} {height}" role="img" aria-label="attack graph of reachable objectives">',
+        '<defs><marker id="graph-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" '
+        'orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#94a3b8"/></marker></defs>',
+    ]
+    for edge in graph.edges:
+        if edge.frm not in positions or edge.to not in positions:
+            continue
+        x1, y1 = positions[edge.frm]
+        x2, y2 = positions[edge.to]
+        color = "#dc2626" if edge.confirmed else "#94a3b8"
+        stroke_width = 3 if edge.confirmed else 1.5
+        label = edge.label[:30] + ("…" if len(edge.label) > 30 else "")
+        svg.append(
+            f'<g><title>{_e(edge.label)}</title>'
+            f'<line x1="{x1 + 76:.1f}" y1="{y1:.1f}" x2="{x2 - 82:.1f}" y2="{y2:.1f}" '
+            f'stroke="{color}" stroke-width="{stroke_width}" marker-end="url(#graph-arrow)"/>'
+            f'<text x="{(x1 + x2) / 2:.1f}" y="{(y1 + y2) / 2 - 7:.1f}" text-anchor="middle" '
+            f'font-family="system-ui,sans-serif" font-size="9" fill="#64748b">{_e(label)}</text></g>'
+        )
+    goal_states = set(attack_graph.GOAL_VALUE)
+    for state, (x, y) in positions.items():
+        objective = state in goal_states
+        fill = "#fef2f2" if objective else "#eff6ff" if state == attack_graph.START else "#f8fafc"
+        stroke = "#dc2626" if objective else "#2563eb" if state == attack_graph.START else "#64748b"
+        label = attack_graph.STATE_LABEL.get(state, state)
+        svg.append(
+            f'<g><title>{_e(label)}</title>'
+            f'<rect x="{x - 78:.1f}" y="{y - 23:.1f}" width="156" height="46" rx="7" '
+            f'fill="{fill}" stroke="{stroke}" stroke-width="{2 if objective else 1.5}"/>'
+            f'<text x="{x:.1f}" y="{y + 4:.1f}" text-anchor="middle" '
+            f'font-family="system-ui,sans-serif" font-size="11" font-weight="600" '
+            f'fill="{stroke}">{_e(label)}</text></g>'
+        )
+    svg.append("</svg>")
+    return "\n".join(svg)
+
+
 def render_html(
     report: ScanReport,
     *,
@@ -656,9 +724,8 @@ def render_html(
             f'</section>'
         )
 
-    # ---- attack graph (reachable objectives + Mermaid diagram) ----
+    # ---- attack graph (reachable objectives + offline inline diagram) ----
     attack_graph_section = ""
-    mermaid_script = ""
     graph = attack_graph.build_attack_graph(report)
     if not graph.empty:
         _confirmed_badge = (
@@ -677,7 +744,6 @@ def render_html(
             + "</td></tr>"
             for g in graph.goals
         )
-        mermaid_def = attack_graph.to_mermaid(graph)
         attack_graph_section = (
             f'<section id="sec-attack-graph" style="margin-bottom:40px">'
             f'<h2 style="font-size:1.1rem;font-weight:700;color:#b91c1c;border-bottom:2px solid #fecaca;'
@@ -692,14 +758,9 @@ def render_html(
             f'<th style="padding:6px 10px;text-align:left;color:#64748b;font-weight:600">Objective</th>'
             f'<th style="padding:6px 10px;text-align:left;color:#64748b;font-weight:600">Shortest path</th>'
             f'</tr></thead><tbody>{goal_rows}</tbody></table>'
-            f'<pre class="mermaid" style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:16px;overflow:auto">{_e(mermaid_def)}</pre>'
+            f'<div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;'
+            f'padding:12px;overflow:auto">{_attack_graph_svg(graph)}</div>'
             f'</section>'
-        )
-        mermaid_script = (
-            '<script type="module">'
-            'import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";'
-            'mermaid.initialize({ startOnLoad: true, securityLevel: "strict" });'
-            '</script>'
         )
 
     # ---- persistent section nav (layered single-file report) ----
@@ -964,7 +1025,6 @@ def render_html(
 <footer style="background:#0f172a;color:#475569;text-align:center;padding:16px;font-size:.8rem;margin-top:40px">
   Generated by Inquisition &nbsp;·&nbsp; {_e(report.target)} &nbsp;·&nbsp; {report.started_at:%Y-%m-%d %H:%M UTC}
 </footer>
-{mermaid_script}
 {findings_filter_js}
 {drilldown_js}
 </body>
