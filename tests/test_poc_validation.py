@@ -84,6 +84,45 @@ class ClassifyTests(unittest.TestCase):
     def test_openssl_mutating_subcommand_rejected(self) -> None:
         self.assertFalse(poc_validation.classify_command("openssl genrsa 2048")[0])
 
+    def test_openssl_output_flags_rejected(self) -> None:
+        commands = (
+            "openssl x509 -in cert.pem -out copied.pem",
+            "openssl x509 -in cert.pem -out=copied.pem",
+            "openssl s_client -connect example.com:443 -sess_out session.pem",
+            "openssl s_client -connect example.com:443 -keylogfile keys.log",
+            "openssl s_client -connect example.com:443 -msgfile messages.log",
+            "openssl ocsp -issuer issuer.pem -cert cert.pem -reqout request.der",
+            "openssl ocsp -respin response.der -respout copied.der",
+            "openssl crl -in crl.pem -out copied.pem",
+            "openssl x509 -in cert.pem -CAcreateserial",
+            "openssl x509 -in cert.pem -writerand random.state",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                safe, reason = poc_validation.classify_command(command)
+                self.assertFalse(safe)
+                self.assertIn("writes output", reason)
+
+    def test_safe_openssl_read_options_remain_allowed(self) -> None:
+        commands = (
+            "openssl s_client -connect example.com:443 -servername example.com",
+            "openssl x509 -in cert.pem -noout -text",
+            "openssl verify -CAfile roots.pem cert.pem",
+            "openssl ciphers -v",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                safe, reason = poc_validation.classify_command(command)
+                self.assertTrue(safe, reason)
+
+    def test_rejected_openssl_output_never_runs(self) -> None:
+        f = _f("openssl x509 -in cert.pem -out copied.pem")
+        runner = _runner()
+        result = poc_validation.validate_finding(f, runner=runner)
+        assert result is not None
+        self.assertFalse(result.attempted)
+        self.assertEqual(runner.calls, [])  # type: ignore[attr-defined]
+
     def test_comment_rejected(self) -> None:
         self.assertFalse(poc_validation.classify_command("# just a note")[0])
 

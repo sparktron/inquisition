@@ -22,8 +22,8 @@ Inquisition is **read-only by design.** No exploit payloads, no auth bypasses, n
 
 <sub>📦 The original correctness/coverage ([ROADMAP.md](ROADMAP.md), phases 0–4) and attack-narrative intelligence ([ROADMAP_ATTACK_NARRATIVE.md](ROADMAP_ATTACK_NARRATIVE.md), themes A–F) roadmaps are complete. The current repository-wide review and remediation plan lives in [ROADMAP_CODE_REVIEW.md](ROADMAP_CODE_REVIEW.md#repository-wide-review-addendum--2026-07-12). External recon is useful, but it is not a full production "all clear" on its own: active payload testing needs the external Nuclei/ZAP engines, and authenticated/internal assessment is out of scope.</sub>
 
-> [!WARNING]
-> The compact curl-flag bypass found in the 2026-07-12 review is fixed. Output-writing OpenSSL options are still being remediated, so keep `--validate` disabled until the remaining P0 work in the [code-review roadmap](ROADMAP_CODE_REVIEW.md#p0--restore-the-poc-validators-fail-closed-boundary) is complete. Normal scans without `--validate` are not affected.
+> [!NOTE]
+> The `--validate` fail-closed boundary was hardened after the 2026-07-12 review. Compact/clustered curl body, upload, config, and output options are rejected, as are OpenSSL options that write files or persistent key/session material. The regression matrix is recorded in the [code-review roadmap](ROADMAP_CODE_REVIEW.md#p0--restore-the-poc-validators-fail-closed-boundary).
 
 ## ✨ Highlights
 
@@ -34,7 +34,7 @@ The things that make Inquisition more than a checklist:
 | 🧠 **Dynamic attack graph** | Findings become edges between attacker *states* — one traversal reveals every reachable objective (RCE, data access, cloud takeover, lateral movement) and the shortest path to each, ranked by feasibility-discounted value and drawn as a Mermaid diagram. |
 | 📖 **Executive attack story** | The single most dangerous path, narrated end-to-end in plain English. Readable by an exec *and* an engineer. |
 | 🎯 **Exploitability-first CVE triage** | Ranks by CISA KEV → public exploit → EPSS probability → CVSS, so *"being exploited right now"* beats *"scary number."* |
-| 🧪 **PoC auto-validation (temporarily restricted)** | Intended to run read-only proofs and attach live evidence, but the current compact-flag classifier bypass means `--validate` should remain off until the documented P0 fix lands. |
+| 🧪 **Safe PoC auto-validation** | Runs only classified read-only proofs (`curl -sI`, `dig`, `openssl s_client`) to upgrade a finding from *modeled* to *confirmed* — captured HTTP status + output attached as evidence. Mutating and file-writing options are rejected. |
 | 🏷️ **Provenance on every claim** | *Modeled* (knowledge base) vs *confirmed* (live validation / active-scan hit), clearly labelled. A hypothesis is never dressed up as proof. |
 | 🛰️ **Fleet attack paths** | Correlates many hosts into org-level pivots (shared IP, shared cert, subdomain takeover) and ranks fixes by **blast radius** and **crown-jewel** value. |
 | 🚦 **CI & continuous monitoring** | SARIF, `--fail-on` gates, watch mode, Prometheus + Grafana, Slack/webhook alerts, JSONL audit log. |
@@ -70,7 +70,7 @@ The things that make Inquisition more than a checklist:
 - **Exposure index (0–100)** — a measure of *how much door is open* (reachable unauthenticated services, admin panels, secret files, weak transport, missing controls), distinct from the severity-weighted risk score
 - **Reachability modeling** — every finding is tagged with the attacker preconditions it implies (network position, auth required, victim interaction) that weight the graph
 - **MITRE ATT&CK Navigator export** — `--attack-navigator` emits a `layer.json` overlaying observed techniques on the standard ATT&CK matrix
-- **PoC auto-validation** — `--validate` is designed to run read-only verification probes and attach their HTTP status/output as evidence in JSON/HTML/SARIF. It is temporarily restricted by the compact-flag parsing issue in the current review; leave it disabled until the P0 fix lands.
+- **Safe PoC auto-validation** — `--validate` runs classified read-only verification probes and attaches their HTTP status/output as evidence in JSON/HTML/SARIF. Compact/clustered curl body, upload, config, and output options and OpenSSL file-writing options are rejected.
 - **Provenance on every claim** — each attacker claim is labelled by where it came from — *modeled* (knowledge base) vs *confirmed* (live PoC validation or active-scan payload match) — so a hypothesis is never mistaken for proof
 - **Threat-intel freshness** — reports show when each external feed is current as of (CISA KEV catalog version/date, FIRST.org EPSS, NVD, local Nuclei templates) and flag stale intel, since stale data in a security tool is a silent false-negative
 
@@ -344,7 +344,7 @@ inquisition --targets-file hosts.txt --format sarif \
 |---|---|---|---|
 | `--active` | flag | off | Enable payload-based active scanning after the explicit active-scan authorization prompt |
 | `--active-engine` | `nuclei` \| `zap` | `nuclei` | Active scanner engine to run when `--active` is set |
-| `--validate` | flag | off | Intended to run read-only verification probes and capture live evidence. **Keep disabled pending the 2026-07-12 P0 classifier fix**; compact curl/OpenSSL options can bypass the current read-only classification. Requires authorization; prompts unless `--yes` |
+| `--validate` | flag | off | Run classified read-only verification probes and capture live evidence. Mutating curl forms and curl/OpenSSL file-writing options are rejected. Requires authorization; prompts unless `--yes` |
 | `--auth-header` | string | empty | Header injected into HTTP modules and active engines, e.g. `Authorization: Bearer <token>` |
 | `--auth-cookie` | string | empty | Cookie header injected into HTTP modules and active engines, e.g. `session=<value>` |
 
@@ -1092,7 +1092,7 @@ By default, Inquisition is intentionally **read-only active reconnaissance:**
 
 Optional `--active` mode is different: it shells out to Nuclei or OWASP ZAP and sends payload-based vulnerability probes after a second, explicit active-scan authorization prompt. DOS, brute-force, and fuzzing template categories are always excluded. Use it only where you have written permission for active testing. See [Active Testing](#active-testing-1) for the full explanation.
 
-The optional `--validate` mode is temporarily not considered fail-closed because of the compact-flag parsing issue documented above. Keep it disabled until the P0 fix and regression tests land.
+The optional `--validate` mode uses a small command/subcommand allowlist, rejects shell metacharacters, parses compact curl option clusters, limits curl to HTTP(S) and safe methods, and rejects curl/OpenSSL file-writing options. Keep PoC commands reviewable and extend the table-driven rejection tests whenever the allowlist changes.
 
 ### Responsible Disclosure
 

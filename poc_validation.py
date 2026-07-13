@@ -51,6 +51,17 @@ _SAFE_OPENSSL_SUBCOMMANDS: frozenset[str] = frozenset(
     {"s_client", "x509", "ocsp", "ciphers", "crl", "verify"}
 )
 
+# These options write files or persistent keying/session material. Some are
+# subcommand-specific, but rejecting them globally keeps every allowed OpenSSL
+# invocation inspection-only and prevents a newly supported option combination
+# from silently crossing the filesystem-write boundary.
+_OPENSSL_OUTPUT_FLAGS: frozenset[str] = frozenset(
+    {
+        "-out", "-keyout", "-writerand", "-sess_out", "-keylogfile",
+        "-msgfile", "-reqout", "-respout", "-CAcreateserial",
+    }
+)
+
 # Shell metacharacters that imply chaining, redirection, or substitution. Their
 # presence means the command is more than a single read-only probe — reject it
 # even though we always execute with ``shell=False``.
@@ -272,6 +283,10 @@ def _classify_openssl(tokens: list[str]) -> tuple[bool, str]:
     sub = tokens[1]
     if sub not in _SAFE_OPENSSL_SUBCOMMANDS:
         return False, f"openssl subcommand '{sub}' is not read-only"
+    for token in tokens[2:]:
+        flag = token.split("=", 1)[0]
+        if flag in _OPENSSL_OUTPUT_FLAGS:
+            return False, f"openssl flag '{flag}' writes output to a file"
     return True, ""
 
 

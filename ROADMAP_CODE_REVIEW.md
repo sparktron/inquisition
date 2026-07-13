@@ -245,8 +245,8 @@ Passing tests do not cover the boundary cases below.
 
 #### Compact curl flags and OpenSSL output options can execute writes
 
-**Status:** curl compact/body/upload/config/output forms fixed; OpenSSL output
-options remain open.
+**Status: fixed 2026-07-12.** Curl compact/body/upload/config/output forms and
+OpenSSL output-writing forms are rejected before execution.
 
 `poc_validation._classify_curl` recognizes separated flags (`-X POST`, `-d
 value`, `-o file`) and GNU `--flag=value` forms, but not compact short-option
@@ -267,6 +267,14 @@ schema over prefix matching. Keep `shell=False` and the metacharacter block.
 form, safe lookalikes, missing URLs, and OpenSSL `-out`/file-writing options;
 assert rejected commands never reach the fake runner. Run the focused PoC tests
 before the full suite.
+
+**Resolution:** curl short-option clusters and attached values are parsed, with
+body/upload/config/output and persistent cookie/header/trace output rejected.
+OpenSSL file, key-log, session, message, OCSP request/response, random-state,
+and CA serial output options are rejected across the allowed inspection
+subcommands. Safe compact curl methods and read-only OpenSSL options have
+positive regression coverage; rejected commands are verified never to reach
+the subprocess runner.
 
 ### P1 — Enforce network and credential boundaries
 
@@ -378,8 +386,7 @@ or prompt-exit test.
 
 ### Recommended execution order
 
-1. [ ] Close the remaining OpenSSL classifier bypass and keep `--validate` guarded until
-   the regression matrix is green.
+1. [x] Close the PoC classifier bypasses and verify the regression matrix.
 2. [ ] Enforce same-origin sitemap fetching and redirect credential stripping.
 3. [ ] Harden Nuclei/GraphQL/threat-intel parsers so one malformed record cannot
    abort a scan or erase a module's valid findings.
