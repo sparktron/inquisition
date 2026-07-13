@@ -218,3 +218,171 @@ test cleanup now calls `server.shutdown()` then `server.server_close()`.
 4. [x] Re-run the full validation path: `python -m unittest discover -s tests
    -v`, `python -m mypy .`, `python -m compileall -q .`, then remove generated
    `__pycache__` directories.
+
+---
+
+## Repository-wide review addendum — 2026-07-12
+
+Scope: all Python source, tests, package metadata, container/deployment files,
+examples, and operator documentation at `5c560b7`. This is a review and plan;
+runtime behavior was not changed. Findings below were reproduced locally where
+possible rather than inferred from style alone.
+
+### Current validation baseline
+
+- `python -m pytest -q`: **423 passed, 60 subtests passed**.
+- `python -m mypy .`: **clean across 73 source files**.
+- `python -m compileall -q .`: **clean**.
+- `python -m pip wheel . --no-deps`: **wheel built**, and inspection confirmed
+  the top-level modules, `modules` package/data, and `report` package are present.
+- `ruff check .`: **23 findings** (unused imports/variables, import ordering,
+  redundant f-strings, and ambiguous test variable names). These are not runtime
+  failures, but the documented lint gate is not currently green.
+
+Passing tests do not cover the boundary cases below.
+
+### P0 — Restore the PoC validator's fail-closed boundary
+
+#### Compact curl flags and OpenSSL output options can execute writes
+
+`poc_validation._classify_curl` recognizes separated flags (`-X POST`, `-d
+value`, `-o file`) and GNU `--flag=value` forms, but not compact short-option
+forms. The following all currently return `(True, "")` from
+`classify_command`: `curl -XPOST ...`, `curl -dvalue ...`, `curl -Fname=value
+...`, `curl -Tfile ...`, `curl -Kconfig ...`, and `curl -ofile ...`. Those can
+send mutating requests, upload/read local files, or write output. The OpenSSL
+subcommand allowlist also accepts output-writing forms such as `openssl x509
+-in cert.pem -out /tmp/copied.pem`.
+
+**Fix plan:** parse curl short-option clusters and attached values explicitly,
+reject every body/upload/config/output option in both attached and separated
+forms, require at least one HTTP(S) URL, and reduce OpenSSL validation to
+operation/flag combinations proven not to write. Prefer a declarative option
+schema over prefix matching. Keep `shell=False` and the metacharacter block.
+
+**Regression checks:** add table-driven tests for every compact and separated
+form, safe lookalikes, missing URLs, and OpenSSL `-out`/file-writing options;
+assert rejected commands never reach the fake runner. Run the focused PoC tests
+before the full suite.
+
+### P1 — Enforce network and credential boundaries
+
+#### Crawler follows out-of-origin sitemap URLs
+
+`CrawlerModule` filters discovered page results to the target origin, but
+`_collect_from_sitemaps` fetches `Sitemap:` URLs from `robots.txt` and nested
+sitemap-index `<loc>` values before applying an origin check. A target can
+therefore make the scanner contact an unrelated or internal HTTP(S) host,
+contradicting the module's same-origin contract.
+
+**Fix plan:** normalize the configured target origin once; reject sitemap URLs
+whose scheme/hostname/effective port differ before enqueue or fetch; cap nested
+sitemap count/depth as well as discovered URL count. Add fixture tests proving
+external robots and nested-index URLs are never requested.
+
+#### Custom auth headers survive cross-origin redirects
+
+The shared `HttpClient` passes arbitrary configured auth headers to
+`requests.Session` with redirects enabled. Requests strips `Authorization` and
+`Cookie` on relevant redirects, but a custom credential header such as
+`X-API-Key` remains on a redirect to another host. This can disclose credentials
+to a target-controlled redirect destination. A single `Session` is also shared
+across concurrently running modules, although Requests does not promise
+thread-safe session mutation.
+
+**Fix plan:** implement bounded redirect handling in `HttpClient`, forwarding
+configured auth material only when the next hop has the same normalized origin;
+use per-thread sessions or serialize session access while retaining a shared,
+thread-safe response cache. Add two-local-server regression tests for same-origin
+retention and cross-origin stripping of every configured secret header.
+
+### P1 — Fail cleanly on untrusted parser/config input
+
+#### Malformed scanner/API output can abort work
+
+- `active_scan.parse_nuclei_output('{"info":"bad"}')` raises `AttributeError`;
+  `run_active_scan` does not contain parser exceptions, so malformed/truncated
+  tool output can abort the whole scan.
+- `AppChecksModule._graphql_introspection` raises `AttributeError` for the valid
+  JSON shape `{"data": null}` and assumes every schema type is a mapping with a
+  string `name`. The module wrapper catches the eventual exception but discards
+  all findings accumulated by that module.
+- NVD/CISA/EPSS parsing has similar nested-shape assumptions; bad upstream data
+  can turn enrichment into an error or incomplete report.
+
+**Fix plan:** validate mapping/list/scalar shapes at every external-data boundary,
+skip only malformed records, and return a concise parser error alongside valid
+results. Add malformed, partial, and mixed-validity fixtures for Nuclei, ZAP,
+GraphQL, NVD, CISA, and EPSS.
+
+#### Fleet and CLI numeric validation is incomplete
+
+Fleet values such as `timeout: "oops"` and `max_threads: null` escape as raw
+`ValueError`/`TypeError`, while the CLI catches only `FleetConfigError`.
+`ports: [0, 70000]` is accepted, and CLI/fleet options such as history size,
+jobs, audit limits, and ports do not share one range validator. Bad input can
+produce a traceback, silently disable behavior, or cause an entire module to
+fail after valid work was scheduled.
+
+**Fix plan:** centralize `ScanConfig` validation/coercion, convert all type/range
+failures to actionable `FleetConfigError`/argparse errors, validate ports in
+`1..65535`, and define explicit semantics for zero on jobs/history/audit options.
+Run the same validator for CLI and fleet-derived configs. Add boundary tests for
+every numeric field.
+
+### P1 — Make DNS results truthful and time-bounded
+
+`_safe_dns_resolve` times out `future.result`, but `socket.getaddrinfo` continues
+in a non-daemon executor thread after `shutdown(wait=False)`; repeated DNS
+timeouts can accumulate blocked threads and delay process exit. Separately, the
+DMARC lookup catches every exception and reports "Missing DMARC record", so a
+timeout or resolver outage becomes a medium-severity false positive.
+
+**Fix plan:** use dnspython's bounded resolver consistently for hostname/DNS
+queries (or another cancellable process boundary), distinguish NXDOMAIN/NoAnswer
+from timeout/NoNameservers, and emit an error/unknown result for transient
+failures. Add timeout and resolver-outage regression fixtures and a thread-count
+or prompt-exit test.
+
+### P2 — Streamline execution and preserve evidence
+
+- NVD correlation sleeps six seconds before the first request and enriches each
+  CPE's records separately. Track the last NVD request time so only subsequent
+  calls wait, collect all CVEs first, then batch EPSS/exploitability enrichment
+  once per scan. Preserve public API rate limits.
+- Active Nuclei results are deduplicated by display title, so distinct templates
+  or endpoints with the same name are silently reduced to the first match.
+  Deduplicate on template ID plus matched endpoint (or aggregate endpoints and
+  retain the worst severity/evidence).
+- The default HTML file is mostly portable but loads Mermaid from jsDelivr for
+  attack graphs. Vendor/embed the renderer, pre-render the graph, or provide an
+  offline fallback; documentation now states the dependency explicitly.
+
+### P2 — Make quality and performance gates honest
+
+1. Fix the 23 current Ruff findings with focused edits and add an explicit Ruff
+   configuration matching repository conventions.
+2. Add `ruff check .` and wheel installation/import smoke tests to CI; keep
+   pytest, strict mypy, and compileall as required gates.
+3. Immediate example/docs drift was corrected during this review: the
+   Prometheus risk-weight comment now matches critical=40, high=15, medium=5,
+   low=1; the README exposes the current safety/offline limitations; and the
+   main roadmap labels its testless opening assessment as historical. Keep
+   documentation reconciliation in the gate whenever behavior changes.
+4. Add security-boundary integration tests: redirect credential stripping,
+   same-origin crawling, malformed external payloads, and validator command
+   matrices. These are higher value than increasing happy-path test count.
+
+### Recommended execution order
+
+1. [ ] Close the PoC classifier bypasses and disable/guard `--validate` until
+   the regression matrix is green.
+2. [ ] Enforce same-origin sitemap fetching and redirect credential stripping.
+3. [ ] Harden Nuclei/GraphQL/threat-intel parsers so one malformed record cannot
+   abort a scan or erase a module's valid findings.
+4. [ ] Centralize CLI/fleet validation and reject invalid ranges consistently.
+5. [ ] Replace the DNS timeout shim and distinguish absence from lookup failure.
+6. [ ] Batch/throttle threat-intel work and preserve distinct active-scan
+   evidence.
+7. [ ] Clear Ruff, add package/security smoke gates, and finish documentation
+   reconciliation.

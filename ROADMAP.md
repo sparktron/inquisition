@@ -1,15 +1,21 @@
 # Inquisition — Code Review & Development Roadmap
 
-_Last updated: 2026-06-29_
+_Last updated: 2026-07-12_
 
 This document captures a full code review of the Inquisition scanner and a
 phased roadmap toward the goal: **continuously verify that your websites are as
 secure as they can be, with comprehensive analysis and reporting.**
 
-Current follow-up plan: the 2026-06-29 two-week code review addendum in
-[`ROADMAP_CODE_REVIEW.md`](ROADMAP_CODE_REVIEW.md) tracks the active cleanup
-queue for strict `mypy` test annotations, SLA threshold validation, and
-unit-suite resource cleanup.
+Current follow-up plan: the 2026-07-12 repository-wide review addendum in
+[`ROADMAP_CODE_REVIEW.md`](ROADMAP_CODE_REVIEW.md#repository-wide-review-addendum--2026-07-12)
+tracks the active safety, network-boundary, input-validation, parser-robustness,
+performance, lint, and documentation work. The 2026-06-29 cleanup queue is
+complete and retained there as history.
+
+> Historical note: sections 1–4 below describe the repository at the start of
+> the original roadmap. Statements such as "No tests at all" are no longer
+> current; the present baseline is 423 passing tests plus 60 subtests. Completion
+> records later in this file remain the source of truth for the original phases.
 
 It is organized as:
 
@@ -444,10 +450,11 @@ Goal: the tool's existing output is correct and its claims are true.
 ---
 
 ### Suggested immediate next step
-All planned phases and follow-ons are complete, now including the image-publish
-CI workflow, the Grafana dashboard, time-based audit rotation, and Prometheus
-alerting rules (`examples/inquisition.rules.yml`, wired into the example
-`prometheus.yml` and compose stack).
+The original phases and feature follow-ons are complete. The active work is now
+the 2026-07-12 repository-wide remediation plan in
+[`ROADMAP_CODE_REVIEW.md`](ROADMAP_CODE_REVIEW.md#repository-wide-review-addendum--2026-07-12),
+starting with the PoC-validator safety boundary and outbound same-origin/auth
+controls before parser robustness, configuration validation, and performance.
 
 Deprioritized: multi-arch (arm64/amd64) image builds and a signed/SBOM-attached
 image release — neither is load-bearing (CI runs amd64, no evidence of arm64

@@ -53,7 +53,7 @@ groups:
   - name: inquisition.posture
     rules:
       # Severity-weighted risk score is high. Tune the threshold to your fleet's
-      # baseline (risk_score = 10*critical + 5*high + 2*medium + 1*low-ish weights).
+      # baseline (risk_score = 40*critical + 15*high + 5*medium + 1*low).
       - alert: InquisitionRiskScoreHigh
         expr: inquisition_risk_score > 50
         for: 30m

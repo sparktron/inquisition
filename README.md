@@ -12,15 +12,18 @@
 
 Most scanners hand you a flat list of findings and wish you luck. Inquisition connects the dots.
 
-It sweeps your target across **DNS, network, TLS, HTTP, and the application layer**, then does the thing the others skip — it reasons about what those findings *mean together*. Issues become a **dynamic attack graph** of reachable objectives; the single most dangerous path gets **narrated in plain English**; CVEs are ranked by how likely they are to *actually* be exploited (CISA KEV + EPSS + public exploits, not just CVSS); read-only proofs are **safely auto-validated into hard evidence**; and every claim is stamped with where it came from, so a hypothesis is never mistaken for a fact. Run it across a whole fleet and it wires your hosts into **org-level attack paths** with blast-radius and crown-jewel ranking.
+It sweeps your target across **DNS, network, TLS, HTTP, and the application layer**, then does the thing the others skip — it reasons about what those findings *mean together*. Issues become a **dynamic attack graph** of reachable objectives; the single most dangerous path gets **narrated in plain English**; CVEs are ranked by how likely they are to *actually* be exploited (CISA KEV + EPSS + public exploits, not just CVSS); and every claim is stamped with where it came from, so a hypothesis is never mistaken for a fact. Run it across a whole fleet and it wires your hosts into **org-level attack paths** with blast-radius and crown-jewel ranking.
 
-You get a polished, self-contained report — **text, Markdown, JSON, SARIF, or interactive HTML** — that explains *why each issue matters*, *how it's exploited*, and *exactly how to fix it*, with platform-specific config snippets and copy-paste commands.
+You get a polished, single-file report — **text, Markdown, JSON, SARIF, or interactive HTML** — that explains *why each issue matters*, *how it's exploited*, and *exactly how to fix it*, with platform-specific config snippets and copy-paste commands.
 
 ### 🛡️ It knocks. It never kicks the door in.
 
 Inquisition is **read-only by design.** No exploit payloads, no auth bypasses, no injection, no login attempts, nothing that mutates the target — just non-mutating recon probes (DNS lookups, TCP connects, HTTP `GET`/`OPTIONS`, CORS preflights, GraphQL introspection). Real payload testing is **strictly opt-in** behind `--active` and a second authorization prompt. **Only scan what you're allowed to.**
 
-<sub>📦 Two roadmaps shipped and complete: correctness/coverage ([ROADMAP.md](ROADMAP.md), phases 0–4) and attack-narrative intelligence ([ROADMAP_ATTACK_NARRATIVE.md](ROADMAP_ATTACK_NARRATIVE.md), themes A–F). The current two-week review follow-up plan lives in [ROADMAP_CODE_REVIEW.md](ROADMAP_CODE_REVIEW.md). External recon is excellent — but it isn't a full production "all clear" on its own: active payload testing needs the external Nuclei/ZAP engines, and authenticated/internal assessment is out of scope.</sub>
+<sub>📦 The original correctness/coverage ([ROADMAP.md](ROADMAP.md), phases 0–4) and attack-narrative intelligence ([ROADMAP_ATTACK_NARRATIVE.md](ROADMAP_ATTACK_NARRATIVE.md), themes A–F) roadmaps are complete. The current repository-wide review and remediation plan lives in [ROADMAP_CODE_REVIEW.md](ROADMAP_CODE_REVIEW.md#repository-wide-review-addendum--2026-07-12). External recon is useful, but it is not a full production "all clear" on its own: active payload testing needs the external Nuclei/ZAP engines, and authenticated/internal assessment is out of scope.</sub>
+
+> [!WARNING]
+> The 2026-07-12 review found a safety bypass in the optional `--validate` PoC-command classifier: compact curl flags such as `-XPOST`, `-dvalue`, `-Kfile`, and `-ofile`, plus output-writing OpenSSL options, can currently be misclassified as read-only. Do not use `--validate` with unreviewed PoC commands until the P0 remediation in the [code-review roadmap](ROADMAP_CODE_REVIEW.md#p0--restore-the-poc-validators-fail-closed-boundary) is complete. Normal scans without `--validate` are not affected by this classifier bug.
 
 ## ✨ Highlights
 
@@ -31,7 +34,7 @@ The things that make Inquisition more than a checklist:
 | 🧠 **Dynamic attack graph** | Findings become edges between attacker *states* — one traversal reveals every reachable objective (RCE, data access, cloud takeover, lateral movement) and the shortest path to each, ranked by feasibility-discounted value and drawn as a Mermaid diagram. |
 | 📖 **Executive attack story** | The single most dangerous path, narrated end-to-end in plain English. Readable by an exec *and* an engineer. |
 | 🎯 **Exploitability-first CVE triage** | Ranks by CISA KEV → public exploit → EPSS probability → CVSS, so *"being exploited right now"* beats *"scary number."* |
-| 🧪 **Safe PoC auto-validation** | Runs only read-only proofs (`curl -sI`, `dig`, `openssl s_client`) to upgrade a finding from *modeled* to *confirmed* — captured HTTP status + output attached as evidence. Mutating PoCs never run. |
+| 🧪 **PoC auto-validation (temporarily restricted)** | Intended to run read-only proofs and attach live evidence, but the current compact-flag classifier bypass means `--validate` should remain off until the documented P0 fix lands. |
 | 🏷️ **Provenance on every claim** | *Modeled* (knowledge base) vs *confirmed* (live validation / active-scan hit), clearly labelled. A hypothesis is never dressed up as proof. |
 | 🛰️ **Fleet attack paths** | Correlates many hosts into org-level pivots (shared IP, shared cert, subdomain takeover) and ranks fixes by **blast radius** and **crown-jewel** value. |
 | 🚦 **CI & continuous monitoring** | SARIF, `--fail-on` gates, watch mode, Prometheus + Grafana, Slack/webhook alerts, JSONL audit log. |
@@ -56,7 +59,7 @@ The things that make Inquisition more than a checklist:
 ### 🚨 Vulnerability analysis
 - **CVE correlation** — CPE-based lookup against the National Vulnerability Database (NVD) with CVSS scoring, days-since-disclosure, and references
 - **Real-world exploitation triage** — every CVE is ranked by the industry-standard triad: **CISA KEV** (exploited now) > **public exploit available** (local Nuclei template) > **FIRST.org EPSS** probability (exploited soon) > CVSS (how bad)
-- **Subdomain takeover detection** — Identifies dangling CNAMEs pointing to unclaimed Heroku apps, GitHub Pages, S3 buckets, etc.
+- **Subdomain takeover candidates** — Identifies CNAMEs pointing at takeover-prone hosted services; the scanner does not confirm that the backing resource is unclaimed, so each candidate requires provider-specific verification.
 - **Misconfiguration detection** — 30+ pattern-matched rules for common security weaknesses (expired certs, legacy TLS, missing HSTS, exposed credentials, etc.)
 - **Attack chain detection** — Automatically derives multi-step kill chains from the combination of misconfigurations detected
 
@@ -67,7 +70,7 @@ The things that make Inquisition more than a checklist:
 - **Exposure index (0–100)** — a measure of *how much door is open* (reachable unauthenticated services, admin panels, secret files, weak transport, missing controls), distinct from the severity-weighted risk score
 - **Reachability modeling** — every finding is tagged with the attacker preconditions it implies (network position, auth required, victim interaction) that weight the graph
 - **MITRE ATT&CK Navigator export** — `--attack-navigator` emits a `layer.json` overlaying observed techniques on the standard ATT&CK matrix
-- **Safe PoC auto-validation** — `--validate` runs only the read-only verification probes attached to findings (`curl -sI`, `dig`, `openssl s_client`, status checks) to capture **live evidence** (including the HTTP status) and upgrade a finding from *modeled* to *confirmed*; the captured output is attached as an evidence bundle in JSON/HTML/SARIF (mutating PoCs are never run)
+- **PoC auto-validation** — `--validate` is designed to run read-only verification probes and attach their HTTP status/output as evidence in JSON/HTML/SARIF. It is temporarily restricted by the compact-flag parsing issue in the current review; leave it disabled until the P0 fix lands.
 - **Provenance on every claim** — each attacker claim is labelled by where it came from — *modeled* (knowledge base) vs *confirmed* (live PoC validation or active-scan payload match) — so a hypothesis is never mistaken for proof
 - **Threat-intel freshness** — reports show when each external feed is current as of (CISA KEV catalog version/date, FIRST.org EPSS, NVD, local Nuclei templates) and flag stale intel, since stale data in a security tool is a silent false-negative
 
@@ -89,7 +92,7 @@ The things that make Inquisition more than a checklist:
 - **Risk scoring & grading** — Weighted numeric score (0–∞) and security grade (A+ to F) derived from all findings
 - **Priority matrix** — Ranked table of CRITICAL/HIGH/MEDIUM findings sorted by severity (or exploitability in `--attacker-pov` mode)
 - **Finding deduplication** — Overlapping probes automatically collapsed to eliminate noise
-- **Text, Markdown, JSON, SARIF, and HTML output** — HTML reports are self-contained with collapsible attack scenario / PoC panels and inline SVG chain diagrams
+- **Text, Markdown, JSON, SARIF, and HTML output** — HTML reports are single-file with collapsible attack scenario / PoC panels and inline SVG chain diagrams; attack-graph rendering optionally loads Mermaid externally
 
 </details>
 
@@ -147,7 +150,7 @@ python inquisition.py example.com --depth deep -o report.html   # the works → 
 python inquisition.py example.com --attacker-pov -o report.html # same, sorted by "what gets popped first"
 ```
 
-Open `report.html` in any browser — it's a single self-contained file (filter bar, expandable attacker scenarios, PoC commands, attack-graph diagram, and all). No server, no build step, no external assets. 🎉
+Open `report.html` in any browser — it's a single-file report with no server or build step. The report content, filters, finding cards, and attack-chain SVGs are embedded; the attack-graph diagram optionally loads Mermaid from jsDelivr, so that diagram needs network access unless Mermaid is vendored or the report is changed to embed the rendered graph.
 
 ---
 
@@ -341,7 +344,7 @@ inquisition --targets-file hosts.txt --format sarif \
 |---|---|---|---|
 | `--active` | flag | off | Enable payload-based active scanning after the explicit active-scan authorization prompt |
 | `--active-engine` | `nuclei` \| `zap` | `nuclei` | Active scanner engine to run when `--active` is set |
-| `--validate` | flag | off | Run the **read-only** verification probes attached to findings (`curl -sI`, `dig`, `openssl s_client`, status checks) to capture live evidence and confirm modeled findings. Mutating PoCs are never executed. Requires authorization; prompts unless `--yes` |
+| `--validate` | flag | off | Intended to run read-only verification probes and capture live evidence. **Keep disabled pending the 2026-07-12 P0 classifier fix**; compact curl/OpenSSL options can bypass the current read-only classification. Requires authorization; prompts unless `--yes` |
 | `--auth-header` | string | empty | Header injected into HTTP modules and active engines, e.g. `Authorization: Bearer <token>` |
 | `--auth-cookie` | string | empty | Cookie header injected into HTTP modules and active engines, e.g. `session=<value>` |
 
@@ -538,7 +541,7 @@ Findings are annotated with the attacker preconditions they imply — network po
 
 ### HTML Report
 
-The HTML report is a self-contained single file (the only optional external dependency is the Mermaid script used to draw the attack-graph diagram). It includes a **client-side filter bar** for the findings list (free-text search plus severity / category / ATT&CK-tactic / confidence filters). Each finding is rendered as a severity-coloured card with expandable panels:
+The HTML report is a single file (the only optional external dependency is the Mermaid script used to draw the attack-graph diagram). It includes a **client-side filter bar** for the findings list (free-text search plus severity / category / ATT&CK-tactic / confidence filters). Each finding is rendered as a severity-coloured card with expandable panels:
 
 - **Issue Analysis** — multi-paragraph deep-dive into what the issue is and why it matters
 - **How an Attacker Exploits This** — step-by-step realistic attack scenario (purple panel)
@@ -639,7 +642,7 @@ Under the hood, Inquisition is 9 focused modules. The crawler runs first to map 
 - SPF record presence and enforcement-strength checks (`+all`, `?all`, `~all`, missing `all`)
 - DMARC record detection and policy-strength checks (`p=none`, partial `pct`, weak subdomain policy)
 - **DNS zone transfer (AXFR) attempts** — reveals entire zone if unrestricted
-- **Subdomain takeover detection** — identifies dangling CNAME records on 24+ third-party services
+- **Subdomain takeover candidate detection** — identifies CNAMEs pointing at 24+ takeover-prone third-party services; provider-specific checks are still required to prove the resource is unclaimed
 
 **Severity:** CRITICAL for zone transfer success; HIGH for subdomain takeover
 
@@ -836,7 +839,7 @@ The misconfiguration engine derives higher-level findings from raw module output
 - ✗ GraphQL introspection enabled in production (MEDIUM)
 - ✗ HTTP TRACE method enabled (MEDIUM)
 - ✗ DNS zone transfer unrestricted (CRITICAL)
-- ✗ Subdomain takeover via dangling CNAME (HIGH)
+- ✗ Potential subdomain takeover via a hosted-service CNAME (HIGH; manual confirmation required)
 
 ---
 
@@ -854,8 +857,8 @@ By default, Inquisition is entirely **read-only**. The standard scan (without `-
 |---|---|---|
 | What it sends | GET/HEAD/OPTIONS, DNS, TLS handshakes | CVE-based payload templates, WAF evasion probes, injection checks |
 | Can it confirm a vuln is exploitable? | No — infers from config | Yes — receives a real response to a crafted probe |
-| Side effects on the target | None | May trigger WAF alerts, appear in access logs, consume rate-limit quota |
-| Needs explicit authorization | Yes (one prompt) | Yes (a second, separate prompt specifically for active scanning) |
+| Observable effects | Requests can appear in DNS, firewall, TLS, and HTTP logs | May additionally trigger WAF alerts and consume application rate-limit quota |
+| Interactive prompt | No; the operator must establish authorization before launch | Yes, unless authorization is pre-asserted with `--yes` |
 | Finds | Misconfigurations, missing headers, weak crypto | Same as passive, plus exploitable injection points, exposed panels, template-matched CVEs |
 
 Confirmed active findings are also **fed back into the attack graph** as confirmed edges: a verified XSS, SQLi, RCE, SSRF, or access-control bypass is mapped to the attacker state it grants and elevated above merely-modeled paths, so the most dangerous *proven* objective rises to the top of the reachable-objectives ranking.
@@ -1074,7 +1077,7 @@ This runs continuously, serves Prometheus metrics on port 9090, rotates the audi
 
 **Only use Inquisition against targets you own or have explicit written authorization to test.**
 
-Unauthorized security scanning may violate computer fraud and abuse laws in your jurisdiction. Inquisition requires explicit authorization confirmation before each scan — use this to ensure you have proper permission.
+Unauthorized security scanning may violate computer fraud and abuse laws in your jurisdiction. Passive/read-only scans start without an interactive prompt; `--active` and `--validate` have additional confirmation gates. The operator remains responsible for confirming authorization before every scan.
 
 ### Safety by Design
 
@@ -1088,6 +1091,8 @@ By default, Inquisition is intentionally **read-only active reconnaissance:**
 - ✅ Passive scans start immediately — no prompt required
 
 Optional `--active` mode is different: it shells out to Nuclei or OWASP ZAP and sends payload-based vulnerability probes after a second, explicit active-scan authorization prompt. DOS, brute-force, and fuzzing template categories are always excluded. Use it only where you have written permission for active testing. See [Active Testing](#active-testing-1) for the full explanation.
+
+The optional `--validate` mode is temporarily not considered fail-closed because of the compact-flag parsing issue documented above. Keep it disabled until the P0 fix and regression tests land.
 
 ### Responsible Disclosure
 
@@ -1117,8 +1122,11 @@ Run the local checks before opening a pull request:
 python -m pytest -q
 python -m compileall -q .
 python -m mypy .
+ruff check .
 python inquisition.py example.com --dry-run --format json --output /tmp/inquisition-dry-run.json
 ```
+
+As of the 2026-07-12 review, pytest, compilation, mypy, and wheel building pass. `ruff check .` reports 23 existing findings, so lint is listed here as the target gate rather than a currently green check; see the [review plan](ROADMAP_CODE_REVIEW.md#p2--make-quality-and-performance-gates-honest).
 
 The test suite includes deterministic recorded HTTP/DNS/socket fixtures for network-facing modules; tests should not require live external targets.
 
