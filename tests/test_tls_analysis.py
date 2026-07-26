@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from models import Finding, ScanConfig
-from modules.tls_analysis import TlsAnalysisModule
+from modules.tls_analysis import TlsAnalysisModule, _certificate_matches_hostname
 
 
 class TlsAnalysisTests(unittest.TestCase):
@@ -50,6 +50,30 @@ class TlsAnalysisTests(unittest.TestCase):
             findings = TlsAnalysisModule(ScanConfig(target="example.com")).run()
 
         self.assertIn("Hostname not in certificate SAN", {finding.title for finding in findings})
+
+    def test_hostname_wildcard_matches_exactly_one_label(self) -> None:
+        cert = {"subjectAltName": (("DNS", "*.example.com"),)}
+
+        self.assertTrue(_certificate_matches_hostname(cert, "api.example.com"))
+        self.assertFalse(_certificate_matches_hostname(cert, "example.com"))
+        self.assertFalse(_certificate_matches_hostname(cert, "v1.api.example.com"))
+
+    def test_subject_alt_name_takes_precedence_over_common_name(self) -> None:
+        cert = {
+            "subject": ((("commonName", "example.com"),),),
+            "subjectAltName": (("DNS", "other.example.com"),),
+        }
+
+        self.assertFalse(_certificate_matches_hostname(cert, "example.com"))
+
+    def test_ip_address_requires_matching_ip_san(self) -> None:
+        cert = {
+            "subject": ((("commonName", "192.0.2.10"),),),
+            "subjectAltName": (("IP Address", "192.0.2.10"),),
+        }
+
+        self.assertTrue(_certificate_matches_hostname(cert, "192.0.2.10"))
+        self.assertFalse(_certificate_matches_hostname(cert, "192.0.2.11"))
 
     def test_deprecated_protocols_flagged_and_tls13_gap_reported(self) -> None:
         # Server speaks legacy TLS 1.0/1.1/1.2 but not 1.3.

@@ -442,7 +442,9 @@ dependencies normally, verifies imports resolve beneath the isolated prefix,
 and loads the packaged JSON/YAML rule data before invoking the installed CLI.
 The 2026-07-26 CI follow-up also installs `pytest` explicitly in both workflows;
 the first master run had stopped before collection because only mypy and Ruff
-were installed.
+were installed. Once collection ran on Python 3.12, it exposed the removal of
+`ssl.match_hostname`; TLS certificate-name checks now use a covered internal
+matcher for DNS SANs, IP SANs, constrained wildcards, and CN fallback.
 
 1. Fix the 23 current Ruff findings with focused edits and add an explicit Ruff
    configuration matching repository conventions.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import os
 import ssl
 import socket
@@ -74,6 +75,98 @@ _PROBE_PROTOCOLS: list[tuple[str, ssl.TLSVersion]] = [
 ]
 
 _DEPRECATED_PROTOCOLS = {"TLSv1", "TLSv1.1"}
+
+
+def _normalize_dns_name(name: str) -> str | None:
+    """Return a comparable ASCII DNS name, preserving a whole-label wildcard."""
+    labels = name.rstrip(".").split(".")
+    if not labels or any(not label for label in labels):
+        return None
+    try:
+        return ".".join(
+            "*" if label == "*" else label.encode("idna").decode("ascii").lower()
+            for label in labels
+        )
+    except UnicodeError:
+        return None
+
+
+def _dnsname_matches(pattern: str, hostname: str) -> bool:
+    """Match a certificate DNS name using exact or single-label wildcard rules."""
+    normalized_pattern = _normalize_dns_name(pattern)
+    normalized_hostname = _normalize_dns_name(hostname)
+    if normalized_pattern is None or normalized_hostname is None:
+        return False
+
+    pattern_labels = normalized_pattern.split(".")
+    hostname_labels = normalized_hostname.split(".")
+    if "*" not in normalized_pattern:
+        return normalized_pattern == normalized_hostname
+
+    # Wildcards are valid only as the complete left-most label and must leave
+    # at least two fixed labels. This prevents partial and multi-level matches.
+    return (
+        len(pattern_labels) >= 3
+        and pattern_labels[0] == "*"
+        and all("*" not in label for label in pattern_labels[1:])
+        and len(pattern_labels) == len(hostname_labels)
+        and pattern_labels[1:] == hostname_labels[1:]
+    )
+
+
+def _certificate_matches_hostname(cert: dict[str, Any], hostname: str) -> bool:
+    """Match a hostname against certificate SANs, falling back to CN if absent."""
+    san_entries = cert.get("subjectAltName", ())
+    dns_names: list[str] = []
+    ip_names: list[str] = []
+    has_san = False
+    if isinstance(san_entries, (list, tuple)):
+        for entry in san_entries:
+            if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+                continue
+            kind, value = entry
+            if not isinstance(kind, str) or not isinstance(value, str):
+                continue
+            has_san = True
+            if kind == "DNS":
+                dns_names.append(value)
+            elif kind == "IP Address":
+                ip_names.append(value)
+
+    try:
+        target_ip = ipaddress.ip_address(hostname.rstrip("."))
+    except ValueError:
+        target_ip = None
+
+    if target_ip is not None:
+        for value in ip_names:
+            try:
+                if ipaddress.ip_address(value) == target_ip:
+                    return True
+            except ValueError:
+                continue
+        return False
+
+    if has_san:
+        return any(_dnsname_matches(name, hostname) for name in dns_names)
+
+    subject = cert.get("subject", ())
+    if not isinstance(subject, (list, tuple)):
+        return False
+    for rdn in subject:
+        if not isinstance(rdn, (list, tuple)):
+            continue
+        for attribute in rdn:
+            if (
+                isinstance(attribute, (list, tuple))
+                and len(attribute) == 2
+                and attribute[0] == "commonName"
+                and isinstance(attribute[1], str)
+                and _dnsname_matches(attribute[1], hostname)
+            ):
+                return True
+    return False
+
 
 # OpenSSL cipher-selection strings for known-weak families. The scanner's own
 # OpenSSL may refuse to offer some of these (set_ciphers raises) — in that case
@@ -292,16 +385,12 @@ class TlsAnalysisModule(BaseModule):
                     severity=Severity.INFO,
                     evidence=f"SANs: {', '.join(san_names)}",
                 ))
-            try:
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", DeprecationWarning)
-                    ssl.match_hostname(cert, target)
-            except ssl.CertificateError as exc:
+            if not _certificate_matches_hostname(cert, target):
                 findings.append(Finding(
                     title="Hostname not in certificate SAN",
                     category=FindingCategory.TLS,
                     severity=Severity.MEDIUM,
-                    evidence=f"{target} does not match certificate names: {exc}",
+                    evidence=f"{target} does not match the certificate SAN/CN names",
                     impact="Certificate mismatch warning in browsers",
                     remediation="Reissue certificate to include the target hostname",
                 ))
