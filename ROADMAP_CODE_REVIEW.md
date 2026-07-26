@@ -440,6 +440,9 @@ failure semantics, and numeric/command validation. The 2026-07-25 follow-up
 removes inherited system packages from the wheel environment, installs declared
 dependencies normally, verifies imports resolve beneath the isolated prefix,
 and loads the packaged JSON/YAML rule data before invoking the installed CLI.
+The 2026-07-26 CI follow-up also installs `pytest` explicitly in both workflows;
+the first master run had stopped before collection because only mypy and Ruff
+were installed.
 
 1. Fix the 23 current Ruff findings with focused edits and add an explicit Ruff
    configuration matching repository conventions.

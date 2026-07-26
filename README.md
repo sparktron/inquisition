@@ -1136,7 +1136,7 @@ ruff check .
 python inquisition.py example.com --dry-run --format json --output /tmp/inquisition-dry-run.json
 ```
 
-As of the 2026-07-26 Phase 4 follow-up, 484 tests plus 137 subtests, compilation, strict mypy across 75 source files, Ruff, wheel building, clean-environment installed-package and packaged-data checks, and the installed CLI smoke test pass. CI enforces the same gate set.
+As of the 2026-07-26 Phase 4 follow-up, 484 tests plus 137 subtests, compilation, strict mypy across 75 source files, Ruff, wheel building, clean-environment installed-package and packaged-data checks, and the installed CLI smoke test pass. CI installs its test tools (`pytest`, `mypy`, and `ruff`) explicitly and enforces the same gate set.
 
 The test suite includes deterministic recorded HTTP/DNS/socket fixtures for network-facing modules; tests should not require live external targets.
 
