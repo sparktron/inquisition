@@ -44,11 +44,12 @@ The things that make Inquisition more than a checklist:
 <summary><b>📋 The full feature catalog</b> (click to expand)</summary>
 
 ### 🔍 Reconnaissance & fingerprinting
-- **DNS reconnaissance** — Time-bounded A/AAAA and reverse-DNS resolution, subdomain enumeration, MX/NS/TXT records, SPF/DMARC presence and policy-strength checks, resolver-failure-aware DMARC results, and **DNS zone transfer (AXFR) detection**
+- **DNS reconnaissance** — Time-bounded A/AAAA and reverse-DNS resolution, subdomain enumeration, MX/NS/TXT records, SPF/DMARC presence and policy-strength checks, resolver-failure-aware A/AAAA and DMARC results, and **DNS zone transfer (AXFR) detection**
 - **Port scanning** — TCP connect-scan with banner grabbing; enhanced service detection for Telnet, SMB, VNC, Redis, Elasticsearch, MongoDB, MySQL, PostgreSQL, RDP
 - **TLS/SSL analysis** — negotiated protocol/cipher, active protocol-version and weak-cipher-family enumeration, weak Diffie-Hellman (Logjam) parameter detection, certificate validity/expiration, self-signed detection, hostname mismatch, full chain validation, Certificate Transparency (embedded SCT) presence, and OCSP revocation lookup
 - **WAF/CDN detection** — Signature-based detection for common protective layers including Cloudflare, AWS CloudFront, Akamai, Fastly, Imperva, and Sucuri
 - **Crawler-fed analysis** — Same-origin homepage, robots.txt, and bounded sitemap.xml URL discovery feeds application, content, and technology checks
+- **Outbound credential boundaries** — Bounded redirects retain credentials only on the same normalized origin; configured secrets and per-request `Authorization`, `Proxy-Authorization`, and `Cookie` headers are stripped after a cross-origin hop
 - **Technology stack detection** — WordPress, Joomla, Drupal, Laravel, Django, PHP, nginx, Apache, IIS, Node.js, and more via body/header signatures, path probing, and discovered pages
 
 ### 🧱 Security headers & application layer
@@ -59,8 +60,8 @@ The things that make Inquisition more than a checklist:
 ### 🚨 Vulnerability analysis
 - **CVE correlation** — Rate-limited CPE-based lookup against the National Vulnerability Database (NVD) with CVSS scoring, days-since-disclosure, references, and scan-wide batched exploitability enrichment
 - **Real-world exploitation triage** — every CVE is ranked by the industry-standard triad: **CISA KEV** (exploited now) > **public exploit available** (local Nuclei template) > **FIRST.org EPSS** probability (exploited soon) > CVSS (how bad)
-- **Resilient external-data parsing** — malformed Nuclei, ZAP, NVD, CISA KEV, EPSS, or GraphQL records are isolated so valid findings remain available with an explicit warning where applicable
-- **Lossless active evidence** — Nuclei matches remain distinct by template ID and matched endpoint even when templates share the same display name
+- **Resilient external-data parsing** — malformed Nuclei, ZAP, NVD, CISA KEV, EPSS, or GraphQL records are isolated so valid findings remain available with an explicit warning where applicable; non-finite and out-of-range CVSS/EPSS values are ignored
+- **Lossless active evidence** — Nuclei matches remain distinct by template ID and endpoint, while ZAP alerts retain every distinct instance URI and survive scanner-wide deduplication
 - **Subdomain takeover candidates** — Identifies CNAMEs pointing at takeover-prone hosted services; the scanner does not confirm that the backing resource is unclaimed, so each candidate requires provider-specific verification.
 - **Misconfiguration detection** — 30+ pattern-matched rules for common security weaknesses (expired certs, legacy TLS, missing HSTS, exposed credentials, etc.)
 - **Attack chain detection** — Automatically derives multi-step kill chains from the combination of misconfigurations detected
@@ -72,15 +73,15 @@ The things that make Inquisition more than a checklist:
 - **Exposure index (0–100)** — a measure of *how much door is open* (reachable unauthenticated services, admin panels, secret files, weak transport, missing controls), distinct from the severity-weighted risk score
 - **Reachability modeling** — every finding is tagged with the attacker preconditions it implies (network position, auth required, victim interaction) that weight the graph
 - **MITRE ATT&CK Navigator export** — `--attack-navigator` emits a `layer.json` overlaying observed techniques on the standard ATT&CK matrix
-- **Safe PoC auto-validation** — `--validate` runs classified read-only verification probes and attaches their HTTP status/output as evidence in JSON/HTML/SARIF. Compact/clustered curl body, upload, config, and output options and OpenSSL file-writing options are rejected.
+- **Safe PoC auto-validation** — `--validate` runs classified read-only verification probes and attaches their HTTP status/output as evidence in JSON/HTML/SARIF. HTTP status sentinels are accepted only from the injected curl write-out and only in the valid HTTP range; compact/clustered curl body, upload, config, and output options and OpenSSL file-writing options are rejected.
 - **Provenance on every claim** — each attacker claim is labelled by where it came from — *modeled* (knowledge base) vs *confirmed* (live PoC validation or active-scan payload match) — so a hypothesis is never mistaken for proof
-- **Threat-intel freshness** — reports show when each external feed is current as of (CISA KEV catalog version/date, FIRST.org EPSS, NVD, local Nuclei templates) and flag stale intel, since stale data in a security tool is a silent false-negative
+- **Threat-intel freshness** — reports show when each external feed is current as of (CISA KEV catalog version/date, FIRST.org EPSS, NVD, local Nuclei templates) and flag stale or unavailable sources, since missing intel in a security tool is a silent false-negative
 
 ### 🛰️ Fleet & attack-path intelligence
 - **Multi-target fleet mode** — scan many related hosts in one run (positional targets, `--targets-file`, or a `--fleet-config`), concurrently with `--jobs`, into per-target reports or one combined artifact
 - **Cross-target correlation** — connects the fleet into an org-level view from signals already in the findings: **shared origin IP** (co-hosted — one box yields many sites + a pivot), **shared TLS certificate** (shared private key → impersonation), and **subdomain-takeover pivots** (trusted-origin phishing against siblings)
 - **Blast-radius & crown-jewel analysis** — tag targets by business value (`asset_value: crown|high|medium|low`) and Inquisition ranks remediation by the high-value assets a weak host endangers, so a cheap pivot bridged to a crown jewel rises above a locally-severe but isolated host
-- **Fleet HTML dashboard** — one page ranking every target by risk with grade, severity counts, trend sparkline, Δ-vs-last-scan, a fleet-wide confirmed-vs-modeled objective rollup, the cross-target attack paths, and the blast-radius ranking
+- **Fleet HTML dashboard** — one page ranking every target by risk with grade, severity counts, trend sparkline, Δ-vs-last-scan, a fleet-wide confirmed-vs-modeled objective rollup that keeps inferred downstream consequences modeled, the cross-target attack paths, and the blast-radius ranking
 
 ### 📊 Reporting & output
 - **Deep issue analysis** — Multi-paragraph explanations of what each vulnerability is, why it's dangerous, named CVE references, and real-world attack scenarios
@@ -162,7 +163,7 @@ Open `report.html` in any browser — it is a self-contained report with no serv
 
 - **Python 3.10+** (type hints, match statements)
 - **pip** (package installer)
-- Optional: **dnspython** (for advanced DNS queries like zone transfer attempts; installed by requirements.txt)
+- **dnspython** (required for bounded DNS resolution and advanced queries; installed by requirements.txt)
 
 ### Setup
 
@@ -347,8 +348,8 @@ inquisition --targets-file hosts.txt --format sarif \
 | `--active` | flag | off | Enable payload-based active scanning after the explicit active-scan authorization prompt |
 | `--active-engine` | `nuclei` \| `zap` | `nuclei` | Active scanner engine to run when `--active` is set |
 | `--validate` | flag | off | Run classified read-only verification probes and capture live evidence. Mutating curl forms and curl/OpenSSL file-writing options are rejected. Requires authorization; prompts unless `--yes` |
-| `--auth-header` | string | empty | Header injected into HTTP modules and active engines, e.g. `Authorization: Bearer <token>` |
-| `--auth-cookie` | string | empty | Cookie header injected into HTTP modules and active engines, e.g. `session=<value>` |
+| `--auth-header` | string | empty | Header injected into HTTP modules and active engines, in strict `Header-Name: value` form, e.g. `Authorization: Bearer <token>` |
+| `--auth-cookie` | string | empty | Non-blank cookie value injected into HTTP modules and active engines, e.g. `session=<value>` |
 
 See [Active Testing](#active-testing-1) for a full explanation of how this works and what it does.
 
@@ -482,7 +483,7 @@ The dashboard visualises:
 `.github/workflows/ci.yml` validates pull requests and pushes to `master`; `.github/workflows/docker-publish.yml` repeats the gates when a version tag (`v*`) is pushed or via manual `workflow_dispatch`. They:
 
 1. Run pytest, strict mypy, compileall, and Ruff on Python 3.12
-2. Build the wheel, install it outside the checkout, import the packaged modules, and invoke the installed CLI
+2. Build the wheel, install it with declared dependencies in a clean isolated environment outside the checkout, verify imports and packaged rule data resolve from that environment, and invoke the installed CLI
 3. For a publish run, build and push the image to `ghcr.io/sparktron/inquisition` tagged with the semver version (`0.1.0`), the minor release (`0.1`), and `latest`
 
 ```bash
@@ -875,6 +876,8 @@ Inquisition shells out to the `nuclei` binary already on your `PATH`. It runs wi
 - **Severity filter:** only `low`, `medium`, `high`, `critical` templates are run — informational noise is suppressed
 - **Excluded tags:** `dos`, `intrusive`, `fuzz`, `brute-force` template categories are always excluded. This prevents denial-of-service payloads, brute-force login attempts, and aggressive fuzzing even if such templates are present in your local template library
 - **Silent JSONL output:** results are returned as one JSON object per line and parsed directly into `Finding` objects — no intermediate files
+- **Origin boundary:** crawler-discovered URLs are included only when their normalized scheme, host, and effective port match the root target. Malformed and cross-origin URLs are skipped with a scan warning
+- **Exact pacing:** when `--rate-limit` is positive, Nuclei receives `-rl 1 -rld <delay>s`, preserving both subsecond and multi-second minimum delays instead of rounding them to an integer request rate
 
 The effective Nuclei command looks like:
 
@@ -888,6 +891,8 @@ nuclei -u https://example.com \
 ```
 
 If `--auth-header` is set (e.g. `Authorization: Bearer <token>`), the header is forwarded to Nuclei via `-H` so authenticated surfaces are also tested.
+Authentication values containing CR/LF, malformed header names, empty header
+values, or blank cookies are rejected before any scan starts.
 
 #### Installing Nuclei
 
@@ -906,15 +911,15 @@ Nuclei maintains its own template library at `~/.local/nuclei-templates/`. Run `
 
 ### How OWASP ZAP integration works
 
-[OWASP ZAP](https://www.zaproxy.org/) (Zed Attack Proxy) is a full web application security scanner. Inquisition uses its **baseline scan** mode (`zap-baseline.py`), which is the lighter, non-intrusive profile — it spiders and passively analyses the target, then runs a constrained set of active rules.
+[OWASP ZAP](https://www.zaproxy.org/) (Zed Attack Proxy) is a full web application security scanner. Inquisition uses its **full scan** mode (`zap-full-scan.py`): ZAP spiders the target and then runs active scanner rules. This is broader and potentially more disruptive than ZAP's passive baseline scan, so it remains behind Inquisition's explicit active-scan authorization gate.
 
 ZAP is invoked as:
 
 ```bash
-zap-baseline.py -t https://example.com -J - -m <minutes> -I
+zap-full-scan.py -t https://example.com -J <temporary-report.json> -m <minutes> -I
 ```
 
-Results are returned as a JSON report on stdout. Inquisition parses each alert, maps ZAP's risk codes to its own severity levels, and converts them into `Finding` objects. Informational alerts are suppressed.
+Results are read from ZAP's JSON report file, which Inquisition removes after parsing. Each alert is mapped from ZAP's risk codes into a `Finding`; informational alerts are suppressed.
 
 If `--auth-header` or `--auth-cookie` is set, Inquisition configures ZAP's HTTP replacer extension to inject the credential on every request, so authenticated scan surfaces are covered.
 
@@ -924,7 +929,7 @@ If `--auth-header` or `--auth-cookie` is set, Inquisition configures ZAP's HTTP 
 # macOS
 brew install --cask owasp-zap
 
-# Or use the ZAP Docker image (includes zap-baseline.py)
+# Or use the ZAP Docker image (includes zap-full-scan.py)
 docker pull ghcr.io/zaproxy/zaproxy:stable
 ```
 
@@ -936,7 +941,7 @@ docker pull ghcr.io/zaproxy/zaproxy:stable
 | Speed | Fast (seconds to a few minutes per target) | Slower (minutes; spider + active rules) |
 | Output style | Template-per-finding, high precision | Alert-per-issue, broader coverage |
 | Auth support | Single header (`--auth-header`) | Header + cookie via replacer |
-| Requires | `nuclei` binary on `PATH` | `zap-baseline.py` on `PATH` (from ZAP install) |
+| Requires | `nuclei` binary on `PATH` | `zap-full-scan.py` on `PATH` (from ZAP install) |
 
 Use Nuclei for a quick, targeted CVE sweep. Use ZAP when you need broader coverage of the authenticated application surface.
 
@@ -1093,7 +1098,7 @@ By default, Inquisition is intentionally **read-only active reconnaissance:**
 - ✅ No extraction of private data
 - ✅ Passive scans start immediately — no prompt required
 
-Optional `--active` mode is different: it shells out to Nuclei or OWASP ZAP and sends payload-based vulnerability probes after a second, explicit active-scan authorization prompt. DOS, brute-force, and fuzzing template categories are always excluded. Use it only where you have written permission for active testing. See [Active Testing](#active-testing-1) for the full explanation.
+Optional `--active` mode is different: it shells out to Nuclei or OWASP ZAP and sends payload-based vulnerability probes after a second, explicit active-scan authorization prompt. Nuclei excludes DoS, intrusive, brute-force, and fuzzing template tags; ZAP runs its broader full active scan. Use either only where you have written permission for active testing. See [Active Testing](#active-testing-1) for the full explanation.
 
 The optional `--validate` mode uses a small command/subcommand allowlist, rejects shell metacharacters, parses compact curl option clusters, limits curl to HTTP(S) and safe methods, and rejects curl/OpenSSL file-writing options. Keep PoC commands reviewable and extend the table-driven rejection tests whenever the allowlist changes.
 
@@ -1131,7 +1136,7 @@ ruff check .
 python inquisition.py example.com --dry-run --format json --output /tmp/inquisition-dry-run.json
 ```
 
-As of the 2026-07-12 remediation, 456 tests plus 122 subtests, compilation, strict mypy across 74 source files, Ruff, wheel building, installed-package imports, and the installed CLI smoke test pass. CI enforces the same gate set.
+As of the 2026-07-26 Phase 4 follow-up, 484 tests plus 137 subtests, compilation, strict mypy across 75 source files, Ruff, wheel building, clean-environment installed-package and packaged-data checks, and the installed CLI smoke test pass. CI enforces the same gate set.
 
 The test suite includes deterministic recorded HTTP/DNS/socket fixtures for network-facing modules; tests should not require live external targets.
 

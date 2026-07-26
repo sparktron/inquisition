@@ -112,17 +112,26 @@ right border doesn't line up. Recompute the box to a single width.
   `--write-out` status sentinel; `_run_check` parses + strips it into
   `PocCheck.http_status`. Surfaced as "ran successfully (HTTP 200)" in the
   verification line, "HTTP 200" in the HTML evidence block, and `httpStatus` in
-  SARIF. (`2c11f83`)
+  SARIF. (`2c11f83`) **Follow-up 2026-07-26:** sentinel parsing is now limited
+  to the exact write-out injected into curl and accepts only HTTP `100..599`, so
+  matching DNS/tool output cannot be stripped or mislabeled as HTTP evidence.
 - **Fleet dashboard: confirmed-vs-modeled rollup.** ✅ `render_fleet_dashboard`
   leads with a headline callout: N confirmed (proven via active scan) / M
   modeled objectives across K targets, via `_fleet_objective_rollup`. (`02667cd`)
+  **Follow-up 2026-07-26:** only objectives whose complete path was proven are
+  counted as confirmed; downstream data-access/lateral consequences from a
+  confirmed exploit remain modeled until independently validated.
 - **Blast-radius in the attack story.** ✅ `attack_story(report, *, fleet=...)`
   appends a cross-target pivot note built from the D2 blast-radius graph, naming
   the most valuable endangered sibling. Threaded through render_text/html;
-  render_combined passes `fleet=reports`. (`3a6dacb`)
+  render_combined passes `fleet=reports`. (`3a6dacb`) **Follow-up 2026-07-26:**
+  the deterministic fleet pivot is also appended when a custom/LLM narrator
+  supplies the main story.
 - **EPSS/KEV freshness surfaced in report header.** ✅ `_intel_freshness_summary`
   distills `intel_sources` into a one-line "intel current as of …" header in
-  text/HTML/markdown, flagging stale feeds. (`01548bd`)
+  text/HTML/markdown, flagging stale feeds. (`01548bd`) **Follow-up 2026-07-26:**
+  failed EPSS/NVD requests and a missing or empty local Nuclei template library
+  now emit stale/unavailable provenance instead of disappearing from the header.
 
 ---
 
@@ -303,7 +312,9 @@ external robots and nested-index URLs are never requested.
 redirects itself, retains configured credentials on same-origin hops, and
 permanently strips every configured credential header after an origin change.
 Session access is serialized while the response cache remains independently
-locked.
+locked. A 2026-07-25 follow-up audit also closed the per-request-header case:
+standard `Authorization`, `Proxy-Authorization`, and `Cookie` secrets are
+stripped cross-origin even when they were not part of the configured auth set.
 
 The shared `HttpClient` passes arbitrary configured auth headers to
 `requests.Session` with redirects enabled. Requests strips `Authorization` and
@@ -327,7 +338,10 @@ retention and cross-origin stripping of every configured secret header.
 returning concise warnings for malformed records. GraphQL introspection accepts
 `data: null`, filters malformed schema members, and reports an indeterminate
 shape without erasing earlier module findings. NVD, CISA KEV, and EPSS validate
-container and record shapes and skip only invalid entries.
+container and record shapes and skip only invalid entries. The 2026-07-25
+follow-up rejects non-list GraphQL schema types, scalar ZAP site containers,
+and non-finite or out-of-range CVSS/EPSS numbers instead of turning them into
+misleading findings or report values.
 
 - `active_scan.parse_nuclei_output('{"info":"bad"}')` raises `AttributeError`;
   `run_active_scan` does not contain parser exceptions, so malformed/truncated
@@ -371,7 +385,9 @@ every numeric field.
 bounded lifetime instead of an uncancellable executor around `getaddrinfo`.
 DMARC NXDOMAIN/NoAnswer is reported as absent, while timeouts and resolver
 failures produce an informational inconclusive result rather than a false
-medium-severity finding.
+medium-severity finding. The 2026-07-25 follow-up applies the same truthful
+absence-versus-transient-failure distinction to the target's initial A/AAAA
+resolution.
 
 `_safe_dns_resolve` times out `future.result`, but `socket.getaddrinfo` continues
 in a non-daemon executor thread after `shutdown(wait=False)`; repeated DNS
@@ -393,18 +409,25 @@ or prompt-exit test.
   once per scan. Preserve public API rate limits. **Fixed 2026-07-12:** a
   lock-protected monotonic request slot makes the first call immediate and spaces
   later calls, while the scanner defers exploitability enrichment until all CPE
-  results have been collected.
+  results have been collected. **Follow-up 2026-07-25:** duplicate CVE IDs are
+  collapsed before EPSS batching so one CVE shared by several CPE matches does
+  not consume repeated API request capacity.
 - Active Nuclei results are deduplicated by display title, so distinct templates
   or endpoints with the same name are silently reduced to the first match.
   Deduplicate on template ID plus matched endpoint (or aggregate endpoints and
   retain the worst severity/evidence). **Fixed 2026-07-12:** exact
   template/endpoint duplicates collapse, while distinct matches carry structured
-  IDs/endpoints through the scanner-wide deduplication pass.
+  IDs/endpoints through the scanner-wide deduplication pass. **Follow-up
+  2026-07-25:** ZAP now carries plugin and complete instance-endpoint metadata;
+  distinct ZAP and legacy active-scan evidence is preserved while exact
+  duplicates still collapse.
 - The default HTML file is mostly portable but loads Mermaid from jsDelivr for
   attack graphs. Vendor/embed the renderer, pre-render the graph, or provide an
   offline fallback; documentation now states the dependency explicitly.
   **Fixed 2026-07-12:** the report renders the reachable-state graph as a
   deterministic inline SVG and no longer loads any external runtime asset.
+  The 2026-07-25 regression check rejects external script and stylesheet
+  runtime assets, not only the former Mermaid CDN URL.
 
 ### P2 — Make quality and performance gates honest
 
@@ -413,7 +436,10 @@ repository is clean. Pull requests and pushes to master now run pytest, strict
 mypy, compileall, Ruff, and a built-wheel installation/import/CLI smoke test;
 the image-publish gate runs the same checks. The boundary regressions added
 throughout this remediation cover redirects, crawling, external payloads, DNS
-failure semantics, and numeric/command validation.
+failure semantics, and numeric/command validation. The 2026-07-25 follow-up
+removes inherited system packages from the wheel environment, installs declared
+dependencies normally, verifies imports resolve beneath the isolated prefix,
+and loads the packaged JSON/YAML rule data before invoking the installed CLI.
 
 1. Fix the 23 current Ruff findings with focused edits and add an explicit Ruff
    configuration matching repository conventions.
@@ -448,3 +474,47 @@ validation completed with 456 tests and 122 subtests passing, strict mypy clean
 across 74 source files, Ruff clean, compileall clean, and a built-wheel
 installation/import/installed-CLI smoke test passing. A JSON CLI dry run also
 completed and its generated report parsed successfully.
+
+### P1 follow-up audit — 2026-07-25
+
+The P1 implementation was re-audited against redirect, parser, configuration,
+and DNS failure boundaries. Remaining edge cases were fixed for per-request
+redirect secrets, malformed/non-finite external scores, non-list GraphQL and
+ZAP containers, and transient initial DNS resolution. Validation now passes
+with **463 tests and 126 subtests**, strict mypy clean across 74 source files,
+Ruff clean, compileall clean, and `git diff --check` clean. Shared CLI/fleet
+validation required no further code changes.
+
+### P2 follow-up audit — 2026-07-25
+
+The execution/evidence and quality-gate implementation was re-audited after the
+P1 follow-up. Remaining gaps were fixed for duplicate EPSS request IDs, complete
+ZAP endpoint evidence, legacy active-finding deduplication, broad offline-report
+asset coverage, and clean wheel provenance/package-data checks. Validation now
+passes with **467 tests and 126 subtests**, strict mypy clean across 74 source
+files, Ruff clean, compileall clean, `git diff --check` clean, and a local
+isolated wheel install/import/data/CLI smoke test passing.
+
+### P3 follow-up audit — 2026-07-26
+
+The four P3 feature opportunities were re-audited for provenance integrity.
+Remaining gaps were fixed for tool-output/status separation, valid HTTP status
+ranges, direct-versus-derived objective confirmation, narrated fleet pivot
+context, and unavailable threat-intel provenance. Validation passes with
+**475 tests and 126 subtests**, strict mypy clean across 74 source files, Ruff
+clean, compileall clean, and `git diff --check` clean.
+
+### Phase 4 follow-up audit — 2026-07-26
+
+The authorization-gated active-testing phase was re-audited against external
+scanner semantics and input boundaries. ZAP now invokes its full active-scan
+script and consumes the documented JSON report file instead of labeling passive
+baseline results as active confirmation. Nuclei receives only valid same-origin
+discovered targets, preserves configured request delays through its rate-limit
+duration, and never rounds a positive timeout to zero. Authentication material
+is validated consistently for CLI and fleet runs, and the warning banner names
+the selected engine.
+
+Validation passes with **484 tests and 137 subtests**, strict mypy clean across
+75 source files, Ruff clean, compileall clean, `git diff --check` clean, and an
+isolated wheel install/import/data/CLI smoke test passing.

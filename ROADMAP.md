@@ -1,20 +1,22 @@
 # Inquisition — Code Review & Development Roadmap
 
-_Last updated: 2026-07-12_
+_Last updated: 2026-07-26_
 
 This document captures a full code review of the Inquisition scanner and a
 phased roadmap toward the goal: **continuously verify that your websites are as
 secure as they can be, with comprehensive analysis and reporting.**
 
-Current follow-up plan: the 2026-07-12 repository-wide review addendum in
+Current follow-up status: the 2026-07-12 repository-wide review addendum in
 [`ROADMAP_CODE_REVIEW.md`](ROADMAP_CODE_REVIEW.md#repository-wide-review-addendum--2026-07-12)
-tracks the active safety, network-boundary, input-validation, parser-robustness,
-performance, lint, and documentation work. The 2026-06-29 cleanup queue is
-complete and retained there as history.
+and its 2026-07-25–26 P1/P2/P3 and Phase 4 follow-up audits are complete. They
+cover the safety, network-boundary, input-validation, parser-robustness,
+evidence and provenance integrity, active-engine execution, performance,
+packaging, lint, and documentation work.
+The 2026-06-29 cleanup queue is retained there as history.
 
 > Historical note: sections 1–4 below describe the repository at the start of
 > the original roadmap. Statements such as "No tests at all" are no longer
-> current; the present baseline is 456 passing tests plus 122 subtests. Completion
+> current; the present baseline is 484 passing tests plus 137 subtests. Completion
 > records later in this file remain the source of truth for the original phases.
 
 It is organized as:
@@ -443,19 +445,26 @@ Goal: the tool's existing output is correct and its claims are true.
 - [x] Authenticated scanning (session/cookie injection) — `--auth-header` /
       `--auth-cookie` are injected into every HTTP request via the shared client
       (so all read-only modules see the logged-in surface) and passed to active
-      engines.
+      engines. CLI and fleet configuration now reject malformed headers, blank
+      cookies, and CR/LF injection before execution.
 - [x] Optional: ZAP engine as an alternative to Nuclei via `--active-engine zap`;
-      parses ZAP baseline JSON and reports non-informational alerts as active
-      findings. Missing-binary handling mirrors Nuclei.
+      invokes `zap-full-scan.py`, reads its temporary JSON report, and reports
+      non-informational alerts as active findings. Missing-binary handling
+      mirrors Nuclei.
+- [x] **Phase 4 execution-boundary audit (2026-07-26)** — active Nuclei target
+      handoff is restricted to the root origin; malformed/injected URLs are
+      skipped, fractional timeouts round up safely, configured pacing is
+      preserved with Nuclei's rate-limit duration, and the authorization banner
+      names the selected engine. ZAP's previously mislabeled passive baseline
+      invocation was replaced by the full active-scan entry point.
 
 ---
 
 ### Suggested immediate next step
-The original phases and feature follow-ons are complete. The active work is now
-the 2026-07-12 repository-wide remediation plan in
-[`ROADMAP_CODE_REVIEW.md`](ROADMAP_CODE_REVIEW.md#repository-wide-review-addendum--2026-07-12),
-starting with the PoC-validator safety boundary and outbound same-origin/auth
-controls before parser robustness, configuration validation, and performance.
+The original phases, feature follow-ons, 2026-07-12 remediation plan, and
+2026-07-25–26 P1/P2/P3 plus Phase 4 implementation audits are complete. The
+next work should be chosen from the product backlog below; no unresolved
+review item is currently documented.
 
 Deprioritized: multi-arch (arm64/amd64) image builds and a signed/SBOM-attached
 image release — neither is load-bearing (CI runs amd64, no evidence of arm64
