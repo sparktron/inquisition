@@ -72,6 +72,10 @@ def _deduplicate(findings: list[Finding]) -> list[Finding]:
     seen: set[tuple[str, str, str, str]] = set()
     deduped: list[Finding] = []
     for f in findings:
+        # Most modules identify a finding by its title/category/severity.  That
+        # is enough for passive checks, but active scanners can find the same
+        # issue at several endpoints, so their scanner-specific evidence must
+        # be part of the key to avoid losing a distinct result.
         context = f.metadata.get("scheme", "")
         if is_active_scan_finding(f):
             scanner = str(f.metadata.get("scanner", ""))
@@ -238,6 +242,9 @@ def run_scan(
     if discovered_urls:
         if not quiet:
             print_info(f"feeding {len(discovered_urls)} discovered URL(s) into path-aware modules")
+        # ScanConfig is immutable enough to be safely shared by worker
+        # modules.  Make a copy with the crawler's output rather than changing
+        # the original object while other code may still hold a reference to it.
         config = replace(config, discovered_urls=discovered_urls)
         report.config = config
 
@@ -253,6 +260,9 @@ def run_scan(
     with ThreadPoolExecutor(max_workers=min(config.max_threads, len(modules))) as pool:
         futures = {pool.submit(_run_module, m): m.name for m in modules}
         for future in as_completed(futures):
+            # ``as_completed`` yields work as soon as it finishes, not in
+            # module registration order.  This keeps slow network modules
+            # from delaying the UI and lets every module failure stay local.
             mod_name, findings, errors = future.result()
             if progress is not None and task is not None:
                 print_module_result(mod_name, len(findings), len(errors))
@@ -285,6 +295,8 @@ def run_scan(
             print_cve_phase(len(cpe_values))
         for cpe in sorted(cpe_values):
             try:
+                # Look up each distinct CPE once; several findings can be
+                # evidence for the same detected product.
                 cves = lookup_cves_for_cpe(cpe, timeout=config.timeout, enrich=False)
                 report.cve_records.extend(cves)
                 if cves and not quiet:
@@ -323,6 +335,8 @@ def run_scan(
             if not f.poc_command:
                 f.poc_command = kb.get("poc_command", "")
         # Infer attacker preconditions (network position, user interaction).
+        # These labels drive graph ranking; they do not claim that an attack
+        # has actually succeeded.
         reachability.annotate(f)
 
     # --- PoC auto-validation (opt-in, runs read-only verification probes) ---
@@ -358,6 +372,8 @@ def run_scan(
         previous = load_snapshot(config.target, state_dir)
         # Stamp per-finding age before snapshotting so it persists and renders.
         update_ages(report, previous, report.finished_at or datetime.now(timezone.utc))
+        # Calculate the change before saving, because the just-saved report
+        # would otherwise become its own "previous" scan.
         diff_result = diff_snapshots(previous, snapshot_from_report(report))
         if not quiet:
             _print_diff(diff_result)

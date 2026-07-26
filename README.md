@@ -1140,6 +1140,11 @@ As of the 2026-07-26 Phase 4 follow-up, 487 tests plus 137 subtests, compilation
 
 The test suite includes deterministic recorded HTTP/DNS/socket fixtures for network-facing modules; tests should not require live external targets.
 
+Core orchestration and HTTP-boundary code includes comments for decisions that
+are not obvious from the syntax, such as concurrent result collection, cache
+keys, redirect behavior, and credential stripping. Keep new comments focused
+on the reason for a decision rather than restating the code.
+
 The knowledge base (`modules/data/analysis_kb.json`) is the single source of truth for deep-dive content. Every entry must contain `analysis`, `remediation`, `attack_scenario`, `mitre_techniques`, and `poc_command`. The schema test (`test_analysis_kb.py`) verifies this — keep it green whenever adding or editing entries.
 
 For bug reports or feature requests, provide:
