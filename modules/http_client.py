@@ -108,6 +108,8 @@ class HttpClient:
         use_cache: bool = False,
     ) -> HttpResponse:
         merged_headers = {"User-Agent": _USER_AGENT}
+        # Start with the configured credentials, then let a module add or
+        # replace request-specific headers for this one call.
         merged_headers.update(self._auth_headers)
         if headers:
             merged_headers.update(headers)
@@ -124,6 +126,8 @@ class HttpClient:
             with self._lock:
                 cached = self._cache.get(cache_key)
             if cached is not None:
+                # Modules often inspect the same homepage independently.  A
+                # shared cached GET reduces duplicate traffic to the target.
                 return cached
 
         response = self._request_with_redirects(
@@ -188,8 +192,11 @@ class HttpClient:
 
             next_url = urljoin(current_url, location)
             if _normalized_origin(next_url) is None:
+                # Do not follow a malformed or non-HTTP(S) Location header.
                 return response
             if _normalized_origin(current_url) != _normalized_origin(next_url):
+                # A redirect to another scheme, host, or port is a boundary:
+                # never leak configured secrets to the new origin.
                 current_headers = {
                     name: value
                     for name, value in current_headers.items()
@@ -199,6 +206,8 @@ class HttpClient:
             if response.status_code == 303 or (
                 response.status_code in {301, 302} and current_method == "POST"
             ):
+                # Match normal browser semantics: redirected form submissions
+                # continue as a GET and must not resend their JSON body.
                 current_method = "GET"
                 current_json = None
             current_url = next_url
@@ -216,4 +225,6 @@ def _normalized_origin(url: str) -> tuple[str, str, int] | None:
         port = parsed.port
     except ValueError:
         return None
+    # Include the effective default port so https://site and
+    # https://site:443 compare as the same origin.
     return scheme, host, port if port is not None else (443 if scheme == "https" else 80)

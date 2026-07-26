@@ -12,6 +12,9 @@ and its 2026-07-25–26 P1/P2/P3 and Phase 4 follow-up audits are complete. They
 cover the safety, network-boundary, input-validation, parser-robustness,
 evidence and provenance integrity, active-engine execution, performance,
 packaging, lint, and documentation work.
+The 2026-07-26 maintainability follow-up added junior-oriented comments to the
+central scan orchestration and shared HTTP client, covering the intent behind
+concurrency, deduplication, cache use, redirect behavior, and scan history.
 The 2026-06-29 cleanup queue is retained there as history.
 
 > Historical note: sections 1–4 below describe the repository at the start of
