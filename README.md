@@ -1136,7 +1136,7 @@ ruff check .
 python inquisition.py example.com --dry-run --format json --output /tmp/inquisition-dry-run.json
 ```
 
-As of the 2026-07-26 Phase 4 follow-up, 487 tests plus 137 subtests, compilation, strict mypy across 75 source files, Ruff, wheel building, clean-environment installed-package and packaged-data checks, and the installed CLI smoke test pass. CI installs its test tools (`pytest`, `mypy`, and `ruff`) explicitly and enforces the same gate set. TLS hostname verification uses the repository's Python 3.10+ compatible SAN/CN matcher because Python 3.12 removed `ssl.match_hostname`.
+As of the 2026-07-26 Phase 4 follow-up, 487 tests plus 137 subtests, compilation, strict mypy across 75 source files, Ruff, wheel building, clean-environment installed-package and packaged-data checks, and the installed CLI smoke test pass. CI installs its test tools (`pytest`, `mypy`, and `ruff`) explicitly and enforces the same gate set. Workflows use the Node 24-based `actions/checkout@v5` and `actions/setup-python@v6` releases. TLS hostname verification uses the repository's Python 3.10+ compatible SAN/CN matcher because Python 3.12 removed `ssl.match_hostname`.
 
 The test suite includes deterministic recorded HTTP/DNS/socket fixtures for network-facing modules; tests should not require live external targets.
 

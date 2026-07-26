@@ -444,7 +444,9 @@ The 2026-07-26 CI follow-up also installs `pytest` explicitly in both workflows;
 the first master run had stopped before collection because only mypy and Ruff
 were installed. Once collection ran on Python 3.12, it exposed the removal of
 `ssl.match_hostname`; TLS certificate-name checks now use a covered internal
-matcher for DNS SANs, IP SANs, constrained wildcards, and CN fallback.
+matcher for DNS SANs, IP SANs, constrained wildcards, and CN fallback. Both
+workflows now use the Node 24-based `actions/checkout@v5` and
+`actions/setup-python@v6` releases, removing the Node 20 deprecation warning.
 
 1. Fix the 23 current Ruff findings with focused edits and add an explicit Ruff
    configuration matching repository conventions.
