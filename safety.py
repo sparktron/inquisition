@@ -55,7 +55,7 @@ _ACTIVE_SCAN_BANNER = """\
   Target : {target}
 
   Active mode sends ACTIVE PAYLOADS to the target via an external
-  engine (Nuclei). This is NO LONGER read-only reconnaissance —
+  engine ({engine}). This is NO LONGER read-only reconnaissance —
   it actively probes for vulnerabilities.
 
   Only proceed against systems you OWN or are EXPLICITLY
@@ -72,7 +72,11 @@ def confirm_active_scan(config: ScanConfig, *, assume_yes: bool) -> bool:
     flag (--yes). The warning is always shown; the prompt is skipped only when
     authorization was pre-asserted.
     """
-    print(_ACTIVE_SCAN_BANNER.format(target=config.target))
+    engine = {
+        "nuclei": "Nuclei",
+        "zap": "OWASP ZAP",
+    }.get(config.active_engine.lower(), config.active_engine)
+    print(_ACTIVE_SCAN_BANNER.format(target=config.target, engine=engine))
     if assume_yes:
         return True
     try:

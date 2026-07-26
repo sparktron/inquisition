@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 from models import ScanConfig
@@ -10,6 +11,32 @@ from models import ScanConfig
 
 class ConfigValidationError(ValueError):
     """Raised when a configuration value has an invalid type or range."""
+
+
+_HTTP_HEADER_NAME = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+
+
+def validate_auth_material(auth_header: Any, auth_cookie: Any) -> None:
+    """Reject malformed authentication values before they reach HTTP clients."""
+    for name, value in (("auth_header", auth_header), ("auth_cookie", auth_cookie)):
+        if not isinstance(value, str):
+            raise ConfigValidationError(f"{name} must be a string")
+        if "\r" in value or "\n" in value:
+            raise ConfigValidationError(f"{name} must not contain CR or LF characters")
+
+    if auth_header:
+        name, separator, value = auth_header.partition(":")
+        if not separator:
+            raise ConfigValidationError(
+                "auth_header must use the 'Header-Name: value' format"
+            )
+        if not _HTTP_HEADER_NAME.fullmatch(name):
+            raise ConfigValidationError(f"auth_header has an invalid header name: {name!r}")
+        if not value.strip():
+            raise ConfigValidationError("auth_header value must not be empty")
+
+    if auth_cookie and not auth_cookie.strip():
+        raise ConfigValidationError("auth_cookie must not be blank")
 
 
 def coerce_int(value: Any, name: str, *, minimum: int | None = None) -> int:
@@ -72,6 +99,7 @@ def scan_config_errors(config: ScanConfig, *, require_target: bool = True) -> li
         lambda: coerce_float(config.connect_timeout, "connect_timeout", exclusive_minimum=0),
         lambda: coerce_ports(config.ports),
         lambda: coerce_int(config.sla_max_age, "sla_max_age", minimum=0),
+        lambda: validate_auth_material(config.auth_header, config.auth_cookie),
     )
     for check in checks:
         try:

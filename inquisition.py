@@ -19,6 +19,7 @@ from config_validation import (
     coerce_float,
     coerce_int,
     coerce_ports,
+    validate_auth_material,
 )
 from models import ReportFormat, ScanConfig, ScanDepth, ScanReport, Severity
 from scanner import run_scan
@@ -491,6 +492,7 @@ def _validate_cli_numbers(args: argparse.Namespace) -> None:
     coerce_float(args.connect_timeout, "--connect-timeout", exclusive_minimum=0)
     if args.ports is not None:
         coerce_ports(args.ports, "--ports")
+    validate_auth_material(args.auth_header, args.auth_cookie)
 
 
 def _gather_targets(args: argparse.Namespace) -> list[str]:

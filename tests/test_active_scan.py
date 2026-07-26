@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -10,6 +11,7 @@ from active_scan import (
     _MIN_NUCLEI_VERSION,
     _mitre_from_tags,
     _nuclei_version,
+    _parse_zap_output,
     build_nuclei_command,
     build_zap_command,
     parse_nuclei_output,
@@ -223,6 +225,17 @@ class ParseNucleiTests(unittest.TestCase):
         f = parse_nuclei_output(json.dumps(item))[0]
         self.assertIn("T1059", f.mitre_techniques)
 
+    def test_non_finite_or_out_of_range_cvss_is_ignored(self) -> None:
+        for score in ("NaN", "Infinity", -1, 11):
+            with self.subTest(score=score):
+                item = json.loads(_nuclei_line(
+                    "t", "Thing", "medium", "https://example.com/",
+                ))
+                item["info"]["classification"] = {"cvss-score": score}
+                finding = parse_nuclei_output(json.dumps(item))[0]
+                self.assertNotIn("CVSS:", finding.evidence)
+                self.assertNotIn("CVSS score:", finding.attack_scenario)
+
 
 # ---------------------------------------------------------------------------
 # parse_zap_output
@@ -240,6 +253,12 @@ class ParseZapTests(unittest.TestCase):
         self.assertIn("https://example.com/", findings[0].evidence)
         self.assertIn("Frame protection", findings[0].impact)
         self.assertEqual(findings[0].references, ["https://www.zaproxy.org/docs/alerts/10020/"])
+        self.assertEqual(findings[0].metadata["scanner"], "zap")
+        self.assertEqual(findings[0].metadata["plugin_id"], "10020")
+        self.assertEqual(
+            findings[0].metadata["matched_endpoints"],
+            ["https://example.com/"],
+        )
 
     def test_invalid_zap_json_returns_no_findings(self) -> None:
         self.assertEqual(parse_zap_output("not json"), [])
@@ -250,6 +269,29 @@ class ParseZapTests(unittest.TestCase):
         payload["site"][0]["alerts"].append(7)
         findings = parse_zap_output(json.dumps(payload))
         self.assertEqual(len(findings), 1)
+
+    def test_scalar_site_field_is_reported_as_malformed(self) -> None:
+        findings, errors = _parse_zap_output(json.dumps({"site": "invalid"}))
+        self.assertEqual(findings, [])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("1 malformed record", errors[0])
+
+    def test_zap_alert_preserves_all_distinct_instance_endpoints(self) -> None:
+        payload = json.loads(_zap_report())
+        payload["site"][0]["alerts"][0]["instances"] = [
+            {"uri": "https://example.com/one"},
+            {"uri": "https://example.com/two"},
+            {"uri": "https://example.com/one"},
+        ]
+
+        finding = parse_zap_output(json.dumps(payload))[0]
+
+        self.assertIn("https://example.com/one", finding.evidence)
+        self.assertIn("https://example.com/two", finding.evidence)
+        self.assertEqual(
+            finding.metadata["matched_endpoints"],
+            ["https://example.com/one", "https://example.com/two"],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -279,16 +321,19 @@ class BuildCommandTests(unittest.TestCase):
         cookie_headers = [cmd[i + 1] for i in h_indices]
         self.assertTrue(any("Cookie: session=abc" == h for h in cookie_headers))
 
-    def test_rate_limit_converted_to_rps(self) -> None:
-        # 0.5 s delay → 2 rps
+    def test_rate_limit_preserves_subsecond_delay(self) -> None:
         cmd = build_nuclei_command("https://example.com", timeout=10, rate_limit=0.5)
-        self.assertIn("-rl", cmd)
-        self.assertEqual(cmd[cmd.index("-rl") + 1], "2")
+        self.assertEqual(cmd[cmd.index("-rl") + 1], "1")
+        self.assertEqual(cmd[cmd.index("-rld") + 1], "0.5s")
 
-    def test_rate_limit_floor_is_one(self) -> None:
-        # Very slow rate → at least 1 rps
+    def test_rate_limit_preserves_multisecond_delay(self) -> None:
         cmd = build_nuclei_command("https://example.com", timeout=10, rate_limit=999.0)
         self.assertEqual(cmd[cmd.index("-rl") + 1], "1")
+        self.assertEqual(cmd[cmd.index("-rld") + 1], "999s")
+
+    def test_fractional_timeout_rounds_up_to_one_second(self) -> None:
+        cmd = build_nuclei_command("https://example.com", timeout=0.25)
+        self.assertEqual(cmd[cmd.index("-timeout") + 1], "1")
 
     def test_no_rate_limit_flag_when_zero(self) -> None:
         cmd = build_nuclei_command("https://example.com", timeout=10, rate_limit=0.0)
@@ -301,18 +346,19 @@ class BuildCommandTests(unittest.TestCase):
         self.assertIn("-list", cmd)
         self.assertEqual(cmd[cmd.index("-list") + 1], "/tmp/targets.txt")
 
-    def test_zap_command_uses_baseline_json_and_auth_replacer(self) -> None:
+    def test_zap_command_uses_full_scan_json_report_and_auth_replacer(self) -> None:
         cmd = build_zap_command(
             "https://example.com",
             timeout=90,
+            report_path="/tmp/zap-report.json",
             auth_header="Authorization: Bearer x",
             auth_cookie="session=abc",
         )
-        self.assertEqual(cmd[0], "zap-baseline.py")
+        self.assertEqual(cmd[0], "zap-full-scan.py")
         self.assertIn("-t", cmd)
         self.assertIn("https://example.com", cmd)
         self.assertIn("-J", cmd)
-        self.assertIn("-", cmd)
+        self.assertIn("/tmp/zap-report.json", cmd)
         self.assertIn("-z", cmd)
         zap_config = cmd[cmd.index("-z") + 1]
         self.assertIn("matchstr=Authorization", zap_config)
@@ -434,7 +480,9 @@ class RunActiveScanTests(unittest.TestCase):
 
         def fake_runner(cmd: list[str], **kwargs: Any) -> FakeCompleted:
             captured["cmd"] = cmd
-            return FakeCompleted(stdout=_zap_report())
+            report_path = cmd[cmd.index("-J") + 1]
+            Path(report_path).write_text(_zap_report(), encoding="utf-8")
+            return FakeCompleted(stdout="ZAP console output is not the JSON report")
 
         with patch("active_scan.is_zap_available", return_value=True):
             findings, errors = run_active_scan(
@@ -444,7 +492,7 @@ class RunActiveScanTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].severity, Severity.MEDIUM)
-        self.assertEqual(captured["cmd"][0], "zap-baseline.py")
+        self.assertEqual(captured["cmd"][0], "zap-full-scan.py")
 
     def test_defaults_to_https_url(self) -> None:
         captured: dict[str, Any] = {}
@@ -517,6 +565,56 @@ class RunActiveScanTests(unittest.TestCase):
         self.assertIn("https://example.com/login", captured.get("targets", []))
         self.assertIn("https://example.com/api", captured.get("targets", []))
 
+    def test_out_of_origin_and_malformed_discovered_urls_are_skipped(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def fake_runner(cmd: list[str], **kwargs: Any) -> FakeCompleted:
+            if "-list" in cmd:
+                list_path = cmd[cmd.index("-list") + 1]
+                with open(list_path) as fh:
+                    captured["targets"] = fh.read().splitlines()
+            return FakeCompleted(stdout="")
+
+        config = ScanConfig(
+            target="https://example.com",
+            active=True,
+            discovered_urls=(
+                "https://example.com/login",
+                "https://other.example/api",
+                "http://example.com/insecure",
+                "https://example.com/good\nhttps://other.example/injected",
+            ),
+        )
+        with (
+            patch("active_scan.is_nuclei_available", return_value=True),
+            patch("active_scan._nuclei_version", return_value=_MIN_NUCLEI_VERSION),
+            patch("active_scan._templates_stale", return_value=False),
+        ):
+            _, errors = run_active_scan(config, runner=fake_runner)
+
+        self.assertEqual(
+            captured["targets"],
+            ["https://example.com", "https://example.com/login"],
+        )
+        self.assertTrue(any("Skipped 3" in error for error in errors))
+
+    def test_malformed_root_url_is_rejected_before_scanner_launch(self) -> None:
+        runner_called = False
+
+        def fake_runner(cmd: list[str], **kwargs: Any) -> FakeCompleted:
+            nonlocal runner_called
+            runner_called = True
+            return FakeCompleted()
+
+        findings, errors = run_active_scan(
+            ScanConfig(target="example.com\nhttps://other.example", active=True),
+            runner=fake_runner,
+        )
+
+        self.assertEqual(findings, [])
+        self.assertFalse(runner_called)
+        self.assertTrue(any("valid HTTP(S) URL" in error for error in errors))
+
     def test_single_target_uses_u_flag_not_list(self) -> None:
         captured: dict[str, Any] = {}
 
@@ -582,7 +680,8 @@ class RunActiveScanTests(unittest.TestCase):
                 runner=fake_runner,
             )
         self.assertIn("-rl", captured["cmd"])
-        self.assertEqual(captured["cmd"][captured["cmd"].index("-rl") + 1], "2")
+        self.assertEqual(captured["cmd"][captured["cmd"].index("-rl") + 1], "1")
+        self.assertEqual(captured["cmd"][captured["cmd"].index("-rld") + 1], "0.5s")
 
     def test_auth_cookie_forwarded_to_nuclei(self) -> None:
         captured: dict[str, Any] = {}

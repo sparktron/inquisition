@@ -128,6 +128,32 @@ class ResolveTests(unittest.TestCase):
                     {"targets": [{"target": "a.com", "timeout": value}]}, _base()
                 )
 
+    def test_auth_material_is_validated(self) -> None:
+        invalid = (
+            ("auth_header", "Bearer token"),
+            ("auth_header", "Bad Header: token"),
+            ("auth_header", "Authorization:\r\nX-Evil: yes"),
+            ("auth_cookie", "session=x\nX-Evil: yes"),
+            ("auth_cookie", "   "),
+        )
+        for key, value in invalid:
+            with self.subTest(key=key), self.assertRaises(FleetConfigError):
+                resolved_configs({"targets": [{"target": "a.com", key: value}]}, _base())
+
+    def test_well_formed_auth_material_is_accepted(self) -> None:
+        config = resolved_configs(
+            {
+                "targets": [{
+                    "target": "a.com",
+                    "auth_header": "Authorization: Bearer token",
+                    "auth_cookie": "session=abc",
+                }]
+            },
+            _base(),
+        )[0]
+        self.assertEqual(config.auth_header, "Authorization: Bearer token")
+        self.assertEqual(config.auth_cookie, "session=abc")
+
 
 class LoadTests(unittest.TestCase):
     def test_load_valid(self) -> None:

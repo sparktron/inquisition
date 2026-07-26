@@ -81,6 +81,29 @@ class NumericValidationTests(unittest.TestCase):
         ])
         self.assertEqual(args.audit_backups, 0)
 
+    def test_malformed_auth_values_exit_as_argparse_errors(self) -> None:
+        invalid = (
+            ["example.com", "--auth-header", "Bearer token"],
+            ["example.com", "--auth-header", "Bad Header: token"],
+            ["example.com", "--auth-header", "Authorization:"],
+            ["example.com", "--auth-header", "Authorization: token\r\nX-Evil: yes"],
+            ["example.com", "--auth-cookie", "session=x\nX-Evil: yes"],
+            ["example.com", "--auth-cookie", "   "],
+        )
+        for argv in invalid:
+            with self.subTest(argv=argv), self.assertRaises(SystemExit) as raised:
+                _parse_args(argv)
+            self.assertEqual(raised.exception.code, 2)
+
+    def test_well_formed_auth_values_are_accepted(self) -> None:
+        args = _parse_args([
+            "example.com",
+            "--auth-header", "Authorization: Bearer token",
+            "--auth-cookie", "session=abc",
+        ])
+        self.assertEqual(args.auth_header, "Authorization: Bearer token")
+        self.assertEqual(args.auth_cookie, "session=abc")
+
 
 class OutputPathTests(unittest.TestCase):
     def test_single_target_uses_output_verbatim(self) -> None:

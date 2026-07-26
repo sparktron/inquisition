@@ -6,10 +6,10 @@ when the operator passes ``--active`` and clears the active-scan authorization
 gate.
 
 Inquisition does not implement payloads itself; it shells out to Nuclei
-(https://github.com/projectdiscovery/nuclei), a widely used template engine,
-and maps its findings into Inquisition ``Finding`` objects. Intrusive, DoS,
-brute-force, and fuzzing templates are excluded so the active phase stays a
-vulnerability check, not an attack.
+(https://github.com/projectdiscovery/nuclei) or OWASP ZAP and maps scanner
+results into Inquisition ``Finding`` objects. Nuclei's intrusive, DoS,
+brute-force, and fuzzing templates are excluded; ZAP uses its explicitly
+authorized full active-scan profile.
 
 The subprocess runner is injectable so parsing and command construction can be
 unit-tested without invoking the real binary.
@@ -18,6 +18,7 @@ unit-tested without invoking the real binary.
 from __future__ import annotations
 
 import json
+import math
 import re
 import shlex
 import shutil
@@ -26,6 +27,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 from models import Finding, FindingCategory, ScanConfig, Severity
 
@@ -97,8 +99,8 @@ def is_nuclei_available() -> bool:
 
 
 def is_zap_available() -> bool:
-    """Return True if the ZAP baseline script is on PATH."""
-    return shutil.which("zap-baseline.py") is not None
+    """Return True if the ZAP full-scan script is on PATH."""
+    return shutil.which("zap-full-scan.py") is not None
 
 
 def _nuclei_version(
@@ -147,6 +149,39 @@ def _target_url(target: str) -> str:
     return f"https://{target}"
 
 
+def _http_origin(url: str) -> tuple[str, str, int] | None:
+    """Return a normalized HTTP(S) origin, rejecting malformed/injectable URLs."""
+    if "\r" in url or "\n" in url:
+        return None
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+            return None
+        port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+    except ValueError:
+        return None
+    return parsed.scheme.lower(), parsed.hostname.lower(), port
+
+
+def _active_targets(root_url: str, discovered_urls: tuple[str, ...]) -> tuple[list[str], int]:
+    """Return same-origin active targets and the number of rejected URLs."""
+    origin = _http_origin(root_url)
+    if origin is None:
+        return [], 0
+
+    targets = [root_url]
+    seen = {root_url}
+    rejected = 0
+    for url in discovered_urls:
+        if _http_origin(url) != origin:
+            rejected += 1
+            continue
+        if url not in seen:
+            seen.add(url)
+            targets.append(url)
+    return targets, rejected
+
+
 def build_nuclei_command(
     target_url: str,
     *,
@@ -160,10 +195,10 @@ def build_nuclei_command(
 
     When ``target_list_path`` is given (a file of newline-separated URLs), it is
     passed via ``-list`` instead of ``-u`` so the full discovered URL surface is
-    covered.  ``rate_limit`` is the per-request delay in seconds (matching
-    ScanConfig.rate_limit); it is converted to requests-per-second for Nuclei's
-    ``-rl`` flag.  ``auth_cookie`` is injected as a ``Cookie:`` header alongside
-    any ``auth_header``.
+    covered. ``rate_limit`` is the minimum per-request delay in seconds (matching
+    ScanConfig.rate_limit); Nuclei is limited to one request per matching
+    ``-rld`` duration. ``auth_cookie`` is injected as a ``Cookie:`` header
+    alongside any ``auth_header``.
     """
     cmd = [
         "nuclei",
@@ -171,7 +206,7 @@ def build_nuclei_command(
         "-silent",
         "-severity", "low,medium,high,critical",
         "-exclude-tags", _EXCLUDED_TAGS,
-        "-timeout", str(int(timeout)),
+        "-timeout", str(max(1, math.ceil(timeout))),
         "-disable-update-check",
     ]
     if target_list_path:
@@ -183,8 +218,8 @@ def build_nuclei_command(
     if auth_cookie:
         cmd += ["-H", f"Cookie: {auth_cookie}"]
     if rate_limit > 0:
-        rps = max(1, int(1.0 / rate_limit))
-        cmd += ["-rl", str(rps)]
+        duration = f"{max(rate_limit, 1e-9):.9f}".rstrip("0").rstrip(".")
+        cmd += ["-rl", "1", "-rld", f"{duration}s"]
     return cmd
 
 
@@ -257,6 +292,8 @@ def _parse_nuclei_output(stdout: str) -> tuple[list[Finding], list[str]]:
                 cvss_score = float(raw_cvss)
             except (TypeError, ValueError):
                 pass
+            if not math.isfinite(cvss_score) or not 0.0 <= cvss_score <= 10.0:
+                cvss_score = 0.0
 
         # --- References ---
         reference_value = info.get("reference")
@@ -312,6 +349,7 @@ def _parse_nuclei_output(stdout: str) -> tuple[list[Finding], list[str]]:
             attack_scenario=attack_scenario,
             metadata={
                 "active_scan": True,
+                "scanner": "nuclei",
                 "template_id": str(template_id),
                 "matched_at": str(matched),
             },
@@ -326,15 +364,16 @@ def build_zap_command(
     target_url: str,
     *,
     timeout: float,
+    report_path: str,
     auth_header: str = "",
     auth_cookie: str = "",
 ) -> list[str]:
-    """Construct the OWASP ZAP baseline command line for a single target."""
+    """Construct the OWASP ZAP full active-scan command for a single target."""
     minutes = max(1, int(timeout // 60) or 1)
     cmd = [
-        "zap-baseline.py",
+        "zap-full-scan.py",
         "-t", target_url,
-        "-J", "-",
+        "-J", report_path,
         "-m", str(minutes),
         "-I",
     ]
@@ -367,7 +406,7 @@ def _zap_replacer_config(*, auth_header: str, auth_cookie: str) -> str:
 
 
 def parse_zap_output(stdout: str) -> list[Finding]:
-    """Parse OWASP ZAP baseline JSON output into Finding objects."""
+    """Parse OWASP ZAP full-scan JSON output into Finding objects."""
     findings, _ = _parse_zap_output(stdout)
     return findings
 
@@ -381,15 +420,17 @@ def _parse_zap_output(stdout: str) -> tuple[list[Finding], list[str]]:
     if not isinstance(payload, dict):
         return [], ["ZAP output root must be a JSON object"]
 
+    malformed = 0
     sites_value = payload.get("site", [])
-    sites = sites_value if isinstance(sites_value, list) else []
-    if isinstance(sites, dict):
-        sites = [sites]
+    if isinstance(sites_value, list):
+        sites = sites_value
     elif isinstance(sites_value, dict):
         sites = [sites_value]
+    else:
+        sites = []
+        malformed += 1
 
     findings: list[Finding] = []
-    malformed = 0
     for site in sites:
         if not isinstance(site, dict):
             malformed += 1
@@ -409,7 +450,8 @@ def _parse_zap_output(stdout: str) -> tuple[list[Finding], list[str]]:
                 continue
             name = str(alert.get("name") or alert.get("alert") or "ZAP alert")
             plugin_id = str(alert.get("pluginid") or alert.get("alertRef") or "?")
-            matched = _zap_first_instance_uri(alert)
+            matched_endpoints = _zap_instance_uris(alert)
+            matched = ", ".join(matched_endpoints)
             references = _zap_references(alert.get("reference", ""))
             findings.append(Finding(
                 title=f"[active] {name}",
@@ -420,7 +462,13 @@ def _parse_zap_output(stdout: str) -> tuple[list[Finding], list[str]]:
                 remediation=_strip_markup(str(alert.get("solution", "")))
                 or "Review the matched ZAP alert and remediate the underlying issue.",
                 references=references,
-                metadata={"active_scan": True},
+                metadata={
+                    "active_scan": True,
+                    "scanner": "zap",
+                    "plugin_id": plugin_id,
+                    "matched_at": matched_endpoints[0] if matched_endpoints else "",
+                    "matched_endpoints": matched_endpoints,
+                },
             ))
     errors = []
     if malformed:
@@ -449,15 +497,24 @@ def _zap_risk(alert: dict[str, Any]) -> Severity:
     }.get(risk_code, Severity.INFO)
 
 
-def _zap_first_instance_uri(alert: dict[str, Any]) -> str:
+def _zap_instance_uris(alert: dict[str, Any]) -> list[str]:
     value = alert.get("instances", [])
     instances = value if isinstance(value, list) else []
     if isinstance(value, dict):
         instances = [value]
+    uris: list[str] = []
     for instance in instances:
         if isinstance(instance, dict) and instance.get("uri"):
-            return str(instance["uri"])
-    return ""
+            uri = str(instance["uri"])
+            if uri not in uris:
+                uris.append(uri)
+    return uris
+
+
+def _zap_first_instance_uri(alert: dict[str, Any]) -> str:
+    """Return the first ZAP instance URI for compatibility with older callers."""
+    uris = _zap_instance_uris(alert)
+    return uris[0] if uris else ""
 
 
 def _zap_references(value: Any) -> list[str]:
@@ -484,6 +541,16 @@ def run_active_scan(
     if engine != "nuclei":
         errors.append(f"Unknown active scan engine '{config.active_engine}'")
         return [], errors
+
+    root_url = _target_url(config.target)
+    all_targets, rejected_targets = _active_targets(root_url, config.discovered_urls)
+    if not all_targets:
+        return [], ["Active scan target must be a valid HTTP(S) URL"]
+    if rejected_targets:
+        errors.append(
+            f"Skipped {rejected_targets} out-of-origin or malformed discovered URL(s) "
+            "from the active scan target list"
+        )
 
     if not is_nuclei_available():
         errors.append(
@@ -512,11 +579,6 @@ def run_active_scan(
             f"Nuclei templates appear to be more than {_TEMPLATE_STALE_DAYS} days old — "
             "run 'nuclei -update-templates' to get the latest CVE coverage"
         )
-
-    root_url = _target_url(config.target)
-
-    # Build the full target list: root URL + crawler-discovered URLs.
-    all_targets = [root_url] + [u for u in config.discovered_urls if u != root_url]
 
     tmp_path = ""
     try:
@@ -573,31 +635,53 @@ def _run_zap_scan(
     runner: Callable[..., Any],
 ) -> tuple[list[Finding], list[str]]:
     errors: list[str] = []
+    report_path = ""
+    target_url = _target_url(config.target)
+    if _http_origin(target_url) is None:
+        return [], ["Active scan target must be a valid HTTP(S) URL"]
     if not is_zap_available():
         errors.append(
-            "Active scan requested with engine 'zap' but 'zap-baseline.py' was not "
+            "Active scan requested with engine 'zap' but 'zap-full-scan.py' was not "
             "found on PATH — skipping the active phase. Install OWASP ZAP or use "
             "--active-engine nuclei."
         )
         return [], errors
 
-    cmd = build_zap_command(
-        _target_url(config.target),
-        timeout=config.timeout,
-        auth_header=config.auth_header,
-        auth_cookie=config.auth_cookie,
-    )
     try:
-        proc = runner(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=max(120.0, config.timeout * 60),
+        with tempfile.NamedTemporaryFile(
+            suffix=".json", delete=False, prefix="inquisition-zap-"
+        ) as report_file:
+            report_path = report_file.name
+        cmd = build_zap_command(
+            target_url,
+            timeout=config.timeout,
+            report_path=report_path,
+            auth_header=config.auth_header,
+            auth_cookie=config.auth_cookie,
         )
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        errors.append(f"ZAP active scan failed to run: {exc}")
-        return [], errors
+        try:
+            proc = runner(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=max(120.0, config.timeout * 60),
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            errors.append(f"ZAP active scan failed to run: {exc}")
+            return [], errors
 
-    stdout = getattr(proc, "stdout", "") or ""
-    findings, parse_errors = _parse_zap_output(stdout)
-    return findings, [*errors, *parse_errors]
+        try:
+            report = Path(report_path).read_text(encoding="utf-8")
+        except OSError as exc:
+            errors.append(f"Could not read ZAP JSON report: {exc}")
+            return [], errors
+        if not report.strip():
+            report = getattr(proc, "stdout", "") or ""
+        findings, parse_errors = _parse_zap_output(report)
+        return findings, [*errors, *parse_errors]
+    finally:
+        if report_path:
+            try:
+                Path(report_path).unlink(missing_ok=True)
+            except OSError:
+                pass
