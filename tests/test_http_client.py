@@ -145,6 +145,57 @@ class HttpClientTests(unittest.TestCase):
         self.assertNotIn("X-API-Key", cross_origin_headers)
         self.assertNotIn("Cookie", cross_origin_headers)
 
+    def test_cross_origin_redirect_strips_per_request_standard_secrets(self) -> None:
+        received: dict[str, str] = {}
+
+        class DestinationHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                received.update({key: value for key, value in self.headers.items()})
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *_: object) -> None:
+                pass
+
+        destination = ThreadingHTTPServer(("127.0.0.1", 0), DestinationHandler)
+        destination_thread = Thread(target=destination.serve_forever, daemon=True)
+        destination_thread.start()
+        destination_url = f"http://127.0.0.1:{destination.server_port}/destination"
+
+        class OriginHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                self.send_response(302)
+                self.send_header("Location", destination_url)
+                self.end_headers()
+
+            def log_message(self, *_: object) -> None:
+                pass
+
+        origin = ThreadingHTTPServer(("127.0.0.1", 0), OriginHandler)
+        origin_thread = Thread(target=origin.serve_forever, daemon=True)
+        origin_thread.start()
+        try:
+            client = HttpClient(ScanConfig(target="127.0.0.1"))
+            client.get(
+                f"http://127.0.0.1:{origin.server_port}/start",
+                headers={
+                    "Authorization": "Bearer request-secret",
+                    "Proxy-Authorization": "Basic proxy-secret",
+                    "Cookie": "request-cookie=secret",
+                },
+            )
+        finally:
+            origin.shutdown()
+            origin.server_close()
+            destination.shutdown()
+            destination.server_close()
+            origin_thread.join()
+            destination_thread.join()
+
+        self.assertNotIn("Authorization", received)
+        self.assertNotIn("Proxy-Authorization", received)
+        self.assertNotIn("Cookie", received)
+
 
 if __name__ == "__main__":
     unittest.main()

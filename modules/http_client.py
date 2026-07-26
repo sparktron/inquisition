@@ -29,6 +29,7 @@ class HttpResponse(Protocol):
 _USER_AGENT = "Inquisition/0.1 SecurityScanner"
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 _MAX_REDIRECTS = 10
+_STANDARD_SECRET_HEADERS = {"authorization", "proxy-authorization", "cookie"}
 
 
 def _build_auth_headers(config: ScanConfig) -> dict[str, str]:
@@ -156,7 +157,9 @@ class HttpClient:
         current_url = url
         current_json = json
         current_headers = dict(headers)
-        secret_names = {name.lower() for name in self._auth_headers}
+        secret_names = _STANDARD_SECRET_HEADERS | {
+            name.lower() for name in self._auth_headers
+        }
 
         for redirect_count in range(_MAX_REDIRECTS + 1):
             with self._session_lock:

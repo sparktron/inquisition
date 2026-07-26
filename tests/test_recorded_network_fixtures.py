@@ -12,7 +12,7 @@ import dns.resolver  # type: ignore[import-untyped]
 from models import ScanConfig, ScanDepth, Severity
 from modules.app_checks import AppChecksModule
 from modules.content_discovery import ContentDiscoveryModule
-from modules.dns_recon import DnsReconModule, _safe_dns_resolve
+from modules.dns_recon import DnsReconModule, _DnsResolution, _safe_dns_resolve
 from modules.http_headers import HttpHeaderModule
 from modules.http_client import HttpRequestException
 from modules.port_scan import PortScanModule
@@ -313,6 +313,24 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
         self.assertEqual([finding.title for finding in findings], ["GraphQL introspection enabled"])
         self.assertIn("1 type(s): Query", findings[0].evidence)
 
+    def test_graphql_non_list_types_are_reported_as_indeterminate(self) -> None:
+        response = RecordedResponse(status_code=200, json_data={
+            "data": {"__schema": {"types": "invalid"}},
+        })
+        module = AppChecksModule(
+            ScanConfig(target="example.test", rate_limit=0),
+            http_client=cast(Any, RecordedHttpClient(post=lambda *_args, **_kwargs: response)),
+        )
+        findings: list[Any] = []
+
+        module._graphql_introspection("https://example.test", findings)
+
+        self.assertEqual(
+            [finding.title for finding in findings],
+            ["GraphQL introspection response malformed"],
+        )
+        self.assertIn("types field is not a list", findings[0].evidence)
+
     def test_app_checks_fixture_reports_mixed_content_and_missing_sri(self) -> None:
         html = """
         <html>
@@ -442,7 +460,10 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
 
         config = ScanConfig(target="example.test", depth=ScanDepth.QUICK, rate_limit=0)
         with (
-            patch("modules.dns_recon._safe_dns_resolve", return_value=["203.0.113.10"]),
+            patch(
+                "modules.dns_recon._resolve_dns",
+                return_value=_DnsResolution(("203.0.113.10",)),
+            ),
             patch("dns.resolver.resolve", side_effect=fake_resolve),
             patch("socket.setdefaulttimeout") as setdefaulttimeout,
         ):
@@ -469,7 +490,10 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
 
         config = ScanConfig(target="example.test", depth=ScanDepth.QUICK, rate_limit=0)
         with (
-            patch("modules.dns_recon._safe_dns_resolve", return_value=["203.0.113.10"]),
+            patch(
+                "modules.dns_recon._resolve_dns",
+                return_value=_DnsResolution(("203.0.113.10",)),
+            ),
             patch("dns.resolver.resolve", side_effect=fake_resolve),
         ):
             findings = DnsReconModule(config).run()
@@ -492,6 +516,19 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
                 self.assertEqual(_safe_dns_resolve("example.test", 0.01), ["203.0.113.10"])
         self.assertEqual(threading.active_count(), before)
 
+    def test_dns_resolution_timeout_is_inconclusive_not_invalid(self) -> None:
+        def fake_resolve(*_: object, **__: object) -> list[RecordedTextRecord]:
+            raise dns.resolver.LifetimeTimeout(timeout=0.01, errors=[])  # type: ignore[no-untyped-call]
+
+        with patch("dns.resolver.resolve", side_effect=fake_resolve):
+            findings = DnsReconModule(
+                ScanConfig(target="example.test", depth=ScanDepth.QUICK, rate_limit=0)
+            ).run()
+
+        titles = {finding.title for finding in findings}
+        self.assertIn("DNS resolution inconclusive", titles)
+        self.assertNotIn("DNS resolution failed", titles)
+
     def test_dmarc_timeout_is_inconclusive_not_missing(self) -> None:
         def fake_resolve(name: str, qtype: str, **_: object) -> list[RecordedTextRecord]:
             if name == "_dmarc.example.test":
@@ -501,7 +538,10 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
             return []
 
         with (
-            patch("modules.dns_recon._safe_dns_resolve", return_value=["203.0.113.10"]),
+            patch(
+                "modules.dns_recon._resolve_dns",
+                return_value=_DnsResolution(("203.0.113.10",)),
+            ),
             patch("dns.resolver.resolve", side_effect=fake_resolve),
         ):
             findings = DnsReconModule(
@@ -521,7 +561,10 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
             return []
 
         with (
-            patch("modules.dns_recon._safe_dns_resolve", return_value=["203.0.113.10"]),
+            patch(
+                "modules.dns_recon._resolve_dns",
+                return_value=_DnsResolution(("203.0.113.10",)),
+            ),
             patch("dns.resolver.resolve", side_effect=fake_resolve),
         ):
             findings = DnsReconModule(

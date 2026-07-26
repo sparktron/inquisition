@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+from dataclasses import dataclass
 
 import dns.exception  # type: ignore[import-untyped]
 import dns.query  # type: ignore[import-untyped]
@@ -58,28 +59,40 @@ _TAKEOVER_CANDIDATES: dict[str, tuple[str, str]] = {
 }
 
 
-def _safe_dns_resolve(hostname: str, timeout: float) -> list[str]:
-    """Resolve bounded A/AAAA queries without leaving background worker threads."""
+@dataclass(frozen=True)
+class _DnsResolution:
+    addresses: tuple[str, ...]
+    transient_errors: tuple[str, ...] = ()
+
+
+def _resolve_dns(hostname: str, timeout: float) -> _DnsResolution:
+    """Resolve bounded A/AAAA queries and retain transient-failure context."""
     try:
-        return [str(ipaddress.ip_address(hostname))]
+        return _DnsResolution((str(ipaddress.ip_address(hostname)),))
     except ValueError:
         pass
 
     addresses: set[str] = set()
+    transient_errors: set[str] = set()
     for record_type in ("A", "AAAA"):
         try:
             answers = dns.resolver.resolve(hostname, record_type, lifetime=timeout)
             addresses.update(str(answer).strip() for answer in answers)
         except dns.resolver.NXDOMAIN:
             break
-        except (
-            dns.resolver.NoAnswer,
-            dns.resolver.NoNameservers,
-            dns.exception.Timeout,
-            dns.exception.DNSException,
-        ):
+        except dns.resolver.NoAnswer:
             continue
-    return sorted(addresses)
+        except (dns.resolver.NoNameservers, dns.exception.Timeout, dns.exception.DNSException) as exc:
+            transient_errors.add(type(exc).__name__)
+    return _DnsResolution(
+        addresses=tuple(sorted(addresses)),
+        transient_errors=tuple(sorted(transient_errors)) if not addresses else (),
+    )
+
+
+def _safe_dns_resolve(hostname: str, timeout: float) -> list[str]:
+    """Resolve bounded A/AAAA queries without leaving background worker threads."""
+    return list(_resolve_dns(hostname, timeout).addresses)
 
 
 class DnsReconModule(BaseModule):
@@ -102,7 +115,8 @@ class DnsReconModule(BaseModule):
 
         # --- A / AAAA resolution ---
         self._rate_limit()
-        ips = _safe_dns_resolve(target, self.config.timeout)
+        resolution = _resolve_dns(target, self.config.timeout)
+        ips = list(resolution.addresses)
         if ips:
             findings.append(Finding(
                 title="DNS A/AAAA records",
@@ -113,6 +127,19 @@ class DnsReconModule(BaseModule):
                 # stable field instead of regex-parsing the evidence prose.
                 metadata={"resolved_ips": sorted(ips)},
             ))
+        elif resolution.transient_errors:
+            findings.append(Finding(
+                title="DNS resolution inconclusive",
+                category=FindingCategory.DNS,
+                severity=Severity.INFO,
+                evidence=(
+                    f"Could not determine A/AAAA records for {target}: "
+                    f"{', '.join(resolution.transient_errors)}"
+                ),
+                impact="No invalid-hostname assertion was made because the DNS lookup failed",
+                remediation="Retry after confirming the configured DNS resolver is reachable.",
+            ))
+            return findings
         else:
             findings.append(Finding(
                 title="DNS resolution failed",

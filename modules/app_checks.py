@@ -420,8 +420,11 @@ class AppChecksModule(BaseModule):
             self._append_graphql_parse_error(findings, "__schema field is not an object")
             return
 
-        raw_types = schema.get("types", [])
-        types = raw_types if isinstance(raw_types, list) else []
+        raw_types = schema.get("types")
+        if not isinstance(raw_types, list):
+            self._append_graphql_parse_error(findings, "schema types field is not a list")
+            return
+        types = raw_types
         type_names = [
             name
             for item in types
