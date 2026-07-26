@@ -39,10 +39,10 @@ jobs:
       - name: Wheel install smoke test
         run: |
           python -m pip wheel . --no-deps --wheel-dir dist
-          python -m venv --system-site-packages /tmp/inquisition-wheel
-          /tmp/inquisition-wheel/bin/pip install --no-deps dist/*.whl
+          python -m venv /tmp/inquisition-wheel
+          /tmp/inquisition-wheel/bin/pip install dist/*.whl
           cd /tmp
-          /tmp/inquisition-wheel/bin/python -c "import config_validation, inquisition, modules.crawler, report.html, scanner"
+          /tmp/inquisition-wheel/bin/python -c "import analysis_kb, attack_rules, config_validation, inquisition, modules.crawler, report.html, scanner, sys; from pathlib import Path; prefix = Path(sys.prefix).resolve(); modules = (analysis_kb, attack_rules, config_validation, inquisition, modules.crawler, report.html, scanner); assert all(Path(module.__file__).resolve().is_relative_to(prefix) for module in modules); assert analysis_kb.entries() and attack_rules.load_misconfig_rules() and attack_rules.load_chain_rules()"
           /tmp/inquisition-wheel/bin/inquisition --help >/dev/null
 
   publish:
