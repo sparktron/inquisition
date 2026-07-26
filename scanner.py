@@ -74,7 +74,24 @@ def _deduplicate(findings: list[Finding]) -> list[Finding]:
     for f in findings:
         context = f.metadata.get("scheme", "")
         if is_active_scan_finding(f):
-            context = f"{f.metadata.get('template_id', '')}|{f.metadata.get('matched_at', '')}"
+            scanner = str(f.metadata.get("scanner", ""))
+            match_id = str(
+                f.metadata.get("template_id")
+                or f.metadata.get("plugin_id")
+                or ""
+            )
+            endpoints_value = f.metadata.get("matched_endpoints")
+            if isinstance(endpoints_value, list):
+                endpoints = "|".join(
+                    str(endpoint) for endpoint in endpoints_value if endpoint
+                )
+            else:
+                endpoints = str(f.metadata.get("matched_at", ""))
+            context = (
+                f"{scanner}|{match_id}|{endpoints}"
+                if match_id or endpoints
+                else f.evidence
+            )
         if not context:
             match = re.search(r"\bhttps?://", f.evidence)
             context = match.group(0).rstrip(":/") if match else ""

@@ -235,6 +235,8 @@ class AgeAndTrendRenderTests(unittest.TestCase):
         self.assertIn("confirmed RCE", html)
         self.assertNotIn("cdn.jsdelivr.net", html)
         self.assertNotIn('class="mermaid"', html)
+        self.assertNotRegex(html, r"<script[^>]+\bsrc\s*=")
+        self.assertNotRegex(html, r"<link[^>]+\bhref\s*=")
 
     def test_new_finding_reads_as_new(self) -> None:
         report = self._report()

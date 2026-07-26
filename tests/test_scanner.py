@@ -89,6 +89,40 @@ class ScannerTests(unittest.TestCase):
 
         self.assertEqual(len(_deduplicate(findings)), 2)
 
+    def test_deduplicate_preserves_distinct_zap_endpoint_matches(self) -> None:
+        findings = [
+            Finding(
+                title="[active] Shared ZAP alert",
+                category=FindingCategory.VULNERABILITY,
+                severity=Severity.HIGH,
+                evidence=f"ZAP alert '10020' at https://example.com/{index}",
+                metadata={
+                    "active_scan": True,
+                    "scanner": "zap",
+                    "plugin_id": "10020",
+                    "matched_at": f"https://example.com/{index}",
+                    "matched_endpoints": [f"https://example.com/{index}"],
+                },
+            )
+            for index in range(2)
+        ]
+
+        self.assertEqual(len(_deduplicate(findings)), 2)
+        self.assertEqual(len(_deduplicate(findings + [findings[0]])), 2)
+
+    def test_deduplicate_legacy_active_findings_uses_full_evidence(self) -> None:
+        findings = [
+            Finding(
+                title="[active] Legacy alert",
+                category=FindingCategory.VULNERABILITY,
+                severity=Severity.HIGH,
+                evidence=f"Legacy scanner match at https://example.com/{index}",
+            )
+            for index in range(2)
+        ]
+
+        self.assertEqual(len(_deduplicate(findings)), 2)
+
     def test_extract_discovered_urls_uses_crawler_metadata(self) -> None:
         urls = _extract_discovered_urls([
             Finding(

@@ -116,6 +116,7 @@ class ExploitabilityTests(unittest.TestCase):
         vuln_correlation._epss_cache.clear()
         vuln_correlation._nuclei_cve_cache = None
         vuln_correlation._msf_cve_cache = None
+        vuln_correlation._intel_provenance.clear()
 
     def test_load_epss_parses_and_caches(self) -> None:
         response = Mock()
@@ -136,6 +137,21 @@ class ExploitabilityTests(unittest.TestCase):
         self.assertEqual(again, out)
         self.assertEqual(get.call_count, 1)
 
+    def test_load_epss_deduplicates_requested_cves(self) -> None:
+        response = Mock(status_code=200)
+        response.json.return_value = {
+            "data": [
+                {"cve": "CVE-2026-0001", "epss": "0.2", "percentile": "0.8"},
+            ],
+        }
+        with patch("vuln_correlation.requests.get", return_value=response) as get:
+            result = vuln_correlation._load_epss(
+                ["CVE-2026-0001", "CVE-2026-0001"], timeout=1.0
+            )
+
+        self.assertEqual(result["CVE-2026-0001"], (0.2, 0.8))
+        self.assertEqual(get.call_args.kwargs["params"]["cve"], "CVE-2026-0001")
+
     def test_load_epss_skips_malformed_rows(self) -> None:
         response = Mock(status_code=200)
         response.json.return_value = {
@@ -145,6 +161,40 @@ class ExploitabilityTests(unittest.TestCase):
         with patch("vuln_correlation.requests.get", return_value=response):
             result = vuln_correlation._load_epss(["CVE-2026-0001"], timeout=1.0)
         self.assertEqual(result["CVE-2026-0001"], (0.2, 0.8))
+
+    def test_load_epss_skips_non_finite_and_out_of_range_scores(self) -> None:
+        response = Mock(status_code=200)
+        response.json.return_value = {
+            "data": [
+                {"cve": "CVE-NAN", "epss": "NaN", "percentile": "0.5"},
+                {"cve": "CVE-INF", "epss": "0.5", "percentile": "Infinity"},
+                {"cve": "CVE-RANGE", "epss": "1.1", "percentile": "0.5"},
+                {"cve": "CVE-VALID", "epss": "0.2", "percentile": "0.8"},
+            ],
+        }
+        cve_ids = ["CVE-NAN", "CVE-INF", "CVE-RANGE", "CVE-VALID"]
+        with patch("vuln_correlation.requests.get", return_value=response):
+            result = vuln_correlation._load_epss(cve_ids, timeout=1.0)
+        self.assertEqual(result, {"CVE-VALID": (0.2, 0.8)})
+
+    def test_load_epss_failure_is_recorded_as_stale(self) -> None:
+        response = Mock(status_code=503)
+        with patch("vuln_correlation.requests.get", return_value=response):
+            result = vuln_correlation._load_epss(["CVE-2026-0001"], timeout=1.0)
+
+        provenance = {source.name: source for source in vuln_correlation.intel_provenance()}
+        self.assertEqual(result, {})
+        self.assertTrue(provenance["FIRST.org EPSS"].stale)
+        self.assertEqual(provenance["FIRST.org EPSS"].detail, "unavailable")
+
+    def test_missing_nuclei_templates_are_recorded_as_stale(self) -> None:
+        with patch("vuln_correlation._nuclei_template_dirs", return_value=[]):
+            result = vuln_correlation._load_nuclei_cve_ids()
+
+        provenance = {source.name: source for source in vuln_correlation.intel_provenance()}
+        self.assertEqual(result, set())
+        self.assertTrue(provenance["Nuclei templates"].stale)
+        self.assertIn("not installed", provenance["Nuclei templates"].detail)
 
     def test_nvd_skips_malformed_records_and_keeps_valid_record(self) -> None:
         response = Mock(status_code=200)
@@ -173,6 +223,43 @@ class ExploitabilityTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].cve_id, "CVE-2026-0001")
         self.assertEqual(records[0].cvss_score, 7.5)
+
+    def test_nvd_ignores_non_finite_cvss_score(self) -> None:
+        response = Mock(status_code=200)
+        response.json.return_value = {
+            "vulnerabilities": [{
+                "cve": {
+                    "id": "CVE-2026-0002",
+                    "metrics": {"cvssMetricV31": [{"cvssData": {"baseScore": "NaN"}}]},
+                },
+            }],
+        }
+        with (
+            patch("vuln_correlation.time.sleep"),
+            patch("vuln_correlation.requests.get", return_value=response),
+            patch("vuln_correlation._load_cisa_kev", return_value=set()),
+            patch("vuln_correlation.enrich_exploitability"),
+        ):
+            records = vuln_correlation.lookup_cves_for_cpe(
+                "cpe:2.3:a:vendor:other-product", timeout=1.0
+            )
+        self.assertEqual(records[0].cvss_score, 0.0)
+        self.assertEqual(records[0].severity, Severity.INFO)
+
+    def test_nvd_failure_is_recorded_as_stale(self) -> None:
+        response = Mock(status_code=503)
+        with (
+            patch("vuln_correlation.time.sleep"),
+            patch("vuln_correlation.requests.get", return_value=response),
+        ):
+            records = vuln_correlation.lookup_cves_for_cpe(
+                "cpe:2.3:a:vendor:unavailable-product", timeout=1.0
+            )
+
+        provenance = {source.name: source for source in vuln_correlation.intel_provenance()}
+        self.assertEqual(records, [])
+        self.assertTrue(provenance["NVD CVE database"].stale)
+        self.assertIn("HTTP 503", provenance["NVD CVE database"].detail)
 
     def test_enrich_marks_kev_and_nuclei_as_public_exploit(self) -> None:
         rec = CVERecord(

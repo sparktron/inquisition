@@ -171,8 +171,13 @@ class GoalPath:
 
     @property
     def confirmed(self) -> bool:
-        """True when any edge on the path was proven by a live active-scan match."""
-        return any(edge.confirmed for edge in self.path)
+        """True only when every edge to the objective was proven live.
+
+        A confirmed exploit can enable modeled downstream consequences. Those
+        consequences remain reachable, but must not be presented as directly
+        proven by the active scan.
+        """
+        return bool(self.path) and all(edge.confirmed for edge in self.path)
 
 
 @dataclass
@@ -408,12 +413,14 @@ def attack_story(
     if graph.empty:
         return ""
     top = graph.goals[0]
+    pivot = _fleet_pivot_note(report, fleet) if fleet else ""
 
     scenarios = {mc.name: mc.attack_scenario for mc in report.misconfigurations if mc.attack_scenario}
 
     if callable(narrator):
         prompt = _story_prompt(report.target, top, scenarios)
-        return str(narrator(prompt))
+        narrated = str(narrator(prompt)).strip()
+        return " ".join(part for part in (narrated, pivot) if part)
 
     effort = reachability.feasibility_label(top.feasibility)
     parts: list[str] = [
@@ -439,10 +446,8 @@ def attack_story(
     if len(graph.goals) > 1:
         others = ", ".join(g.label.lower() for g in graph.goals[1:4])
         parts.append(f"Other reachable objectives include {others}.")
-    if fleet:
-        pivot = _fleet_pivot_note(report, fleet)
-        if pivot:
-            parts.append(pivot)
+    if pivot:
+        parts.append(pivot)
     return " ".join(parts)
 
 

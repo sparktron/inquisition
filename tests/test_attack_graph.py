@@ -146,6 +146,18 @@ class ActiveScanEdgeTests(unittest.TestCase):
         text = "\n".join(attack_graph.summary_lines(attack_graph.build_attack_graph(r)))
         self.assertIn("CONFIRMED via active scan", text)
 
+    def test_confirmed_exploit_does_not_overconfirm_modeled_consequences(self) -> None:
+        r = _report()
+        r.findings = [_active("[active] Remote Code Execution")]
+        goals = {
+            goal.state: goal
+            for goal in attack_graph.build_attack_graph(r).goals
+        }
+
+        self.assertTrue(goals["code_exec"].confirmed)
+        self.assertFalse(goals["data_access"].confirmed)
+        self.assertFalse(goals["lateral"].confirmed)
+
     def test_non_active_findings_are_ignored(self) -> None:
         r = _report()
         r.findings = [
@@ -228,6 +240,30 @@ class FleetPivotStoryTests(unittest.TestCase):
         dev = self._host("dev.example.com", asset_value="low", ip="203.0.113.5", with_objective=True)
         other = self._host("other.example.com", asset_value="crown", ip="198.51.100.9", with_objective=False)
         self.assertNotIn("blast radius", attack_graph.attack_story(dev, fleet=[dev, other]))
+
+    def test_narrated_story_keeps_fleet_pivot_note(self) -> None:
+        dev = self._host(
+            "dev.example.com",
+            asset_value="low",
+            ip="203.0.113.5",
+            with_objective=True,
+        )
+        crown = self._host(
+            "api.example.com",
+            asset_value="crown",
+            ip="203.0.113.5",
+            with_objective=False,
+        )
+
+        story = attack_graph.attack_story(
+            dev,
+            narrator=lambda _prompt: "LLM-WRITTEN STORY",
+            fleet=[dev, crown],
+        )
+
+        self.assertIn("LLM-WRITTEN STORY", story)
+        self.assertIn("blast radius extends across the fleet", story)
+        self.assertIn("api.example.com", story)
 
 
 class BuildAttackGraphMemoTests(unittest.TestCase):

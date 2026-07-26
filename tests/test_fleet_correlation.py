@@ -255,6 +255,15 @@ class ObjectiveRollupTests(unittest.TestCase):
         self.assertIn("Confirmed objectives", html)
         self.assertIn("Modeled objectives", html)
 
+    def test_rollup_does_not_overconfirm_derived_consequences(self) -> None:
+        from report.fleet import _fleet_objective_rollup
+
+        report = _report("a.com", [self._active_rce()])
+
+        # RCE itself is proven. Data access and lateral movement are reachable
+        # consequences, but remain modeled until independently validated.
+        self.assertEqual(_fleet_objective_rollup([report]), (1, 2, 1))
+
     def test_rollup_omitted_when_no_objectives(self) -> None:
         reports = [_report("a.com", [_dns("a.com", "203.0.113.5")])]
         self.assertNotIn("Confirmed objectives", render_fleet_dashboard(reports))

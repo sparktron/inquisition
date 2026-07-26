@@ -387,6 +387,11 @@ def _run_check(
     # completed request (see _harden_curl). check.command keeps the original
     # text for display; only the executed argv is adjusted.
     argv = _harden_curl(argv)
+    captures_http_status = any(
+        argv[index] in _CURL_WRITEOUT_FLAGS
+        and argv[index + 1] == f"\\n{_HTTP_STATUS_SENTINEL}:%{{http_code}}"
+        for index in range(len(argv) - 1)
+    )
     try:
         proc = runner(argv, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -400,7 +405,12 @@ def _run_check(
 
     check.ran = True
     check.exit_code = getattr(proc, "returncode", None)
-    raw_stdout, check.http_status = _extract_http_status(getattr(proc, "stdout", "") or "")
+    stdout = getattr(proc, "stdout", "") or ""
+    if captures_http_status:
+        stdout, check.http_status = _extract_http_status(stdout)
+    else:
+        check.http_status = None
+    raw_stdout = stdout
     check.stdout = _truncate(raw_stdout)
     check.stderr = _truncate(getattr(proc, "stderr", "") or "")
 
@@ -415,7 +425,8 @@ def _extract_http_status(stdout: str) -> tuple[str, int | None]:
     match = _HTTP_STATUS_RE.search(stdout)
     if not match:
         return stdout, None
-    return stdout[: match.start()], int(match.group(1))
+    status = int(match.group(1))
+    return stdout[: match.start()], status if 100 <= status <= 599 else None
 
 
 def _annotate(finding: Finding, validation: PocValidation) -> None:

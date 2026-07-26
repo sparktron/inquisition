@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import threading
@@ -112,6 +113,17 @@ def _cvss_to_severity(score: float) -> Severity:
     return Severity.INFO
 
 
+def _bounded_float(value: Any, minimum: float, maximum: float) -> float | None:
+    """Parse a finite float within an inclusive range."""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed) or not minimum <= parsed <= maximum:
+        return None
+    return parsed
+
+
 def _load_cisa_kev(timeout: float = 10.0) -> set[str]:
     """Fetch the CISA KEV catalog and return a set of CVE IDs. Cached per process."""
     global _kev_cache
@@ -161,11 +173,14 @@ def _load_epss(cve_ids: list[str], timeout: float = 10.0) -> dict[str, tuple[flo
     """
     result: dict[str, tuple[float, float]] = {}
     missing: list[str] = []
+    seen_missing: set[str] = set()
+    failed_batches = 0
     for cid in cve_ids:
         if cid in _epss_cache:
             result[cid] = _epss_cache[cid]
-        elif cid:
+        elif cid and cid not in seen_missing:
             missing.append(cid)
+            seen_missing.add(cid)
 
     for start in range(0, len(missing), _EPSS_BATCH):
         batch = missing[start:start + _EPSS_BATCH]
@@ -178,6 +193,7 @@ def _load_epss(cve_ids: list[str], timeout: float = 10.0) -> dict[str, tuple[flo
             )
             if resp.status_code != 200:
                 logger.warning("EPSS API returned HTTP %d — exploit probability unavailable", resp.status_code)
+                failed_batches += 1
                 continue
             payload = resp.json()
             if not isinstance(payload, dict):
@@ -191,20 +207,32 @@ def _load_epss(cve_ids: list[str], timeout: float = 10.0) -> dict[str, tuple[flo
                 cid = row.get("cve", "")
                 if not isinstance(cid, str) or not cid:
                     continue
-                try:
-                    pair = (float(row.get("epss", 0) or 0), float(row.get("percentile", 0) or 0))
-                except (TypeError, ValueError):
+                score = _bounded_float(row.get("epss"), 0.0, 1.0)
+                percentile = _bounded_float(row.get("percentile"), 0.0, 1.0)
+                if score is None or percentile is None:
                     continue
+                pair = (score, percentile)
                 _epss_cache[cid] = pair
                 result[cid] = pair
         except (requests.RequestException, ValueError) as exc:
             logger.warning("EPSS lookup failed: %s — exploit probability unavailable", exc)
-    if result:
+            failed_batches += 1
+    attempted_batches = (len(missing) + _EPSS_BATCH - 1) // _EPSS_BATCH
+    if attempted_batches or result:
+        if failed_batches == attempted_batches and attempted_batches:
+            detail = "unavailable"
+        elif failed_batches:
+            detail = f"partial; {failed_batches}/{attempted_batches} batch(es) unavailable"
+        elif attempted_batches:
+            detail = "fetched live"
+        else:
+            detail = "in-process cache"
         _record_intel(IntelSource(
             name="FIRST.org EPSS",
             as_of=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-            detail="fetched live",
+            detail=detail,
             item_count=len(result),
+            stale=failed_batches > 0,
         ))
     return result
 
@@ -253,6 +281,12 @@ def _load_nuclei_cve_ids() -> set[str]:
             detail="local template library",
             item_count=len(found),
             stale=stale,
+        ))
+    else:
+        _record_intel(IntelSource(
+            name="Nuclei templates",
+            detail="not installed or empty",
+            stale=True,
         ))
     return found
 
@@ -411,6 +445,11 @@ def lookup_cves_for_cpe(
         )
         if resp.status_code != 200:
             logger.warning("NVD API returned HTTP %d for CPE %s — CVE data may be incomplete", resp.status_code, cpe)
+            _record_intel(IntelSource(
+                name="NVD CVE database",
+                detail=f"unavailable (HTTP {resp.status_code})",
+                stale=True,
+            ))
             return []
 
         payload = resp.json()
@@ -419,6 +458,11 @@ def lookup_cves_for_cpe(
         data: dict[str, Any] = payload
     except (requests.RequestException, ValueError) as exc:
         logger.warning("NVD lookup failed for CPE %s: %s — CVE data may be incomplete", cpe, exc)
+        _record_intel(IntelSource(
+            name="NVD CVE database",
+            detail="unavailable",
+            stale=True,
+        ))
         return []
 
     kev_ids = _load_cisa_kev(timeout=timeout)
@@ -458,18 +502,18 @@ def lookup_cves_for_cpe(
             metric_list = metrics.get(metric_version, [])
             if not isinstance(metric_list, list):
                 continue
+            version_score: float | None = None
             for metric in metric_list:
                 if not isinstance(metric, dict):
                     continue
                 cvss_data = metric.get("cvssData", {})
                 if not isinstance(cvss_data, dict):
                     continue
-                try:
-                    score = float(cvss_data.get("baseScore", 0.0) or 0.0)
-                except (TypeError, ValueError):
-                    score = 0.0
-                break
-            if score:
+                version_score = _bounded_float(cvss_data.get("baseScore"), 0.0, 10.0)
+                if version_score is not None:
+                    break
+            if version_score is not None:
+                score = version_score
                 break
 
         references_value = cve_item.get("references", [])

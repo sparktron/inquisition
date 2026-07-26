@@ -343,6 +343,34 @@ class ValidateFindingTests(unittest.TestCase):
         self.assertNotIn("__INQ_HTTP_STATUS__", check["stdout"])
         self.assertIn("HTTP 200", f.verification)
 
+    def test_non_curl_output_that_looks_like_status_is_preserved(self) -> None:
+        output = "TXT answer\n__INQ_HTTP_STATUS__:200"
+        f = _f("dig +short TXT example.com", confidence=Confidence.MEDIUM)
+        result = poc_validation.validate_finding(
+            f,
+            runner=_runner(returncode=0, stdout=output),
+        )
+
+        assert result is not None
+        check = f.metadata["poc_validation"]["checks"][0]
+        self.assertIsNone(check["http_status"])
+        self.assertEqual(check["stdout"], output)
+
+    def test_invalid_curl_status_sentinel_is_not_reported(self) -> None:
+        f = _f("curl -sI https://example.com", confidence=Confidence.MEDIUM)
+        result = poc_validation.validate_finding(
+            f,
+            runner=_runner(
+                returncode=0,
+                stdout="HTTP response\n__INQ_HTTP_STATUS__:999",
+            ),
+        )
+
+        assert result is not None
+        check = f.metadata["poc_validation"]["checks"][0]
+        self.assertIsNone(check["http_status"])
+        self.assertNotIn("__INQ_HTTP_STATUS__", check["stdout"])
+
     def test_output_truncated(self) -> None:
         f = _f("curl -sI https://x")
         runner = _runner(stdout="A" * 9000)
