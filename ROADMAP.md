@@ -460,6 +460,14 @@ Goal: the tool's existing output is correct and its claims are true.
       preserved with Nuclei's rate-limit duration, and the authorization banner
       names the selected engine. ZAP's previously mislabeled passive baseline
       invocation was replaced by the full active-scan entry point.
+- [x] **Authorized active canary (2026-07-28)** — a disposable HTTPS Docker
+      Registry on an isolated bridge was scanned without exposing a host port or
+      contacting an external target. Nuclei 3.9.0 completed 12,431 eligible
+      templates in 77 seconds with no engine errors, confirming the expected
+      registry-listing and self-signed-certificate findings and no CVEs. The
+      0.1-second pacing attempt reached the 300-second subprocess ceiling;
+      unthrottled execution is documented for load-tolerant lab canaries only.
+      ZAP was not run because its executable and container image were absent.
 
 ---
 

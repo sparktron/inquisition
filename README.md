@@ -909,6 +909,13 @@ docker run --rm projectdiscovery/nuclei --version
 
 Nuclei maintains its own template library at `~/.local/nuclei-templates/`. Run `nuclei -update-templates` periodically to get new CVE coverage.
 
+The active-engine subprocess has a five-minute minimum ceiling. A large local
+template library combined with a positive `--rate-limit` may not finish within
+that window: a 2026-07-28 isolated canary with 12,431 eligible templates timed
+out at `--rate-limit 0.1`, then completed in 77 seconds with `--rate-limit 0`.
+Use the unthrottled setting only on a disposable or otherwise load-tolerant
+controlled target; production targets should retain an explicitly safe pace.
+
 ### How OWASP ZAP integration works
 
 [OWASP ZAP](https://www.zaproxy.org/) (Zed Attack Proxy) is a full web application security scanner. Inquisition uses its **full scan** mode (`zap-full-scan.py`): ZAP spiders the target and then runs active scanner rules. This is broader and potentially more disruptive than ZAP's passive baseline scan, so it remains behind Inquisition's explicit active-scan authorization gate.
@@ -1137,6 +1144,11 @@ python inquisition.py example.com --dry-run --format json --output /tmp/inquisit
 ```
 
 As of the 2026-07-26 Phase 4 follow-up, 487 tests plus 137 subtests, compilation, strict mypy across 75 source files, Ruff, wheel building, clean-environment installed-package and packaged-data checks, and the installed CLI smoke test pass. CI installs its test tools (`pytest`, `mypy`, and `ruff`) explicitly and enforces the same gate set. Workflows use the Node 24-based `actions/checkout@v5` and `actions/setup-python@v6` releases. TLS hostname verification uses the repository's Python 3.10+ compatible SAN/CN matcher because Python 3.12 removed `ssl.match_hostname`.
+
+An authorized 2026-07-28 active canary against a disposable HTTPS registry on
+an isolated Docker bridge completed with Nuclei 3.9.0 and no engine errors. It
+reported the expected registry-listing and self-signed-certificate matches; ZAP
+was skipped because neither its executable nor its container image was present.
 
 The test suite includes deterministic recorded HTTP/DNS/socket fixtures for network-facing modules; tests should not require live external targets.
 
