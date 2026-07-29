@@ -545,7 +545,7 @@ Findings are annotated with the attacker preconditions they imply — network po
 
 ### HTML Report
 
-The HTML report is a self-contained single file; its attack graph is a deterministic inline SVG and does not load a renderer from the network. The header distinguishes dry runs, active payload-based scans, safe/read-only scans, and standard scans; dry-run takes precedence if active scanning is configured but suppressed. It includes a **client-side filter bar** for the findings list (free-text search plus severity / category / ATT&CK-tactic / confidence filters). Each finding is rendered as a severity-coloured card with expandable panels:
+The HTML report is a self-contained single file; its attack graph is a deterministic inline SVG and does not load a renderer from the network. The header distinguishes dry runs, active payload-based scans, safe/read-only scans, and standard scans; dry-run takes precedence if active scanning is configured but suppressed. Finding references are rendered as outbound links. It includes a **client-side filter bar** for the findings list (free-text search plus severity / category / ATT&CK-tactic / confidence filters). Each finding is rendered as a severity-coloured card with expandable panels:
 
 - **Issue Analysis** — multi-paragraph deep-dive into what the issue is and why it matters
 - **How an Attacker Exploits This** — step-by-step realistic attack scenario (purple panel)

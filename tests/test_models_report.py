@@ -108,6 +108,53 @@ class ModelsAndReportTests(unittest.TestCase):
 
         self.assertIn("standard / dry-run", render_html(report))
 
+    def test_json_preserves_structured_active_scan_metadata(self) -> None:
+        finding = Finding(
+            title="[active] Example template",
+            category=FindingCategory.VULNERABILITY,
+            severity=Severity.HIGH,
+            evidence="matched",
+            metadata={
+                "active_scan": True,
+                "scanner": "nuclei",
+                "template_id": "example-template",
+                "matched_at": "https://example.com/path",
+            },
+        )
+        report = ScanReport(target="example.com", started_at=datetime(2026, 6, 10, tzinfo=timezone.utc), findings=[finding])
+
+        active_scan = json.loads(render_json(report))["findings"][0]["active_scan"]
+
+        self.assertEqual(active_scan["scanner"], "nuclei")
+        self.assertEqual(active_scan["template_id"], "example-template")
+        self.assertEqual(active_scan["matched_at"], "https://example.com/path")
+
+    def test_html_renders_finding_reference_links(self) -> None:
+        report = ScanReport(
+            target="example.com",
+            started_at=datetime(2026, 6, 10, tzinfo=timezone.utc),
+            findings=[Finding(title="Reference test", category=FindingCategory.DNS, severity=Severity.LOW,
+                              evidence="e", references=["https://example.com/advisory"])],
+        )
+
+        html = render_html(report)
+
+        self.assertIn("References</td>", html)
+        self.assertIn('href="https://example.com/advisory"', html)
+
+    def test_html_does_not_render_unsafe_reference_urls(self) -> None:
+        report = ScanReport(
+            target="example.com",
+            started_at=datetime(2026, 6, 10, tzinfo=timezone.utc),
+            findings=[Finding(title="Unsafe reference", category=FindingCategory.DNS, severity=Severity.LOW,
+                              evidence="e", references=["javascript:alert(1)"])],
+        )
+
+        html = render_html(report)
+
+        self.assertNotIn("References</td>", html)
+        self.assertNotIn("javascript:alert", html)
+
     def test_brief_text_report_omits_deep_sections(self) -> None:
         report = ScanReport(
             target="example.com",

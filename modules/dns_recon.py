@@ -223,61 +223,64 @@ class DnsReconModule(BaseModule):
                 except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers):
                     pass
 
-            # DMARC check — flag if missing, grade policy strength if present.
-            self._rate_limit()
+            # DMARC applies to email domains, not literal IP scan targets.
             try:
-                dmarc = dns.resolver.resolve(f"_dmarc.{target}", "TXT", lifetime=self.config.timeout)
-                dmarc_records = [str(r).replace('"', "").strip() for r in dmarc]
-                dmarc_record = next(
-                    (r for r in dmarc_records if "v=dmarc1" in r.lower()),
-                    dmarc_records[0] if dmarc_records else "",
-                )
-                findings.append(Finding(
-                    title="DMARC record found",
-                    category=FindingCategory.DNS,
-                    severity=Severity.INFO,
-                    evidence=f"DMARC: {', '.join(dmarc_records)}",
-                ))
-                self._append_email_auth_findings(
-                    "DMARC",
-                    target,
-                    dmarc_record,
-                    grade_dmarc(dmarc_record),
-                    findings,
-                )
-            except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
-                findings.append(Finding(
-                    title="Missing DMARC record",
-                    category=FindingCategory.MISCONFIGURATION,
-                    severity=Severity.MEDIUM,
-                    evidence=f"No DMARC record at _dmarc.{target}",
-                    impact="Email spoofing / phishing risk",
-                    remediation="Add a DMARC TXT record at _dmarc.<domain>",
-                ))
-            except (dns.exception.Timeout, dns.resolver.NoNameservers) as exc:
-                findings.append(Finding(
-                    title="DMARC lookup inconclusive",
-                    category=FindingCategory.DNS,
-                    severity=Severity.INFO,
-                    evidence=(
-                        f"Could not determine DMARC status for _dmarc.{target}: "
-                        f"{type(exc).__name__}"
-                    ),
-                    impact="No missing-DMARC assertion was made because the DNS lookup failed",
-                    remediation="Retry after confirming the configured DNS resolver is reachable.",
-                ))
-            except dns.exception.DNSException as exc:
-                findings.append(Finding(
-                    title="DMARC lookup inconclusive",
-                    category=FindingCategory.DNS,
-                    severity=Severity.INFO,
-                    evidence=(
-                        f"Could not determine DMARC status for _dmarc.{target}: "
-                        f"{type(exc).__name__}"
-                    ),
-                    impact="No missing-DMARC assertion was made because the DNS lookup failed",
-                    remediation="Retry after confirming the configured DNS resolver is reachable.",
-                ))
+                ipaddress.ip_address(target)
+                is_literal_ip = True
+            except ValueError:
+                is_literal_ip = False
+            if not is_literal_ip:
+                # DMARC check — flag if missing, grade policy strength if present.
+                self._rate_limit()
+                try:
+                    dmarc = dns.resolver.resolve(f"_dmarc.{target}", "TXT", lifetime=self.config.timeout)
+                    dmarc_records = [str(r).replace('"', "").strip() for r in dmarc]
+                    dmarc_record = next(
+                        (r for r in dmarc_records if "v=dmarc1" in r.lower()),
+                        dmarc_records[0] if dmarc_records else "",
+                    )
+                    findings.append(Finding(
+                        title="DMARC record found",
+                        category=FindingCategory.DNS,
+                        severity=Severity.INFO,
+                        evidence=f"DMARC: {', '.join(dmarc_records)}",
+                    ))
+                    self._append_email_auth_findings(
+                        "DMARC", target, dmarc_record, grade_dmarc(dmarc_record), findings,
+                    )
+                except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+                    findings.append(Finding(
+                        title="Missing DMARC record",
+                        category=FindingCategory.MISCONFIGURATION,
+                        severity=Severity.MEDIUM,
+                        evidence=f"No DMARC record at _dmarc.{target}",
+                        impact="Email spoofing / phishing risk",
+                        remediation="Add a DMARC TXT record at _dmarc.<domain>",
+                    ))
+                except (dns.exception.Timeout, dns.resolver.NoNameservers) as exc:
+                    findings.append(Finding(
+                        title="DMARC lookup inconclusive",
+                        category=FindingCategory.DNS,
+                        severity=Severity.INFO,
+                        evidence=(
+                            f"Could not determine DMARC status for _dmarc.{target}: "
+                            f"{type(exc).__name__}"
+                        ),
+                        impact="No missing-DMARC assertion was made because the DNS lookup failed",
+                        remediation="Retry after confirming the configured DNS resolver is reachable.",
+                    ))
+                except dns.exception.DNSException as exc:
+                    findings.append(Finding(
+                        title="DMARC lookup inconclusive",
+                        category=FindingCategory.DNS,
+                        severity=Severity.INFO,
+                        evidence=(
+                            f"Could not determine DMARC status for _dmarc.{target}: "
+                            f"{type(exc).__name__}"
+                        ),
+                        impact="No missing-DMARC assertion was made because the DNS lookup failed",
+                        remediation="Retry after confirming the configured DNS resolver is reachable.",
+                    ))
 
             # --- DKIM probe (common selectors) ---
             # DKIM selectors are arbitrary, so absence via common selectors is

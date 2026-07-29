@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html as _html
+from urllib.parse import urlparse
 
 from models import (
     Confidence,
@@ -73,6 +74,15 @@ def _nl2br(text: str) -> str:
         spaces = len(line) - len(stripped)
         lines.append("&nbsp;" * spaces + stripped)
     return "<br>\n".join(lines)
+
+
+def _safe_reference_urls(references: list[str]) -> list[str]:
+    """Return externally supplied references that are safe to render as links."""
+    return [
+        reference
+        for reference in references
+        if urlparse(reference).scheme in {"http", "https"} and urlparse(reference).netloc
+    ]
 
 def _poc_evidence_html(f: Finding) -> str:
     """Collapsible block of captured live-validation evidence (Theme E / E2)."""
@@ -407,6 +417,14 @@ def render_html(
                 rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Quick fix</td><td>{_e(f.remediation)}</td></tr>\n"
             if f.cpe:
                 rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>CPE</td><td><code style='font-size:.85rem'>{_e(f.cpe)}</code></td></tr>\n"
+            reference_urls = _safe_reference_urls(f.references)
+            if reference_urls:
+                reference_links = " ".join(
+                    f'<a href="{_e(reference)}" target="_blank" rel="noopener" '
+                    f'style="color:#2563eb">{_e(reference)}</a>'
+                    for reference in reference_urls
+                )
+                rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>References</td><td>{reference_links}</td></tr>\n"
             if f.age_scans:
                 rows += f"<tr><td style='color:#64748b;white-space:nowrap;padding:4px 12px 4px 0'>Age</td><td>{_e(_age_phrase(f))}</td></tr>\n"
             if tools:

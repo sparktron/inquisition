@@ -37,6 +37,12 @@ def _finding_to_dict(f: Finding) -> dict[str, Any]:
         d["verification"] = f.verification
     if isinstance(f.metadata.get("poc_validation"), dict):
         d["poc_validation"] = f.metadata["poc_validation"]
+    if f.metadata.get("active_scan"):
+        d["active_scan"] = {
+            key: value
+            for key, value in f.metadata.items()
+            if key in {"active_scan", "scanner", "template_id", "plugin_id", "matched_at", "matched_endpoints"}
+        }
     prov = provenance.finding_provenance(f)
     if prov:
         d["provenance"] = {"tier": prov.tier, "source": prov.source}
@@ -154,6 +160,10 @@ def _sarif_run(report: ScanReport) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
 
     for f in report.findings:
+        # Informational observations are useful in the full reports but create
+        # noisy code-scanning alerts. Keep SARIF focused on actionable findings.
+        if f.severity is Severity.INFO:
+            continue
         rule_id = _sarif_rule_id(f)
         if rule_id not in rules:
             rule: dict[str, Any] = {
@@ -169,6 +179,8 @@ def _sarif_run(report: ScanReport) -> dict[str, Any]:
             }
             if f.remediation:
                 rule["help"] = {"text": f.remediation}
+            if f.references:
+                rule["helpUri"] = f.references[0]
             rules[rule_id] = rule
 
         message = f.evidence or f.title
@@ -196,6 +208,8 @@ def _sarif_run(report: ScanReport) -> dict[str, Any]:
             ]
             if confirmed:
                 message = f"[CONFIRMED via live validation] {message}"
+        if f.references:
+            props["references"] = f.references
 
         result: dict[str, Any] = {
             "ruleId": rule_id,

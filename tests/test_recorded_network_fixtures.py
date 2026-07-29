@@ -573,6 +573,21 @@ class RecordedNetworkFixtureTests(unittest.TestCase):
 
         self.assertIn("Missing DMARC record", {finding.title for finding in findings})
 
+    def test_literal_ip_target_skips_dmarc_lookup(self) -> None:
+        def fake_resolve(name: str, qtype: str, **_: object) -> list[RecordedTextRecord]:
+            if str(name).startswith("_dmarc."):
+                self.fail("DMARC lookup must not run for a literal IP target")
+            if qtype == "PTR":
+                raise dns.resolver.NoAnswer()  # type: ignore[no-untyped-call]
+            return []
+
+        with patch("dns.resolver.resolve", side_effect=fake_resolve):
+            findings = DnsReconModule(
+                ScanConfig(target="203.0.113.10", depth=ScanDepth.QUICK, rate_limit=0)
+            ).run()
+
+        self.assertNotIn("Missing DMARC record", {finding.title for finding in findings})
+
     def test_port_scan_fixture_reports_open_ssh_with_passive_banner(self) -> None:
         RecordedSocket.connected_ports = []
         config = ScanConfig(

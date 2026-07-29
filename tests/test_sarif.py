@@ -116,6 +116,26 @@ class SarifReportTests(unittest.TestCase):
         result = json.loads(render_sarif(_report([f])))["runs"][0]["results"][0]
         self.assertNotIn("properties", result)
 
+    def test_info_findings_are_omitted_to_reduce_code_scanning_noise(self) -> None:
+        report = _report([
+            Finding(title="Inventory", category=FindingCategory.DNS, severity=Severity.INFO, evidence="e"),
+            Finding(title="Actionable", category=FindingCategory.DNS, severity=Severity.LOW, evidence="e"),
+        ])
+
+        run = json.loads(render_sarif(report))["runs"][0]
+
+        self.assertEqual([result["ruleId"] for result in run["results"]], ["dns/actionable"])
+        self.assertEqual([rule["id"] for rule in run["tool"]["driver"]["rules"]], ["dns/actionable"])
+
+    def test_references_are_exposed_in_sarif(self) -> None:
+        finding = Finding(title="Referenced", category=FindingCategory.TLS, severity=Severity.HIGH,
+                          evidence="e", references=["https://example.com/advisory", "https://example.com/cve"])
+
+        run = json.loads(render_sarif(_report([finding])))["runs"][0]
+
+        self.assertEqual(run["tool"]["driver"]["rules"][0]["helpUri"], "https://example.com/advisory")
+        self.assertEqual(run["results"][0]["properties"]["references"], finding.references)
+
     def test_duplicate_titles_share_one_rule(self) -> None:
         report = _report([
             Finding(title="Same", category=FindingCategory.DNS, severity=Severity.LOW, evidence="e1"),
