@@ -68,7 +68,7 @@ The things that make Inquisition more than a checklist:
 
 ### 🧠 Attack-narrative intelligence
 *Turns a flat list of findings into a connected, prioritized, evidence-backed picture of how an attacker actually compromises the target.*
-- **Dynamic attack graph** — models attacker *states* (external → on-path → credentials → code-execution → data-access → cloud-account → …) with findings as the edges between them; a traversal from an external position reveals every reachable objective and the shortest path to each, ranked by **feasibility-discounted value** and rendered as an embedded SVG
+- **Dynamic attack graph** — models attacker *states* (external → on-path → credentials → code-execution → data-access → cloud-account → …) with findings as the edges between them; a traversal from an external position reveals every reachable objective and the shortest path to each, ranked by **feasibility-discounted value** and rendered as an embedded SVG. Cloud-account takeover is modeled only when observed finding or misconfiguration evidence identifies cloud credentials; generic application, database, or intercepted credentials do not imply cloud access.
 - **Executive attack story** — a plain-English narrative of the single most dangerous reachable path, end to end (optional LLM-assisted phrasing, deterministic template fallback so the tool stays offline-capable). In a fleet run it also notes when a host's compromise pivots to a higher-value sibling
 - **Exposure index (0–100)** — a measure of *how much door is open* (reachable unauthenticated services, admin panels, secret files, weak transport, missing controls), distinct from the severity-weighted risk score
 - **Reachability modeling** — every finding is tagged with the attacker preconditions it implies (network position, auth required, victim interaction) that weight the graph
@@ -545,7 +545,7 @@ Findings are annotated with the attacker preconditions they imply — network po
 
 ### HTML Report
 
-The HTML report is a self-contained single file; its attack graph is a deterministic inline SVG and does not load a renderer from the network. It includes a **client-side filter bar** for the findings list (free-text search plus severity / category / ATT&CK-tactic / confidence filters). Each finding is rendered as a severity-coloured card with expandable panels:
+The HTML report is a self-contained single file; its attack graph is a deterministic inline SVG and does not load a renderer from the network. The header distinguishes dry runs, active payload-based scans, safe/read-only scans, and standard scans; dry-run takes precedence if active scanning is configured but suppressed. It includes a **client-side filter bar** for the findings list (free-text search plus severity / category / ATT&CK-tactic / confidence filters). Each finding is rendered as a severity-coloured card with expandable panels:
 
 - **Issue Analysis** — multi-paragraph deep-dive into what the issue is and why it matters
 - **How an Attacker Exploits This** — step-by-step realistic attack scenario (purple panel)

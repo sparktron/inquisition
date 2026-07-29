@@ -4,7 +4,7 @@ import json
 import unittest
 from datetime import datetime, timezone
 
-from models import Finding, FindingCategory, ScanReport, Severity
+from models import Finding, FindingCategory, ScanConfig, ScanReport, Severity
 from report import (
     _finding_anchor,
     _remediation_for,
@@ -86,6 +86,27 @@ class ModelsAndReportTests(unittest.TestCase):
         self.assertEqual(data["summary"]["info"], 1)
         self.assertEqual(data["findings"][0]["cpe"], "cpe:2.3:a:f5:nginx:1.25:*:*:*:*:*:*:*")
         self.assertIn("tools", data["findings"][0])
+
+    def test_html_labels_active_scan_mode_before_safe_mode(self) -> None:
+        report = ScanReport(
+            target="example.com",
+            started_at=datetime(2026, 6, 10, tzinfo=timezone.utc),
+            config=ScanConfig(target="example.com", active=True, safe_mode=True),
+        )
+
+        html = render_html(report)
+
+        self.assertIn("standard / active scan", html)
+        self.assertNotIn("standard / safe / read-only", html)
+
+    def test_html_keeps_dry_run_label_when_active_is_configured(self) -> None:
+        report = ScanReport(
+            target="example.com",
+            started_at=datetime(2026, 6, 10, tzinfo=timezone.utc),
+            config=ScanConfig(target="example.com", active=True, dry_run=True),
+        )
+
+        self.assertIn("standard / dry-run", render_html(report))
 
     def test_brief_text_report_omits_deep_sections(self) -> None:
         report = ScanReport(

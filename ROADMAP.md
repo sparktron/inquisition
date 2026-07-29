@@ -468,14 +468,21 @@ Goal: the tool's existing output is correct and its claims are true.
       0.1-second pacing attempt reached the 300-second subprocess ceiling;
       unthrottled execution is documented for load-tolerant lab canaries only.
       ZAP was not run because its executable and container image were absent.
+- [x] **Canary artifact P1 fixes (2026-07-29)** — HTML headers now identify
+      authorization-gated active scans instead of inheriting the safe/read-only
+      label. The attack graph no longer promotes generic credentials to cloud
+      account takeover: that consequence edge is added only when observed
+      finding or misconfiguration evidence explicitly identifies a cloud key.
 
 ---
 
 ### Suggested immediate next step
 The original phases, feature follow-ons, 2026-07-12 remediation plan, and
 2026-07-25–26 P1/P2/P3 plus Phase 4 implementation audits are complete. The
-next work should be chosen from the product backlog below; no unresolved
-review item is currently documented.
+two P1 findings from the 2026-07-29 canary artifact review are fixed. Remaining
+artifact follow-up is to skip email-domain DNS checks for literal IP targets,
+preserve structured active-scan fields in JSON, reduce informational SARIF
+noise, and render finding references consistently in HTML and SARIF.
 
 Deprioritized: multi-arch (arm64/amd64) image builds and a signed/SBOM-attached
 image release — neither is load-bearing (CI runs amd64, no evidence of arm64

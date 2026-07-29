@@ -52,16 +52,28 @@ class AttackGraphTests(unittest.TestCase):
         self.assertIn("data_access", states)
         self.assertIn("lateral", states)
 
-    def test_multi_step_path_env_to_cloud(self) -> None:
+    def test_generic_credentials_do_not_imply_cloud_takeover(self) -> None:
         g = attack_graph.build_attack_graph(_report("Environment file publicly accessible"))
         states = {goal.state for goal in g.goals}
         self.assertIn("credentials", states)
+        self.assertNotIn("cloud_account", states)
+
+    def test_cloud_credential_evidence_enables_cloud_takeover(self) -> None:
+        report = _report("Environment file publicly accessible")
+        report.misconfigurations[0].evidence = "AWS_ACCESS_KEY_ID was present (value redacted)"
+
+        g = attack_graph.build_attack_graph(report)
+        states = {goal.state for goal in g.goals}
         self.assertIn("cloud_account", states)
         cloud = next(goal for goal in g.goals if goal.state == "cloud_account")
         # external -> credentials -> cloud_account (two edges)
         self.assertEqual(len(cloud.path), 2)
         self.assertEqual(cloud.path[0].frm, "external")
         self.assertEqual(cloud.path[-1].to, "cloud_account")
+
+    def test_on_path_credentials_do_not_imply_cloud_takeover(self) -> None:
+        g = attack_graph.build_attack_graph(_report("HSTS not enabled"))
+        self.assertNotIn("cloud_account", {goal.state for goal in g.goals})
 
     def test_combo_edge_requires_both_misconfigs(self) -> None:
         partial = attack_graph.build_attack_graph(_report("CSP not configured"))

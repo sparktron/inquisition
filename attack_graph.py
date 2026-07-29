@@ -12,6 +12,7 @@ The result drives a Mermaid diagram in the HTML report and a text summary.
 
 from __future__ import annotations
 
+import re
 from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -86,11 +87,26 @@ _CONSEQUENCE_EDGES: list[tuple[str, str, str]] = [
     ("on_path", "credentials", "intercept submitted credentials"),
     ("on_path", "session_hijack", "replay captured session cookie"),
     ("credentials", "data_access", "authenticate to data stores"),
-    ("credentials", "cloud_account", "use leaked cloud keys"),
     ("code_exec", "data_access", "read application data"),
     ("code_exec", "lateral", "pivot from compromised host"),
     ("recon", "lateral", "reach internal hosts"),
 ]
+
+# A generic credential may belong to an application, database, or local
+# service. Only model cloud-account takeover when the observed evidence
+# identifies a cloud credential specifically.
+_CLOUD_CREDENTIAL_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\baws[\s_-]+access[\s_-]+key(?:[\s_-]+id)?\b",
+        r"\baws[\s_-]+secret[\s_-]+access[\s_-]+key\b",
+        r"\bAKIA[0-9A-Z]{16}\b",
+        r"\bazure[\s_-]+client[\s_-]+secret\b",
+        r"\bgoogle[\s_-]+application[\s_-]+credentials\b",
+        r"\b(?:gcp|google[\s_-]+cloud)[\s_-]+service[\s_-]+account[\s_-]+key\b",
+        r"\bcloud[\s_-]+(?:access[\s_-]+)?(?:credential|key)s?\b",
+    )
+)
 
 
 # Confirmed active-scan vuln classes (Theme E / E3). When the active engine
@@ -204,6 +220,23 @@ def _all_candidate_edges(active_names: set[str]) -> list[Edge]:
     return edges
 
 
+def _cloud_credential_edge(report: "ScanReport") -> Edge | None:
+    """Return the cloud-takeover consequence only with cloud-key evidence."""
+    observed = [
+        f"{finding.title}\n{finding.evidence}\n{finding.metadata}"
+        for finding in report.findings
+    ]
+    observed.extend(misconfiguration.evidence for misconfiguration in report.misconfigurations)
+    if any(pattern.search(text) for text in observed for pattern in _CLOUD_CREDENTIAL_PATTERNS):
+        return Edge(
+            "credentials",
+            "cloud_account",
+            "use leaked cloud keys",
+            via="cloud credential evidence",
+        )
+    return None
+
+
 def _classify_active(finding: "Finding") -> tuple[str, str] | None:
     """Map a confirmed active-scan finding to the (state, label) it grants.
 
@@ -302,6 +335,9 @@ def build_attack_graph(report: "ScanReport") -> AttackGraph:
 def _compute_attack_graph(report: "ScanReport") -> AttackGraph:
     active_names = {mc.name for mc in report.misconfigurations}
     candidates = _all_candidate_edges(active_names)
+    cloud_edge = _cloud_credential_edge(report)
+    if cloud_edge is not None:
+        candidates.append(cloud_edge)
     candidates += _active_finding_edges(report)
     # Prefer confirmed edges as BFS predecessors so a proven route to a state is
     # the one reported (stable sort keeps modeled-edge ordering otherwise).

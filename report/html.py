@@ -282,6 +282,8 @@ def render_html(
     if report.config:
         if report.config.dry_run:
             mode = "dry-run"
+        elif report.config.active:
+            mode = "active scan"
         elif report.config.safe_mode:
             mode = "safe / read-only"
         else:
