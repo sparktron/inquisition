@@ -71,3 +71,16 @@ Rules:
 
 If a change would broaden what the tool does to a target, stop and ask rather
 than implementing it.
+
+## Where to find deeper context
+
+| Topic | Document |
+|---|---|
+| Current state | [`docs/STATUS.md`](docs/STATUS.md) |
+| Current roadmap | [`ROADMAP_ATTACK_NARRATIVE.md`](ROADMAP_ATTACK_NARRATIVE.md) |
+| Original roadmap (phases 0–4, complete) | [`ROADMAP.md`](ROADMAP.md) |
+| Code review, 2026-06-15 → 06-29 | [`ROADMAP_CODE_REVIEW.md`](ROADMAP_CODE_REVIEW.md) |
+
+The three roadmap files are a **sequence, not competing plans**: `ROADMAP.md` is
+complete and historical, `ROADMAP_ATTACK_NARRATIVE.md` is current, and
+`ROADMAP_CODE_REVIEW.md` is a point-in-time review. Do not merge or rename them.
