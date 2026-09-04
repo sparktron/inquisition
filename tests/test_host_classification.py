@@ -162,7 +162,9 @@ class RoleClassificationTests(unittest.TestCase):
         d = p.as_dict()
         self.assertEqual(d["target"], "192.168.1.10")
         self.assertEqual(d["role"], "server")
-        self.assertIn(22, d["open_ports"])  # type: ignore[operator]
+        ports = d["open_ports"]
+        assert isinstance(ports, list)
+        self.assertIn(22, ports)
 
     def test_classify_reports_preserves_order(self) -> None:
         reports = [_report("a", [_port(22)]), _report("b", [_no_ports()])]
