@@ -26,6 +26,7 @@ from .serialize import (
 )
 from .html import render_html
 from .fleet import render_fleet_dashboard
+from .network_map import render_network_map
 
 
 def render(report: ScanReport, fmt: ReportFormat, *, brief: bool = False, attacker_pov: bool = False) -> str:
@@ -75,6 +76,7 @@ __all__ = [
     "render_json_combined",
     "render_sarif_combined",
     "render_fleet_dashboard",
+    "render_network_map",
     "_risk_score",
     "_finding_anchor",
     "_remediation_for",
