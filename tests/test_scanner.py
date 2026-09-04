@@ -6,8 +6,41 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from models import Finding, FindingCategory, ReportFormat, ScanReport, Severity
-from scanner import _deduplicate, _default_report_path, _extract_discovered_urls
+from models import (
+    Finding,
+    FindingCategory,
+    ReportFormat,
+    ScanConfig,
+    ScanReport,
+    Severity,
+)
+from scanner import _deduplicate, _default_report_path, _extract_discovered_urls, run_scan
+
+
+class DiscoveryModeScanTests(unittest.TestCase):
+    """Discovery mode runs only the liveness/role modules (port + DNS)."""
+
+    def _run_dry(self, *, discovery: bool) -> ScanReport:
+        cfg = ScanConfig(target="192.168.1.5", dry_run=True, discovery=discovery)
+        with tempfile.TemporaryDirectory() as tmp:
+            old = os.getcwd()
+            os.chdir(tmp)
+            try:
+                return run_scan(cfg, quiet=True, write_report=False)
+            finally:
+                os.chdir(old)
+
+    def test_discovery_only_runs_port_and_dns(self) -> None:
+        report = self._run_dry(discovery=True)
+        categories = {f.category for f in report.findings}
+        self.assertTrue(report.findings)  # something ran
+        self.assertTrue(categories <= {FindingCategory.PORT, FindingCategory.DNS})
+
+    def test_full_scan_runs_more_than_port_and_dns(self) -> None:
+        report = self._run_dry(discovery=False)
+        categories = {f.category for f in report.findings}
+        # A full (dry-run) scan reaches TLS/HTTP/app modules too.
+        self.assertTrue(categories - {FindingCategory.PORT, FindingCategory.DNS})
 
 
 class ScannerTests(unittest.TestCase):

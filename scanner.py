@@ -25,7 +25,7 @@ from diffing import (
 from active_scan import run_active_scan
 from models import ReportFormat, ScanReport, Severity, is_active_scan_finding
 from notifications import NOTIFY_REGRESSION, notify, sla_breaches
-from modules import ALL_MODULES
+from modules import ALL_MODULES, DnsReconModule, PortScanModule
 from modules.base import BaseModule
 from modules.crawler import CrawlerModule
 from modules.http_client import HttpClient
@@ -229,27 +229,35 @@ def run_scan(
         config=config,
     )
 
-    # --- Pre-discover URL surface, then feed it into path-aware modules ---
     http_client = HttpClient(config)
-    crawler = CrawlerModule(config, http_client=http_client)
-    mod_name, crawler_findings, crawler_errors = _run_module(crawler)
-    if not quiet:
-        print_module_result(mod_name, len(crawler_findings), len(crawler_errors))
-    report.findings.extend(crawler_findings)
-    report.errors.extend(crawler_errors)
 
-    discovered_urls = _extract_discovered_urls(crawler_findings)
-    if discovered_urls:
+    if config.discovery:
+        # Fast discovery sweep for network mapping: run only the liveness +
+        # role signals (port scan + DNS/reverse-DNS). No crawl, no TLS/HTTP/app
+        # modules, and (below) no CVE, active, or intel phases.
+        module_classes: list[type] = [DnsReconModule, PortScanModule]
+    else:
+        # --- Pre-discover URL surface, then feed it into path-aware modules ---
+        crawler = CrawlerModule(config, http_client=http_client)
+        mod_name, crawler_findings, crawler_errors = _run_module(crawler)
         if not quiet:
-            print_info(f"feeding {len(discovered_urls)} discovered URL(s) into path-aware modules")
-        # ScanConfig is immutable enough to be safely shared by worker
-        # modules.  Make a copy with the crawler's output rather than changing
-        # the original object while other code may still hold a reference to it.
-        config = replace(config, discovered_urls=discovered_urls)
-        report.config = config
+            print_module_result(mod_name, len(crawler_findings), len(crawler_errors))
+        report.findings.extend(crawler_findings)
+        report.errors.extend(crawler_errors)
 
-    # --- Run fingerprinting modules ---
-    module_classes = [cls for cls in ALL_MODULES if cls is not CrawlerModule]
+        discovered_urls = _extract_discovered_urls(crawler_findings)
+        if discovered_urls:
+            if not quiet:
+                print_info(f"feeding {len(discovered_urls)} discovered URL(s) into path-aware modules")
+            # ScanConfig is immutable enough to be safely shared by worker
+            # modules.  Make a copy with the crawler's output rather than changing
+            # the original object while other code may still hold a reference to it.
+            config = replace(config, discovered_urls=discovered_urls)
+            report.config = config
+
+        # --- Run fingerprinting modules ---
+        module_classes = [cls for cls in ALL_MODULES if cls is not CrawlerModule]
+
     modules = [cls(config, http_client=http_client) for cls in module_classes]
 
     progress = None if quiet else make_progress()
@@ -273,7 +281,7 @@ def run_scan(
         progress.stop()
 
     # --- Active testing phase (opt-in, sends payloads) ---
-    if config.active and not config.dry_run:
+    if config.active and not config.dry_run and not config.discovery:
         if confirm_active_scan(config, assume_yes=skip_auth):
             if not quiet:
                 print_info(f"running active scan ({config.active_engine}) — this sends payloads")
@@ -290,7 +298,7 @@ def run_scan(
 
     # --- Vulnerability correlation (CPE -> CVE) ---
     cpe_values = {f.cpe for f in report.findings if f.cpe}
-    if cpe_values and not config.dry_run:
+    if cpe_values and not config.dry_run and not config.discovery:
         if not quiet:
             print_cve_phase(len(cpe_values))
         for cpe in sorted(cpe_values):
@@ -311,7 +319,7 @@ def run_scan(
             report.errors.append(f"CVE exploitability enrichment: {exc}")
 
     # --- Threat-intel freshness/provenance (F1) ---
-    if not config.dry_run:
+    if not config.dry_run and not config.discovery:
         from vuln_correlation import intel_provenance
         report.intel_sources = intel_provenance()
 
