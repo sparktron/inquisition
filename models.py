@@ -118,6 +118,10 @@ class ScanConfig:
     # read-only boundary and requires explicit authorization.
     active: bool = False
     active_engine: str = "nuclei"
+    # Discovery sweep (network map): run only fast liveness + role signals (port
+    # scan + DNS/reverse-DNS), skipping TLS/HTTP/CVE/active. Default for a
+    # subnet/CIDR scan; opt out with full recon.
+    discovery: bool = False
     # PoC auto-validation (Theme E / E1) — OFF by default. When True, the
     # read-only verification subset of each finding's ``poc_command`` (curl -sI,
     # dig, openssl s_client, status probes) is executed to capture live evidence

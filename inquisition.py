@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import logging
 import sys
 import threading
@@ -39,6 +40,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "  inquisition example.com --depth quick --brief\n"
             "  inquisition 192.168.1.10 --ports 22 80 443 8080 --dry-run\n"
             "  inquisition a.com b.com c.com           # fleet scan (multiple targets)\n"
+            "  inquisition 192.168.1.0/24 --depth quick  # scan every host on a /24\n"
             "  inquisition --targets-file hosts.txt --format sarif --output reports/\n"
         ),
     )
@@ -46,7 +48,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "target",
         nargs="*",
-        help="One or more hostnames or IP addresses to scan (space-separated)",
+        help="One or more hostnames, IP addresses, or CIDR ranges to scan "
+        "(space-separated). A CIDR range such as 192.168.1.0/24 expands "
+        "to its individual host addresses.",
     )
 
     parser.add_argument(
@@ -64,6 +68,23 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=["quick", "standard", "deep"],
         default="standard",
         help="Scan depth: quick (5 ports), standard (20 ports + probing), deep (1-1024 ports + full probing). Default: standard",
+    )
+    parser.add_argument(
+        "--discovery",
+        action="store_true",
+        help=(
+            "Discovery sweep only: liveness + role classification (open ports + "
+            "reverse DNS), skipping TLS/HTTP/CVE. Fast across large ranges and the "
+            "default for a subnet/CIDR scan."
+        ),
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help=(
+            "Run full per-host recon even on a subnet/CIDR scan (opt out of the "
+            "default discovery sweep). Implied by --depth deep."
+        ),
     )
 
     parser.add_argument(
@@ -139,12 +160,23 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--jobs", "-j",
         type=int,
-        default=1,
+        default=None,
         metavar="N",
         help=(
-            "Scan up to N targets concurrently (default: 1 = sequential). With "
-            "more than one target, N>1 suppresses each scan's live UI and prints "
-            "a concise per-target line as it finishes, then the fleet table."
+            "Scan up to N targets concurrently. Default: sequential for a normal "
+            "run, but a subnet/CIDR scan auto-parallelizes (up to "
+            f"{_AUTO_JOBS_CAP}) unless you set N. With more than one target, N>1 "
+            "suppresses each scan's live UI and prints a concise per-target line "
+            "as it finishes, then the fleet table."
+        ),
+    )
+    parser.add_argument(
+        "--per-host-logs",
+        action="store_true",
+        dest="per_host_logs",
+        help=(
+            "On a subnet/CIDR scan, show each host's full scan log instead of the "
+            "single consolidated subnet log (implies sequential unless --jobs is set)."
         ),
     )
 
@@ -211,6 +243,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "reviewable checklist. Only read-only verification commands are left "
             "runnable; remediation steps stay commented since they routinely "
             "branch on your mail provider/framework/infra."
+        ),
+    )
+
+    parser.add_argument(
+        "--network-map",
+        metavar="FILE",
+        dest="network_map",
+        help=(
+            "Write an interactive HTML network-topology map spanning all targets "
+            "to FILE: a hub-and-spoke diagram with the gateway/router at the "
+            "centre and every live host around it, coloured by role "
+            "(gateway/server/endpoint). Ideal after a subnet/CIDR discovery sweep."
         ),
     )
 
@@ -474,7 +518,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def _validate_cli_numbers(args: argparse.Namespace) -> None:
     """Apply explicit range and zero semantics to every numeric CLI option."""
-    coerce_int(args.jobs, "--jobs", minimum=1)
+    if args.jobs is not None:
+        coerce_int(args.jobs, "--jobs", minimum=1)
     coerce_int(args.history_size, "--history-size", minimum=1)
     coerce_int(args.history_max_age_days, "--history-max-age-days", minimum=0)
     coerce_int(args.sla_max_age, "--sla-max-age", minimum=0)
@@ -495,16 +540,60 @@ def _validate_cli_numbers(args: argparse.Namespace) -> None:
     validate_auth_material(args.auth_header, args.auth_cookie)
 
 
-def _gather_targets(args: argparse.Namespace) -> list[str]:
-    """Merge positional targets with --targets-file, de-duplicated, order-preserving."""
-    targets: list[str] = list(args.target)
+# Upper bound on the number of addresses a single CIDR target may expand to.
+# Guards against a fat-fingered prefix (e.g. a /8) silently launching a sweep
+# of millions of hosts; a /20 (4096 addresses) is the widest range accepted.
+_MAX_CIDR_HOSTS = 4096
+
+
+def _expand_target_token(token: str) -> list[str]:
+    """Expand a CIDR target into individual host addresses.
+
+    A token without a ``/`` is a hostname or bare IP and is returned unchanged.
+    A token containing ``/`` is treated as an IP network: host bits are allowed
+    (``192.168.1.5/24`` scans the whole ``/24``); the network and broadcast
+    addresses are dropped for ranges wider than a ``/31``, while a ``/32`` (or
+    IPv6 ``/128``) yields its single address. An unparseable network, or one
+    larger than ``_MAX_CIDR_HOSTS`` addresses, is a hard error (exit code 2) so
+    a mistyped prefix cannot silently expand into a massive scan.
+    """
+    if "/" not in token:
+        return [token]
+    try:
+        network = ipaddress.ip_network(token, strict=False)
+    except ValueError as exc:
+        from ui import print_error
+        print_error(f"invalid target {token!r}", f"not a valid IP network: {exc}")
+        sys.exit(2)
+    if network.num_addresses > _MAX_CIDR_HOSTS:
+        from ui import print_error
+        print_error(
+            f"target range {token!r} is too large",
+            f"{network.num_addresses} addresses exceeds the {_MAX_CIDR_HOSTS} limit; "
+            "use a narrower prefix (a /24 is 256) or list hosts explicitly",
+        )
+        sys.exit(2)
+    hosts = [str(h) for h in network.hosts()]
+    # hosts() is non-empty for /31, /32, /127 and /128, but never let a valid
+    # network expand to nothing.
+    return hosts or [str(network.network_address)]
+
+
+def _gather_targets_and_meta(args: argparse.Namespace) -> tuple[list[str], bool]:
+    """Merge positional targets with --targets-file and expand CIDR ranges.
+
+    Returns the de-duplicated, order-preserving target list and whether the run
+    originates from a subnet — i.e. at least one input token expanded to more
+    than one address (a ``/32`` or a bare host does not count).
+    """
+    raw: list[str] = list(args.target)
     if args.targets_file:
         try:
             with open(args.targets_file, encoding="utf-8") as fh:
                 for line in fh:
                     host = line.strip()
                     if host and not host.startswith("#"):
-                        targets.append(host)
+                        raw.append(host)
         except OSError as exc:
             from ui import print_error
             print_error(f"could not read --targets-file {args.targets_file}", str(exc))
@@ -512,11 +601,21 @@ def _gather_targets(args: argparse.Namespace) -> list[str]:
 
     seen: set[str] = set()
     unique: list[str] = []
-    for host in targets:
-        if host not in seen:
-            seen.add(host)
-            unique.append(host)
-    return unique
+    is_subnet = False
+    for token in raw:
+        expanded = _expand_target_token(token)
+        if len(expanded) > 1:
+            is_subnet = True
+        for host in expanded:
+            if host not in seen:
+                seen.add(host)
+                unique.append(host)
+    return unique, is_subnet
+
+
+def _gather_targets(args: argparse.Namespace) -> list[str]:
+    """The target list only (see ``_gather_targets_and_meta``)."""
+    return _gather_targets_and_meta(args)[0]
 
 
 def _parse_sla_overrides(spec: str | None) -> tuple[tuple[str, int], ...]:
@@ -567,22 +666,46 @@ def _output_path_for(output: str | None, target: str, fmt: ReportFormat, multi: 
     return str(out_dir / f"{safe}.{ext}")
 
 
+def _discovery_mode(args: argparse.Namespace, is_subnet: bool) -> bool:
+    """Whether to run the fast discovery sweep (liveness + role signals only).
+
+    Explicit ``--discovery`` always wins; ``--full`` or ``--depth deep`` force
+    full recon; otherwise a subnet/CIDR scan defaults to discovery.
+    """
+    if args.discovery:
+        return True
+    if args.full or args.depth == "deep":
+        return False
+    return is_subnet
+
+
 def _resolve_targets(
     args: argparse.Namespace, base_config: ScanConfig
-) -> tuple[list[str], dict[str, ScanConfig]]:
-    """Resolve the target list and per-target configs.
+) -> tuple[list[str], dict[str, ScanConfig], bool]:
+    """Resolve the target list, per-target configs, and whether this is a subnet run.
 
     Raises ``fleet_config.FleetConfigError`` on a bad fleet config (so callers can
-    choose to exit on first load but keep running on a failed live reload).
+    choose to exit on first load but keep running on a failed live reload). A
+    fleet-config run is never treated as a subnet scan. Discovery mode (fast
+    liveness + role sweep) is applied per target: it is the default for a subnet
+    scan and can be forced on/off with --discovery / --full.
     """
     if args.fleet_config:
         from fleet_config import interpolate_env, load_fleet_config, resolved_configs
         raw = interpolate_env(load_fleet_config(args.fleet_config))
         configs = resolved_configs(raw, base_config)
         config_by_target = {c.target: c for c in configs}
-        return list(config_by_target.keys()), config_by_target
-    targets = _gather_targets(args)
-    return targets, {t: replace(base_config, target=t) for t in targets}
+        if args.discovery or args.full:
+            disc = _discovery_mode(args, False)
+            config_by_target = {t: replace(c, discovery=disc) for t, c in config_by_target.items()}
+        return list(config_by_target.keys()), config_by_target, False
+    targets, is_subnet = _gather_targets_and_meta(args)
+    discovery = _discovery_mode(args, is_subnet)
+    return (
+        targets,
+        {t: replace(base_config, target=t, discovery=discovery) for t in targets},
+        is_subnet,
+    )
 
 
 def _jitter_delay(jitter: float) -> float:
@@ -643,20 +766,68 @@ def _sleep_interruptible(seconds: float, *events: threading.Event) -> bool:
     return _any()
 
 
+_AUTO_JOBS_CAP = 16
+
+
+def _resolve_jobs(explicit: int | None, target_count: int, *, consolidated: bool) -> int:
+    """Effective concurrency for a run.
+
+    Honors an explicit ``--jobs`` value. Otherwise a consolidated (subnet) run
+    auto-parallelizes up to ``_AUTO_JOBS_CAP``; any other run stays sequential.
+    """
+    if explicit is not None:
+        return explicit
+    if consolidated and target_count > 1:
+        return min(target_count, _AUTO_JOBS_CAP)
+    return 1
+
+
+def _print_progress_line(done: int, total: int, report: ScanReport) -> None:
+    """One concise per-host line for the consolidated multi-target log.
+
+    Shows the classified role and liveness so a subnet sweep reads as a map in
+    progress (e.g. "gateway", "server", or "down" for a host that never answered).
+    """
+    from host_classification import HostRole, classify
+    from ui import print_info
+    profile = classify(report)
+    findings = sum(report.summary_counts().values())
+    if not profile.live:
+        print_info(f"[{done}/{total}] {report.target} — down")
+        return
+    role = "" if profile.role is HostRole.UNKNOWN else f"{profile.role.value} · "
+    highest = report.highest_severity()
+    print_info(
+        f"[{done}/{total}] {report.target} — {role}"
+        f"{findings} finding(s), highest {highest.value if highest else 'none'}"
+    )
+
+
 def _run_targets(
-    targets: list[str], scan_fn: Callable[[str], ScanReport], *, jobs: int
+    targets: list[str],
+    scan_fn: Callable[[str], ScanReport],
+    *,
+    jobs: int,
+    on_done: Callable[[int, int, ScanReport], None] | None = None,
 ) -> list[ScanReport]:
     """Run scan_fn over targets, returning reports in target order.
 
-    With jobs > 1, targets run concurrently and a concise per-target line is
-    printed as each finishes (the scans themselves run quiet to avoid interleaved
-    output). Order of the returned list always matches the input target order.
+    ``on_done(done, total, report)`` is invoked on the calling thread as each
+    report completes — in both sequential and concurrent modes — so a caller can
+    emit one consolidated progress line per host. With jobs > 1 the scans run
+    concurrently (they should run quiet to avoid interleaved output); the
+    returned list always matches the input target order regardless of jobs.
     """
     if jobs <= 1:
-        return [scan_fn(t) for t in targets]
+        reports: list[ScanReport] = []
+        for i, target in enumerate(targets):
+            report = scan_fn(target)
+            reports.append(report)
+            if on_done is not None:
+                on_done(i + 1, len(targets), report)
+        return reports
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    from ui import print_info
 
     results: dict[int, ScanReport] = {}
     with ThreadPoolExecutor(max_workers=jobs) as pool:
@@ -666,12 +837,8 @@ def _run_targets(
             report = fut.result()
             results[futures[fut]] = report
             done += 1
-            highest = report.highest_severity()
-            total = sum(report.summary_counts().values())
-            print_info(
-                f"[{done}/{len(targets)}] {report.target} — "
-                f"{total} finding(s), highest {highest.value if highest else 'none'}"
-            )
+            if on_done is not None:
+                on_done(done, len(targets), report)
     return [results[i] for i in range(len(targets))]
 
 
@@ -708,6 +875,7 @@ def main(argv: list[str] | None = None) -> None:
         ports=ports,
         active=args.active,
         active_engine=args.active_engine,
+        discovery=args.discovery,
         validate_poc=args.validate_poc,
         auth_header=args.auth_header,
         auth_cookie=args.auth_cookie,
@@ -724,7 +892,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # Targets and their per-target configs (mutated in place on SIGHUP reload).
     try:
-        targets, config_by_target = _resolve_targets(args, base_config)
+        targets, config_by_target, is_subnet = _resolve_targets(args, base_config)
     except FleetConfigError as exc:
         print_error(f"fleet config error: {exc}", f"check {args.fleet_config}")
         sys.exit(2)
@@ -752,7 +920,19 @@ def main(argv: list[str] | None = None) -> None:
     def _cycle(cycle: int) -> bool:
         """Run one full pass over the current targets. Returns whether --fail-on was met."""
         multi = len(targets) > 1
-        concurrent = args.jobs > 1 and multi
+        # A subnet scan collapses to one consolidated log unless --per-host-logs
+        # is set, and auto-parallelizes when --jobs was not given explicitly.
+        consolidated = is_subnet and not args.per_host_logs
+        jobs = _resolve_jobs(args.jobs, len(targets), consolidated=consolidated)
+        concurrent = jobs > 1 and multi
+        quiet = concurrent or consolidated
+        if consolidated:
+            disc = any(c.discovery for c in config_by_target.values())
+            print_info(
+                f"subnet scan: {len(targets)} host(s), "
+                f"{jobs if concurrent else 1}-way concurrent — "
+                f"{'discovery sweep' if disc else 'full recon'}, consolidated log"
+            )
 
         def _scan(target: str) -> ScanReport:
             if args.watch > 0 and args.watch_jitter > 0:
@@ -770,11 +950,14 @@ def main(argv: list[str] | None = None) -> None:
                 write_report=not combined,
                 history_size=args.history_size,
                 history_max_age_days=args.history_max_age_days,
-                quiet=concurrent,
+                quiet=quiet,
             )
 
+        on_done = _print_progress_line if (concurrent or consolidated) else None
         try:
-            reports = _run_targets(targets, _scan, jobs=args.jobs if concurrent else 1)
+            reports = _run_targets(
+                targets, _scan, jobs=jobs if multi else 1, on_done=on_done
+            )
         except KeyboardInterrupt:
             print_interrupted()
             sys.exit(130)
@@ -826,6 +1009,19 @@ def main(argv: list[str] | None = None) -> None:
                 print_info(f"wrote quick-fix runbook for {len(reports)} target(s) to {args.fix_script}")
             except OSError as exc:
                 print_error(f"could not write quick-fix runbook to {args.fix_script}", str(exc))
+                sys.exit(2)
+
+        # --- Interactive network-topology map ---
+        if args.network_map:
+            from host_classification import detect_default_gateway
+            from report import render_network_map
+            try:
+                gateway = detect_default_gateway()
+                with open(args.network_map, "w", encoding="utf-8") as fh:
+                    fh.write(render_network_map(reports, default_gateway=gateway))
+                print_info(f"wrote network map for {len(reports)} host(s) to {args.network_map}")
+            except OSError as exc:
+                print_error(f"could not write network map to {args.network_map}", str(exc))
                 sys.exit(2)
 
         # --- Prometheus / OpenMetrics export (file / push / scrape) ---
@@ -888,7 +1084,7 @@ def main(argv: list[str] | None = None) -> None:
                 if reload_flag.is_set():
                     reload_flag.clear()
                     try:
-                        new_targets, new_cfg = _resolve_targets(args, base_config)
+                        new_targets, new_cfg, _ = _resolve_targets(args, base_config)
                         targets[:] = new_targets
                         config_by_target.clear()
                         config_by_target.update(new_cfg)

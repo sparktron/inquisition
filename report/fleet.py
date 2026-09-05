@@ -72,6 +72,17 @@ def _fleet_objective_rollup_html(reports: list[ScanReport]) -> str:
     )
 
 
+def _fleet_topology_html(reports: list[ScanReport]) -> str:
+    """Network-topology section embedded in the fleet dashboard."""
+    from .network_map import topology_block_html
+    return (
+        "<h2 style='margin-top:32px;font-size:1.1rem;font-weight:800'>Network topology</h2>"
+        "<p style='font-size:.82rem;color:#64748b;margin:4px 0 12px'>"
+        "Hosts by inferred role \u2014 hover or tap a node for details.</p>"
+        + topology_block_html(reports)
+    )
+
+
 def render_fleet_dashboard(reports: list[ScanReport]) -> str:
     """A single self-contained HTML dashboard summarizing every target in a fleet run."""
     fleet = _fleet_summary(reports)
@@ -122,6 +133,7 @@ def render_fleet_dashboard(reports: list[ScanReport]) -> str:
 
     correlation_section = _fleet_correlation_html(reports)
     blast_section = _fleet_blast_radius_html(reports)
+    topology_section = _fleet_topology_html(reports)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -154,7 +166,7 @@ def render_fleet_dashboard(reports: list[ScanReport]) -> str:
   <p style="margin-top:16px;font-size:.8rem;color:#94a3b8">
     Sorted by risk score (highest first). Trend sparkline shows total findings across each target's recent scans.
   </p>
-{correlation_section}{blast_section}</main>
+{topology_section}{correlation_section}{blast_section}</main>
 </body>
 </html>"""
 
